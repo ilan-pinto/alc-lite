@@ -1,0 +1,16 @@
+xmltodict
+openai
+yfinance==0.2.38
+selenium==4.23.1
+webdriver-manager==4.0.2
+markdown
+matplotlib
+black
+ib_async==1.0.1
+panadas 
+rich
+tenacity
+tabulate
+rich
+Pillow
+memory_profiler

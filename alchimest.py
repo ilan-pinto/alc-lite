@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+
+import argparse
+import logging
+import warnings
+
+from commands.option import OptionScan
+
+import pandas as pd
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
+from rich.logging import RichHandler
+from rich.console import Console
+from rich.theme import Theme
+
+# Custom theme for log levels
+custom_theme = Theme(
+    {
+        "debug": "dim cyan",
+        "info": "green",
+        "warning": "yellow",
+        "error": "red",
+        "critical": "bold red",
+    }
+)
+
+
+# Create a filter that only allows INFO-level logs
+class InfoOnlyFilter(logging.Filter):
+    def filter(self, record):
+        return record.levelno == logging.INFO
+
+
+console = Console(theme=custom_theme)
+handler = RichHandler(
+    console=console,
+    show_time=True,
+    show_level=True,
+    show_path=True,
+    rich_tracebacks=True,
+)
+
+handler.setLevel(logging.INFO)
+handler.addFilter(InfoOnlyFilter())  # ⬅️ This is what filters out warnings, errors, etc.
+
+
+# const
+DEFAULT_REPORT_FOLDER = "~/dev/AlchimistProject/alchimest/report"
+DEFAULT_MIN_PROFIT = 0.5
+
+
+def configure_logging(level=logging.INFO):
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        handlers=[handler],
+    )
+
+
+if __name__ == "__main__":
+    configure_logging()
+    logger = logging.getLogger("rich")
+
+    parser = argparse.ArgumentParser(
+        description="Stock market analysis and trading tool with multiple features including scanning, analysis, and option strategies",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(
+        dest="command", help="Available commands", required=True
+    )
+
+    # Synthetic free arbitrage sub-command
+    parser_sfr = subparsers.add_parser(
+        "sfr",
+        help="Search for synthetic free arbitrage opportunities",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser_sfr.add_argument(
+        "-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)"
+    )
+    parser_sfr.add_argument(
+        "-p",
+        "--profit",
+        type=float,
+        default=None,
+        required=False,
+        help=f"Minimum required ROI profit (default: {DEFAULT_MIN_PROFIT})",
+    )
+
+    parser_sfr.add_argument(
+        "-l",
+        "--cost-limit",
+        type=float,
+        default=120,
+        required=False,
+        help=f"the max cost paid for the option ",
+    )
+
+    # Synthetic conversion (synthetic) sub-command
+    parser_syn = subparsers.add_parser(
+        "syn",
+        help="Search for synthetic conversion (synthetic) opportunities not risk free",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser_syn.add_argument(
+        "-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)"
+    )
+    parser_syn.add_argument(
+        "-l",
+        "--cost-limit",
+        type=float,
+        default=120,
+        required=False,
+        help="Minimum price for the contract (default: 50)",
+    )
+ 
+    parser_syn.add_argument(
+        "-ml",
+        "--max-loss",
+        type=float,
+        default=None,
+        required=False,
+        help=f"triggers a non-arbitrage scanner in which min profit can be up to max-lost defined ",
+    )
+
+    parser_syn.add_argument(
+        "-mp",
+        "--max-profit",
+        type=float,
+        default=None,
+        required=False,
+        help=f"triggers a non-arbitrage scanner in which min profit can be up to max-lost defined ",
+    )
+
+
+
+
+    args = parser.parse_args()
+
+    if args.command == "sfr":
+        op = OptionScan()
+        op.sfr_finder(
+            symbol_list=args.symbols,
+            profit_target=args.profit,
+            cost_limit=args.cost_limit,
+        )
+
+    elif args.command == "syn":
+        op = OptionScan()
+        op.syn_finder(
+            symbol_list=args.symbols,
+            cost_limit=args.cost_limit,
+            max_loss=args.max_loss,
+            max_profit=args.max_profit,
+        )
+
+    else:
+        parser.print_help()
