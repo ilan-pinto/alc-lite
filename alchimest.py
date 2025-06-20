@@ -2,16 +2,14 @@
 
 import argparse
 import logging
+import pandas as pd
 import warnings
 
 from commands.option import OptionScan
 
-import pandas as pd
-
 warnings.simplefilter(action="ignore", category=FutureWarning)
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.console import Console
 from rich.theme import Theme
 
 # Version information

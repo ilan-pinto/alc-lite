@@ -1,27 +1,29 @@
 import asyncio
-import logging
-from optparse import Option
 import time
 from datetime import datetime, timedelta
+from optparse import Option
 from typing import Dict, List, Optional, Tuple
+
+import logging
+import numpy as np
+from eventkit import Event
 from ib_async import (
     IB,
     ComboLeg,
     Contract,
     FuturesOption,
     Index,
+    Order,
     OrderStatus,
     Stock,
-    Order,
     Ticker,
 )
-import numpy as np
-from eventkit import Event
+
 from .common import (
-    get_logger,
-    log_order_details,
-    log_filled_order,
     FILLED_ORDERS_FILENAME,
+    get_logger,
+    log_filled_order,
+    log_order_details,
 )
 
 logger = get_logger()

@@ -1,13 +1,14 @@
 import asyncio
-import logging
 import time
-import numpy as np
-
 from typing import Dict, List, Optional, Tuple
-from ib_async import IB, ComboLeg, Contract, Order, Stock, Option, Ticker
+
+import logging
+import numpy as np
 from eventkit import Event
-from ib_async import IB, ComboLeg, Contract, Order, Stock, Option, Ticker
-from modules.Arbitrage.Strategy import ArbitrageClass, OrderManagerClass, BaseExecutor
+from ib_async import IB, ComboLeg, Contract, Option, Order, Stock, Ticker
+
+from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
+
 from .common import configure_logging, get_logger
 
 # Configure logging

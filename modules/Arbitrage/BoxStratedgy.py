@@ -1,9 +1,12 @@
 import asyncio
-from itertools import chain, permutations
-import logging
-from eventkit import Event
 import os
+import time
+from itertools import chain, permutations
 from typing import List, Tuple
+
+import logging
+import numpy as np
+from eventkit import Event
 from ib_async import (
     IB,
     ComboLeg,
@@ -12,18 +15,17 @@ from ib_async import (
     FuturesOption,
     Index,
     LimitOrder,
+    Option,
     OptionChain,
     Order,
     Stock,
-    Option,
     Ticker,
 )
-import numpy as np
-from modules.Arbitrage.Strategy import ArbitrageClass, OrderManagerClass
-import time
-from rich.logging import RichHandler
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.theme import Theme
+
+from modules.Arbitrage.Strategy import ArbitrageClass, OrderManagerClass
 
 # Custom theme for log levels
 custom_theme = Theme(

@@ -1,7 +1,7 @@
 import asyncio
-import logging
 import os
 
+import logging
 import pandas as pd
 from ib_async import *
 

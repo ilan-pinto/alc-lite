@@ -1,7 +1,8 @@
-import logging
 from datetime import datetime
-from rich.logging import RichHandler
+
+import logging
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Custom theme for log levels
