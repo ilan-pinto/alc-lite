@@ -1,0 +1,102 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ master, dev ]
+  pull_request:
+    branches: [ master, dev ]
+  release:
+    types: [ published ]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8 black isort mypy
+        
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+    - name: Format check with black
+      run: |
+        black --check --diff .
+        
+    - name: Import sorting check with isort
+      run: |
+        isort --check-only --diff .
+        
+    - name: Type checking with mypy
+      run: |
+        mypy . --ignore-missing-imports
+        
+    - name: Get version information
+      id: version
+      run: |
+        # Extract version from Python files or use git tag
+        if [ -f "alchimest.py" ]; then
+          VERSION=$(python -c "import re; content=open('alchimest.py').read(); match=re.search(r'__version__\s*=\s*[\"'"'"']([^\"'"'"']+)[\"'"'"']', content); print(match.group(1) if match else '0.1.0')")
+        else
+          VERSION="0.1.0"
+        fi
+        
+        # Get git information
+        GIT_HASH=$(git rev-parse --short HEAD)
+        GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "dev")
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "git_hash=$GIT_HASH" >> $GITHUB_OUTPUT
+        echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
+        
+        echo "Version: $VERSION"
+        echo "Git Hash: $GIT_HASH"
+        echo "Git Tag: $GIT_TAG"
+        
+    - name: Create zip artifact
+      run: |
+        # Create a temporary directory for the zip
+        mkdir -p temp_zip
+        
+        # Copy all files except venv and .git
+        rsync -av --exclude='venv/' --exclude='.git/' --exclude='temp_zip/' --exclude='.github/' ./ temp_zip/
+        
+        # Create zip file with version info
+        cd temp_zip
+        zip -r "../alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip" .
+        cd ..
+        
+    - name: Upload zip artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}
+        path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
+        retention-days: 30
+        
+    - name: Cleanup
+      run: |
+        rm -rf temp_zip
+        rm -f alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip 

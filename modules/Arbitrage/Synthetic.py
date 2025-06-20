@@ -79,27 +79,26 @@ class SynExecutor(BaseExecutor):
         stock_price: float,
         max_loss: float,
         min_profit: float,
+        max_profit: float,
     ) -> bool:
 
-        spread = stock_price - put_strike
+
+        profit_ratio = max_profit / abs(max_loss)
 
         if max_loss >= min_profit:  # no arbitrage condition
-            logger.info(f"max_loss limit [{max_loss}] >  calculated max_loss [{min_profit}]")
+            logger.info(f"max_loss limit [{max_loss}] >  calculated max_loss [{min_profit}] - doesn't meet conditions")
             return False
 
         elif net_credit > 0:
-            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0")
+            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions")
             return False
-        elif profit_target is not None and profit_target > min_roi:
-            logger.info(
-                f"[{symbol}]  profit_target({profit_target}) >  min_roi({min_roi}) "
-            )
-            return False
+
         elif np.isnan(lmt_price) or lmt_price > cost_limit:
-            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit")
+            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions")
             return False
 
         else:
+            logger.info(f"[{symbol}] meets conditions - initiating order. [profit_ratio: {profit_ratio}]")
             return True
 
     async def executor(self, event: Event) -> None:
@@ -180,7 +179,7 @@ class SynExecutor(BaseExecutor):
             min_roi = (min_profit / (stock_price + net_credit)) * 100
 
             logger.info(
-                f"[{self.symbol}] min_profit:{min_profit}, max_profit:{max_profit}, min_roi:[{min_roi}]"
+                f"[{self.symbol}] min_profit:{min_profit}, max_profit:{max_profit}, min_roi:[{min_roi}% ]"
             )
 
             if self.check_conditions(
@@ -194,6 +193,7 @@ class SynExecutor(BaseExecutor):
                 stock_price,
                 self.max_loss,
                 min_profit,
+                max_profit,
             ):
                 self._log_trade_details(
                     call_strike,
@@ -283,7 +283,7 @@ class Syn(ArbitrageClass):
         # Define parameters for the options (expiry and strike price)
         valid_strikes = [
             s for s in chain.strikes if s <= stock_price and s > stock_price - 10
-        ]  # Example strike price
+        ]
 
         for expiry in self.filter_expirations_within_range(chain.expirations, 19, 45):
 

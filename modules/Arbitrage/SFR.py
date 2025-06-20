@@ -82,22 +82,23 @@ class SFRExecutor(BaseExecutor):
         spread = stock_price - put_strike
 
         if spread > -net_credit:  # arbitrage condition
-            logger.info(f"[{symbol}] spread[{spread}] > net_credit[{-net_credit}] ")
+            logger.info(f"[{symbol}] spread[{spread}] > net_credit[{-net_credit}] - doesn't meet conditions")
             return False
 
         elif net_credit > 0:
-            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0")
+            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions")
             return False
         elif profit_target is not None and profit_target > min_roi:
             logger.info(
-                f"[{symbol}]  profit_target({profit_target}) >  min_roi({min_roi}) "
+                f"[{symbol}]  profit_target({profit_target}) >  min_roi({min_roi} - doesn't meet conditions) "
             )
             return False
         elif np.isnan(lmt_price) or lmt_price > cost_limit:
-            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit")
+            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions")
             return False
 
         else:
+            logger.info(f"[{symbol}] meets conditions - initiating order")
             return True
 
     async def executor(self, event: Event) -> None:
