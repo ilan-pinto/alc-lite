@@ -62,8 +62,16 @@ class SFRExecutor(BaseExecutor):
             expiry: Option expiration date
             start_time: Start time of the execution
         """
-        super().__init__(ib, order_manager, stock_contract, option_contracts, 
-                        symbol, cost_limit, expiry, start_time)
+        super().__init__(
+            ib,
+            order_manager,
+            stock_contract,
+            option_contracts,
+            symbol,
+            cost_limit,
+            expiry,
+            start_time,
+        )
         self.profit_target = profit_target
 
     def check_conditions(
@@ -82,11 +90,15 @@ class SFRExecutor(BaseExecutor):
         spread = stock_price - put_strike
 
         if spread > -net_credit:  # arbitrage condition
-            logger.info(f"[{symbol}] spread[{spread}] > net_credit[{-net_credit}] - doesn't meet conditions")
+            logger.info(
+                f"[{symbol}] spread[{spread}] > net_credit[{-net_credit}] - doesn't meet conditions"
+            )
             return False
 
         elif net_credit > 0:
-            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions")
+            logger.info(
+                f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions"
+            )
             return False
         elif profit_target is not None and profit_target > min_roi:
             logger.info(
@@ -94,7 +106,9 @@ class SFRExecutor(BaseExecutor):
             )
             return False
         elif np.isnan(lmt_price) or lmt_price > cost_limit:
-            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions")
+            logger.info(
+                f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions"
+            )
             return False
 
         else:
@@ -152,11 +166,25 @@ class SFRExecutor(BaseExecutor):
             stock_price += stock_midpoint
 
             # Extract option data using base class method
-            call_contract, put_contract, call_strike, put_strike, call_price, put_price = (
-                self._extract_option_data(contract_ticker)
-            )
+            (
+                call_contract,
+                put_contract,
+                call_strike,
+                put_strike,
+                call_price,
+                put_price,
+            ) = self._extract_option_data(contract_ticker)
 
-            if not all([call_contract, put_contract, call_strike, put_strike, call_price, put_price]):
+            if not all(
+                [
+                    call_contract,
+                    put_contract,
+                    call_strike,
+                    put_strike,
+                    call_price,
+                    put_price,
+                ]
+            ):
                 logger.error("Missing required option data")
                 return None, None
 
@@ -173,7 +201,7 @@ class SFRExecutor(BaseExecutor):
 
             spread = stock_price - put_strike
 
-            min_profit = - (-net_credit) - spread
+            min_profit = -(-net_credit) - spread
             max_profit = spread + (-net_credit)
 
             min_roi = (min_profit / (stock_price + net_credit)) * 100

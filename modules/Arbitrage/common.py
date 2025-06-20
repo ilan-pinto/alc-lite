@@ -8,7 +8,7 @@ from rich.theme import Theme
 CUSTOM_THEME = Theme(
     {
         "debug": "dim cyan",
-        "info": "green", 
+        "info": "green",
         "warning": "yellow",
         "error": "red",
         "critical": "bold red",
@@ -21,6 +21,7 @@ FILLED_ORDERS_FILENAME = "filled_orders.txt"
 
 class InfoOnlyFilter(logging.Filter):
     """Filter that only allows INFO-level logs through."""
+
     def filter(self, record):
         return record.levelno == logging.INFO
 
@@ -35,18 +36,18 @@ def get_console_handler(use_info_filter: bool = True) -> RichHandler:
         show_path=True,
         rich_tracebacks=True,
     )
-    
+
     handler.setLevel(logging.INFO)
     if use_info_filter:
         handler.addFilter(InfoOnlyFilter())
-    
+
     return handler
 
 
 def configure_logging(level: int = logging.INFO, use_info_filter: bool = True) -> None:
     """Configure logging with Rich handler."""
     handler = get_console_handler(use_info_filter)
-    
+
     logging.basicConfig(
         level=level,
         format="%(message)s",
@@ -59,7 +60,9 @@ def get_logger(name: str = "rich") -> logging.Logger:
     return logging.getLogger(name)
 
 
-def log_order_details(order_details: dict, filename: str = FILLED_ORDERS_FILENAME) -> None:
+def log_order_details(
+    order_details: dict, filename: str = FILLED_ORDERS_FILENAME
+) -> None:
     """Log order details to file."""
     with open(filename, "a") as f:
         f.write(f"{order_details}\n")
@@ -71,4 +74,4 @@ def log_filled_order(trade, filename: str = FILLED_ORDERS_FILENAME) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         row = f" timestamp: {timestamp}  Order_id: {trade.order.orderId}, Symbol: {trade.contract.symbol}, avgFillPrice: {trade.orderStatus.avgFillPrice}, filled: {trade.orderStatus.filled}\n"
         with open(filename, "a") as f:
-            f.write(row) 
+            f.write(row)

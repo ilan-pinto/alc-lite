@@ -62,8 +62,16 @@ class SynExecutor(BaseExecutor):
             max_profit: Maximum profit for execution
             expiry: Option expiration date
         """
-        super().__init__(ib, order_manager, stock_contract, option_contracts, 
-                        symbol, cost_limit, expiry, time.time())
+        super().__init__(
+            ib,
+            order_manager,
+            stock_contract,
+            option_contracts,
+            symbol,
+            cost_limit,
+            expiry,
+            time.time(),
+        )
         self.max_loss = max_loss
         self.max_profit = max_profit
 
@@ -82,23 +90,30 @@ class SynExecutor(BaseExecutor):
         max_profit: float,
     ) -> bool:
 
-
         profit_ratio = max_profit / abs(max_loss)
 
         if max_loss >= min_profit:  # no arbitrage condition
-            logger.info(f"max_loss limit [{max_loss}] >  calculated max_loss [{min_profit}] - doesn't meet conditions")
+            logger.info(
+                f"max_loss limit [{max_loss}] >  calculated max_loss [{min_profit}] - doesn't meet conditions"
+            )
             return False
 
         elif net_credit > 0:
-            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions")
+            logger.info(
+                f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions"
+            )
             return False
 
         elif np.isnan(lmt_price) or lmt_price > cost_limit:
-            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions")
+            logger.info(
+                f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions"
+            )
             return False
 
         else:
-            logger.info(f"[{symbol}] meets conditions - initiating order. [profit_ratio: {profit_ratio}]")
+            logger.info(
+                f"[{symbol}] meets conditions - initiating order. [profit_ratio: {profit_ratio}]"
+            )
             return True
 
     async def executor(self, event: Event) -> None:
@@ -152,11 +167,25 @@ class SynExecutor(BaseExecutor):
             stock_price += stock_midpoint
 
             # Extract option data using base class method
-            call_contract, put_contract, call_strike, put_strike, call_price, put_price = (
-                self._extract_option_data(contract_ticker)
-            )
+            (
+                call_contract,
+                put_contract,
+                call_strike,
+                put_strike,
+                call_price,
+                put_price,
+            ) = self._extract_option_data(contract_ticker)
 
-            if not all([call_contract, put_contract, call_strike, put_strike, call_price, put_price]):
+            if not all(
+                [
+                    call_contract,
+                    put_contract,
+                    call_strike,
+                    put_strike,
+                    call_price,
+                    put_price,
+                ]
+            ):
                 logger.error("Missing required option data")
                 return None, None
 
@@ -173,7 +202,7 @@ class SynExecutor(BaseExecutor):
 
             spread = stock_price - put_strike
 
-            min_profit = - (-net_credit) - spread  # max loss 
+            min_profit = -(-net_credit) - spread  # max loss
             max_profit = (call_strike - put_strike) - min_profit
 
             min_roi = (min_profit / (stock_price + net_credit)) * 100
@@ -184,7 +213,7 @@ class SynExecutor(BaseExecutor):
 
             if self.check_conditions(
                 self.symbol,
-                getattr(self, 'profit_target', None),
+                getattr(self, "profit_target", None),
                 self.cost_limit,
                 put_strike,
                 stock_price + net_credit,
@@ -223,13 +252,7 @@ class SynExecutor(BaseExecutor):
 
 class Syn(ArbitrageClass):
 
-    async def scan(
-        self,
-        symbol_list,
-        cost_limit,
-        max_loss,
-        max_profit
-    ):
+    async def scan(self, symbol_list, cost_limit, max_loss, max_profit):
         """
         scan for Syn and execute order
 
@@ -244,9 +267,9 @@ class Syn(ArbitrageClass):
         contract_ticker = {}
         stock_ticker = {}
 
-        # set configuration 
+        # set configuration
         self.cost_limit = cost_limit
-        self.max_loss = max_loss    
+        self.max_loss = max_loss
         self.max_profit = max_profit
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=2)
         # self.ib.reqMarketDataType = 3

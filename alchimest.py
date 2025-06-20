@@ -116,7 +116,7 @@ if __name__ == "__main__":
         required=False,
         help="Minimum price for the contract (default: 50)",
     )
- 
+
     parser_syn.add_argument(
         "-ml",
         "--max-loss",
@@ -134,9 +134,6 @@ if __name__ == "__main__":
         required=False,
         help=f"triggers a non-arbitrage scanner in which min profit can be up to max-lost defined ",
     )
-
-
-
 
     args = parser.parse_args()
 

@@ -4,10 +4,25 @@ from optparse import Option
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from ib_async import IB, ComboLeg, Contract, FuturesOption, Index, OrderStatus, Stock, Order, Ticker
+from ib_async import (
+    IB,
+    ComboLeg,
+    Contract,
+    FuturesOption,
+    Index,
+    OrderStatus,
+    Stock,
+    Order,
+    Ticker,
+)
 import numpy as np
 from eventkit import Event
-from .common import get_logger, log_order_details, log_filled_order, FILLED_ORDERS_FILENAME
+from .common import (
+    get_logger,
+    log_order_details,
+    log_filled_order,
+    FILLED_ORDERS_FILENAME,
+)
 
 logger = get_logger()
 
@@ -81,18 +96,18 @@ class OrderManagerClass:
 class BaseExecutor:
     """
     Base executor class for arbitrage strategies with common functionality.
-    
+
     This class provides shared methods for:
     1. Order building and validation
     2. Price calculations
     3. Trade logging
     4. Event handling
     """
-    
+
     def __init__(
         self,
         ib: IB,
-        order_manager: 'OrderManagerClass',
+        order_manager: "OrderManagerClass",
         stock_contract: Contract,
         option_contracts: List[Contract],
         symbol: str,
@@ -123,9 +138,7 @@ class BaseExecutor:
             conId=stock.conId, ratio=100, action="BUY", exchange="SMART"
         )
         call_leg = ComboLeg(conId=call.conId, ratio=1, action="SELL", exchange="SMART")
-        put_leg = ComboLeg(
-            conId=put.conId, ratio=1, action="BUY", exchange="SMART"
-        )
+        put_leg = ComboLeg(conId=put.conId, ratio=1, action="BUY", exchange="SMART")
 
         conversion_contract = Contract(
             symbol=symbol,
@@ -146,7 +159,14 @@ class BaseExecutor:
 
         return conversion_contract, order
 
-    def _extract_option_data(self, contract_ticker: Dict) -> Tuple[Optional[Contract], Optional[Contract], Optional[float], Optional[float], Optional[float], Optional[float]]:
+    def _extract_option_data(self, contract_ticker: Dict) -> Tuple[
+        Optional[Contract],
+        Optional[Contract],
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[float],
+    ]:
         """Extract call and put contract data from ticker information."""
         call_contract = None
         put_contract = None
@@ -175,7 +195,14 @@ class BaseExecutor:
                 put_strike = ticker.contract.strike
                 put_price = ticker.ask if not np.isnan(ticker.ask) else ticker.close
 
-        return call_contract, put_contract, call_strike, put_strike, call_price, put_price
+        return (
+            call_contract,
+            put_contract,
+            call_strike,
+            put_strike,
+            call_price,
+            put_price,
+        )
 
     def _log_trade_details(
         self,
