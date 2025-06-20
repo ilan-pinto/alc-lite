@@ -49,7 +49,6 @@ class OptionScan:
                     profit_target=profit_target,
                     volume_limit=volume_limit,
                     cost_limit=cost_limit,
-
                 )
             )
 
@@ -89,7 +88,7 @@ class OptionScan:
             asyncio.run(
                 syn.scan(
                     symbol_list,
-                    cost_limit=cost_limit,                    
+                    cost_limit=cost_limit,
                     max_loss=max_loss,
                     max_profit=max_profit,
                 )
