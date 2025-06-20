@@ -90,7 +90,7 @@ jobs:
         cd ..
         
     - name: Upload zip artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}
         path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
