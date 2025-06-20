@@ -1,12 +1,13 @@
 import asyncio
-from datetime import datetime, timedelta
 import logging
+import time
+import numpy as np
+
 from typing import Dict, List, Optional, Tuple
 from ib_async import IB, ComboLeg, Contract, Order, Stock, Option, Ticker
-import numpy as np
-from modules.Arbitrage.Strategy import ArbitrageClass, OrderManagerClass, BaseExecutor
-import time
 from eventkit import Event
+from ib_async import IB, ComboLeg, Contract, Order, Stock, Option, Ticker
+from modules.Arbitrage.Strategy import ArbitrageClass, OrderManagerClass, BaseExecutor
 from .common import configure_logging, get_logger
 
 # Configure logging
@@ -90,25 +91,17 @@ class SFRExecutor(BaseExecutor):
         spread = stock_price - put_strike
 
         if spread > -net_credit:  # arbitrage condition
-            logger.info(
-                f"[{symbol}] spread[{spread}] > net_credit[{-net_credit}] - doesn't meet conditions"
-            )
+            logger.info(f"[{symbol}] spread[{spread}] > net_credit[{-net_credit}] - doesn't meet conditions")
             return False
 
         elif net_credit > 0:
-            logger.info(
-                f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions"
-            )
+            logger.info(f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions")
             return False
         elif profit_target is not None and profit_target > min_roi:
-            logger.info(
-                f"[{symbol}]  profit_target({profit_target}) >  min_roi({min_roi} - doesn't meet conditions) "
-            )
+            logger.info(f"[{symbol}]  profit_target({profit_target}) >  min_roi({min_roi} - doesn't meet conditions) ")
             return False
         elif np.isnan(lmt_price) or lmt_price > cost_limit:
-            logger.info(
-                f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions"
-            )
+            logger.info(f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions")
             return False
 
         else:
@@ -130,12 +123,8 @@ class SFRExecutor(BaseExecutor):
                     return
 
                 self.contracts = [self.stock_contract] + self.option_contracts
-                if all(
-                    contract_ticker.get(c.conId) is not None for c in self.contracts
-                ):
-                    logger.info(
-                        f"time to execution: {time.time() - self.start_time} sec"
-                    )
+                if all(contract_ticker.get(c.conId) is not None for c in self.contracts):
+                    logger.info(f"time to execution: {time.time() - self.start_time} sec")
 
                     self.ib.pendingTickersEvent -= self.executor
 
@@ -143,9 +132,7 @@ class SFRExecutor(BaseExecutor):
                     conversion_contract, order = self.calc_price_and_build_order()
 
                     if order and conversion_contract:
-                        trade = await self.order_manager.place_order(
-                            conversion_contract, order
-                        )
+                        trade = await self.order_manager.place_order(conversion_contract, order)
 
         except Exception as e:
             logger.error(f"Error in executor: {str(e)}")
@@ -201,14 +188,12 @@ class SFRExecutor(BaseExecutor):
 
             spread = stock_price - put_strike
 
-            min_profit = -(-net_credit) - spread
+            min_profit = spread - (-net_credit)
             max_profit = spread + (-net_credit)
 
             min_roi = (min_profit / (stock_price + net_credit)) * 100
 
-            logger.info(
-                f"[{self.symbol}] min_profit:{min_profit}, max_profit:{max_profit}, min_roi:[{min_roi}]"
-            )
+            logger.info(f"[{self.symbol}] min_profit:{min_profit}, max_profit:{max_profit}, min_roi:[{min_roi}]")
 
             if self.check_conditions(
                 self.symbol,
@@ -300,9 +285,7 @@ class SFR(ArbitrageClass):
         # Request market data for the stock
         market_data = await self._get_market_data_async(stock)
 
-        stock_price = (
-            market_data.last if not np.isnan(market_data.last) else market_data.close
-        )
+        stock_price = market_data.last if not np.isnan(market_data.last) else market_data.close
 
         logger.info(f"price for [{symbol}: {stock_price} ]")
 
@@ -310,9 +293,7 @@ class SFR(ArbitrageClass):
         chain = await self._get_chain(stock)
 
         # Define parameters for the options (expiry and strike price)
-        valid_strikes = [
-            s for s in chain.strikes if s <= stock_price and s > stock_price - 10
-        ]  # Example strike price
+        valid_strikes = [s for s in chain.strikes if s <= stock_price and s > stock_price - 10]  # Example strike price
 
         profit_target = self.profit_target  # reset profit target
 

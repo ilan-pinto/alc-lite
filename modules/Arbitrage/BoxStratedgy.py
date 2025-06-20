@@ -99,12 +99,7 @@ class BoxExecutor:
             all_not_nan = all(not np.isnan(x) for x in ticker_variables)
             all_positive = all(x > 0 for x in ticker_variables)
 
-            if (
-                all_not_nan == True
-                and all_positive == True
-                and ticker.askSize >= 5
-                and ticker.bidSize >= 5
-            ):
+            if all_not_nan == True and all_positive == True and ticker.askSize >= 5 and ticker.bidSize >= 5:
                 contract_ticker[contract.conId] = ticker
 
             elif all_not_nan == True and ticker.askSize < 5 and ticker.bidSize < 5:
@@ -139,9 +134,7 @@ class BoxExecutor:
                 logger.info(
                     f"[{contract.symbol}][{self.expiry}] - strikes: {self.strike2} - {self.strike1} - spread: {self.strike2 - self.strike1}  > lmt_price: {lmt_price + self.profit}"
                 )
-                if (self.strike2 - self.strike1) >= round(
-                    (lmt_price + self.profit), 2
-                ) and lmt_price > 0:
+                if (self.strike2 - self.strike1) >= round((lmt_price + self.profit), 2) and lmt_price > 0:
                     # print(
                     #     f"place order. details: ask_contracts_price + {self.ask_contracts_price} . bid_contracts_price - {self.bid_contracts_price} "
                     # )
@@ -187,20 +180,14 @@ class BoxExecutor:
         logger.debug(f"ROI: {roi}")
         return conversion_profit, lmt_price
 
-    def build_order(
-        self, symbol, bid_contracts, ask_contracts, lmt_price, exchange="SMART"
-    ):
+    def build_order(self, symbol, bid_contracts, ask_contracts, lmt_price, exchange="SMART"):
 
         combo_legs = []
         for c in bid_contracts:
-            combo_legs.append(
-                ComboLeg(conId=c.conId, ratio=1, action="SELL", exchange=c.exchange)
-            )
+            combo_legs.append(ComboLeg(conId=c.conId, ratio=1, action="SELL", exchange=c.exchange))
 
         for c in ask_contracts:
-            combo_legs.append(
-                ComboLeg(conId=c.conId, ratio=1, action="BUY", exchange=c.exchange)
-            )
+            combo_legs.append(ComboLeg(conId=c.conId, ratio=1, action="BUY", exchange=c.exchange))
 
         box_contract = Contract(
             symbol=symbol,
@@ -233,9 +220,7 @@ class Box(ArbitrageClass):
         # Request market data for the stock
         market_data = await self._get_market_data_async(stock)
 
-        stock_price = (
-            market_data.last if not np.isnan(market_data.last) else market_data.close
-        )
+        stock_price = market_data.last if not np.isnan(market_data.last) else market_data.close
 
         logger.warning(f"Market Price for {stock.symbol}: {stock_price}")
 
@@ -244,9 +229,7 @@ class Box(ArbitrageClass):
 
             tasks = []
             for chain in chains:
-                task = asyncio.create_task(
-                    self.search_box_in_chain(chain, option_type, stock, stock_price)
-                )
+                task = asyncio.create_task(self.search_box_in_chain(chain, option_type, stock, stock_price))
                 tasks.append(task)
             results = await asyncio.gather(*tasks)
 
@@ -255,16 +238,11 @@ class Box(ArbitrageClass):
             chain = await self._get_chain(stock, exchange=exchange)
             await self.search_box_in_chain(chain, option_type, stock, stock_price)
 
-    async def search_box_in_chain(
-        self, chain: OptionChain, option_type, stock, stock_price
-    ):
+    async def search_box_in_chain(self, chain: OptionChain, option_type, stock, stock_price):
         async with self.semaphore:
 
             anchor_strikes = [
-                s
-                for s in chain.strikes
-                if s < stock_price * (1 + self.range)
-                and s > stock_price * (1 - self.range)
+                s for s in chain.strikes if s < stock_price * (1 + self.range) and s > stock_price * (1 - self.range)
             ]  # Example strike price
 
             profit = self.profit_target

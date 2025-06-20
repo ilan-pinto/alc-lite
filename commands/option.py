@@ -6,7 +6,6 @@ import pandas as pd
 from ib_async import *
 
 from modules.Arbitrage.SFR import SFR
-from modules.Arbitrage.ConverStratedgy import Conversion
 from modules.Arbitrage.Synthetic import Syn
 
 logger = logging.getLogger(__name__)

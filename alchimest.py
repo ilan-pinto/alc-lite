@@ -9,6 +9,7 @@ from commands.option import OptionScan
 import pandas as pd
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.console import Console
 from rich.theme import Theme
@@ -68,9 +69,7 @@ if __name__ == "__main__":
         description="Stock market analysis and trading tool with multiple features including scanning, analysis, and option strategies",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    subparsers = parser.add_subparsers(
-        dest="command", help="Available commands", required=True
-    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands", required=True)
 
     # Synthetic free arbitrage sub-command
     parser_sfr = subparsers.add_parser(
@@ -78,9 +77,7 @@ if __name__ == "__main__":
         help="Search for synthetic free arbitrage opportunities",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser_sfr.add_argument(
-        "-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)"
-    )
+    parser_sfr.add_argument("-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)")
     parser_sfr.add_argument(
         "-p",
         "--profit",
@@ -105,9 +102,7 @@ if __name__ == "__main__":
         help="Search for synthetic conversion (synthetic) opportunities not risk free",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser_syn.add_argument(
-        "-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)"
-    )
+    parser_syn.add_argument("-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)")
     parser_syn.add_argument(
         "-l",
         "--cost-limit",
