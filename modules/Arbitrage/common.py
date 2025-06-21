@@ -61,7 +61,9 @@ def get_logger(name: str = "rich") -> logging.Logger:
     return logging.getLogger(name)
 
 
-def log_order_details(order_details: dict, filename: str = FILLED_ORDERS_FILENAME) -> None:
+def log_order_details(
+    order_details: dict, filename: str = FILLED_ORDERS_FILENAME
+) -> None:
     """Log order details to file."""
     with open(filename, "a") as f:
         f.write(f"{order_details}\n")

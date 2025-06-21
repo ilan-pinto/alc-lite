@@ -51,7 +51,10 @@ class OrderManagerClass:
         # Check if the combo contract is already in the portfolio
         combo_ids = [contract.conId for contract in combo_contract.comboLegs]
         combo_exists = any(
-            pos for pos in positions if pos.contract.secType in ["OPT", "FOP"] and pos.contract.conId in combo_ids
+            pos
+            for pos in positions
+            if pos.contract.secType in ["OPT", "FOP"]
+            and pos.contract.conId in combo_ids
         )
         if combo_exists:
             logger.warning(f"[{combo_contract.symbol}]contract already exists for ")
@@ -133,7 +136,9 @@ class BaseExecutor:
         lmt_price: float,
     ) -> Tuple[Contract, Order]:
         """Build a conversion order with stock, call, and put legs."""
-        stock_leg = ComboLeg(conId=stock.conId, ratio=100, action="BUY", exchange="SMART")
+        stock_leg = ComboLeg(
+            conId=stock.conId, ratio=100, action="BUY", exchange="SMART"
+        )
         call_leg = ComboLeg(conId=call.conId, ratio=1, action="SELL", exchange="SMART")
         put_leg = ComboLeg(conId=put.conId, ratio=1, action="BUY", exchange="SMART")
 
@@ -181,7 +186,11 @@ class BaseExecutor:
             if c.right == "C":
                 call_contract = ticker.contract
                 call_strike = ticker.contract.strike
-                call_price = ticker.midpoint() if not np.isnan(ticker.midpoint()) else ticker.close
+                call_price = (
+                    ticker.midpoint()
+                    if not np.isnan(ticker.midpoint())
+                    else ticker.close
+                )
 
             elif c.right == "P":
                 put_contract = ticker.contract
@@ -210,7 +219,9 @@ class BaseExecutor:
         min_roi: float,
     ) -> None:
         """Log detailed trade information."""
-        logger.info(f"min_ROI: {min_roi}. min_profit:{min_profit}. max_profit: {max_profit} ")
+        logger.info(
+            f"min_ROI: {min_roi}. min_profit:{min_profit}. max_profit: {max_profit} "
+        )
 
         logger.info(
             f"call_strike: {call_strike} - {call_price} . put_strike: {put_strike} - {put_price}. stock: {stock_price} "
@@ -257,14 +268,18 @@ class ArbitrageClass:
         """Called whenever any order gets filled (partially or fully)."""
         log_filled_order(trade)
 
-    def filter_expirations_within_range(self, expiration_dates, start_num_days=40, end_num_days=45):
+    def filter_expirations_within_range(
+        self, expiration_dates, start_num_days=40, end_num_days=45
+    ):
         """Filter expiration dates within a specific range of days."""
         today = datetime.today()
         start_range = today + timedelta(days=start_num_days)
         end_range = today + timedelta(days=end_num_days)
 
         filtered_dates = [
-            date_str for date_str in expiration_dates if start_range <= datetime.strptime(date_str, "%Y%m%d") <= end_range
+            date_str
+            for date_str in expiration_dates
+            if start_range <= datetime.strptime(date_str, "%Y%m%d") <= end_range
         ]
 
         return filtered_dates

@@ -106,9 +106,13 @@ class ConversionExecutor:
             return True
 
     def build_order(self, symbol, stock, call, put, lmt_price):
-        stock_leg = ComboLeg(conId=stock.conId, ratio=100, action="BUY", exchange="SMART")
+        stock_leg = ComboLeg(
+            conId=stock.conId, ratio=100, action="BUY", exchange="SMART"
+        )
         call_leg = ComboLeg(conId=call.conId, ratio=1, action="SELL", exchange="SMART")
-        put_data_leg = ComboLeg(conId=put.conId, ratio=1, action="BUY", exchange="SMART")
+        put_data_leg = ComboLeg(
+            conId=put.conId, ratio=1, action="BUY", exchange="SMART"
+        )
 
         conversion_contract = Contract(
             symbol=symbol,
@@ -152,7 +156,9 @@ class ConversionExecutor:
                 conversion_contract, order = self.calc_price_and_build_order()
 
                 if order and conversion_contract:
-                    trade = await self.order_manager.place_order(conversion_contract, order)
+                    trade = await self.order_manager.place_order(
+                        conversion_contract, order
+                    )
                     # await asyncio.sleep(0.05)
 
     def calc_price_and_build_order(self) -> Tuple[float, float]:
@@ -168,7 +174,11 @@ class ConversionExecutor:
             ticker = contract_ticker.get(c.conId)
             if c.right == "C":
                 call_data = ticker
-                call_price = ticker.midpoint() if not np.isnan(ticker.midpoint()) else ticker.close
+                call_price = (
+                    ticker.midpoint()
+                    if not np.isnan(ticker.midpoint())
+                    else ticker.close
+                )
                 lmt_price -= call_price
             elif c.right == "P":
                 put_data = ticker
@@ -179,7 +189,9 @@ class ConversionExecutor:
         conversion_profit = call_price - put_price + (self.strike - stock_midpoint)
 
         roi = (conversion_profit / lmt_price) * 100
-        logger.info(f"ROI: {roi}. conversion_profit:{conversion_profit}. lmt_price: {lmt_price} ")
+        logger.info(
+            f"ROI: {roi}. conversion_profit:{conversion_profit}. lmt_price: {lmt_price} "
+        )
         # logger.info(f"Call Option close Price: {call_data.close}")
         # logger.info(f"Put Option close Price: {put_data.close}")
         # logger.info(f"Call Option bid: {call_data.bid}")
@@ -265,7 +277,9 @@ class Conversion(ArbitrageClass):
         # Request market data for the stock
         market_data = await self._get_market_data_async(stock)
 
-        stock_price = market_data.last if not np.isnan(market_data.last) else market_data.close
+        stock_price = (
+            market_data.last if not np.isnan(market_data.last) else market_data.close
+        )
 
         logger.info(f"price for [{symbol}: {stock_price} ]")
 
@@ -275,7 +289,9 @@ class Conversion(ArbitrageClass):
         # Define parameters for the options (expiry and strike price)
         # expiry = chain.expirations[: self.expiration_range]  # Example expiration date
         valid_strikes = [
-            s for s in chain.strikes if s < stock_price * (1 + range) and s > stock_price * (1 - range)
+            s
+            for s in chain.strikes
+            if s < stock_price * (1 + range) and s > stock_price * (1 - range)
         ]  # Example strike price
 
         profit_target = self.profit_target  # rest profit target
