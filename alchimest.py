@@ -59,7 +59,8 @@ def configure_logging(level=logging.INFO):
     )
 
 
-if __name__ == "__main__":
+def main():
+    """Main function for CLI execution"""
     configure_logging()
     logger = logging.getLogger("rich")
 
@@ -155,3 +156,7 @@ if __name__ == "__main__":
 
     else:
         parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
