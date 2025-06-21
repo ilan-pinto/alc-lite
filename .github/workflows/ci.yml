@@ -59,7 +59,7 @@ jobs:
       run: |
         # Extract version from Python files or use git tag
         if [ -f "alchimest.py" ]; then
-          VERSION=$(python -c "import re; content=open('alchimest.py').read(); match=re.search(r'__version__\s*=\s*[\"'"'"']([^\"'"'"']+)[\"'"'"']', content); print(match.group(1) if match else '0.1.0')")
+          VERSION=$(grep -o '__version__ = "[^"]*"' alchimest.py | cut -d'"' -f2 || echo "0.1.0")
         else
           VERSION="0.1.0"
         fi
