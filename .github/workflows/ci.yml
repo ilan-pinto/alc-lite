@@ -12,6 +12,11 @@ jobs:
   ci:
     runs-on: macos-latest
     
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
