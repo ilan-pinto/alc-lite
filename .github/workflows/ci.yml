@@ -96,41 +96,49 @@ jobs:
         path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
         retention-days: 30
         
-    - name: Publish to GitHub Packages
+    - name: Create GitHub Release
+      id: create_release
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-      run: |
-        # Create a package.json for npm package
-        cat > package.json << EOF
-        {
-          "name": "@${{ github.repository_owner }}/alc-lite",
-          "version": "${{ steps.version.outputs.version }}",
-          "description": "Alchimist Project - Arbitrage Option Strategies CLI",
-          "main": "alchimest.py",
-          "scripts": {
-            "start": "python alchimest.py"
-          },
-          "repository": {
-            "type": "git",
-            "url": "git+https://github.com/${{ github.repository }}.git"
-          },
-          "keywords": ["trading", "options", "arbitrage", "cli"],
-          "author": "${{ github.actor }}",
-          "license": "MIT",
-          "files": [
-            "*.py",
-            "commands/",
-            "modules/",
-            "requirements.txt",
-            "README.md"
-          ]
-        }
-        EOF
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        release_name: Release v${{ steps.version.outputs.version }}
+        body: |
+          ## Alchimist Project - Arbitrage Option Strategies CLI
+          
+          **Version:** ${{ steps.version.outputs.version }}
+          **Commit:** ${{ steps.version.outputs.git_hash }}
+          
+          ### What's New
+          - Automated release with version ${{ steps.version.outputs.version }}
+          - Includes all source code and dependencies
+          - Excludes virtual environment for clean distribution
+          
+          ### Installation
+          1. Download the zip file
+          2. Extract to your desired location
+          3. Create a virtual environment: `python -m venv venv`
+          4. Activate the environment: `source venv/bin/activate` (Linux/Mac) or `venv\Scripts\activate` (Windows)
+          5. Install dependencies: `pip install -r requirements.txt`
+          6. Run the CLI: `python alchimest.py --help`
+          
+          ### ⚠️ Warning
+          This software is provided for educational and research purposes only. Trading financial instruments involves significant risk of loss.
+        draft: false
+        prerelease: false
         
-        # Publish to GitHub Packages
-        echo "@${{ github.repository_owner }}:registry=https://npm.pkg.github.com" > .npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc
-        
-        npm publish
+    - name: Upload Release Asset
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
+        asset_name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
+        asset_content_type: application/zip
         
     - name: Cleanup
       run: |
