@@ -96,6 +96,42 @@ jobs:
         path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
         retention-days: 30
         
+    - name: Publish to GitHub Packages
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      run: |
+        # Create a package.json for npm package
+        cat > package.json << EOF
+        {
+          "name": "@${{ github.repository_owner }}/alc-lite",
+          "version": "${{ steps.version.outputs.version }}",
+          "description": "Alchimist Project - Arbitrage Option Strategies CLI",
+          "main": "alchimest.py",
+          "scripts": {
+            "start": "python alchimest.py"
+          },
+          "repository": {
+            "type": "git",
+            "url": "git+https://github.com/${{ github.repository }}.git"
+          },
+          "keywords": ["trading", "options", "arbitrage", "cli"],
+          "author": "${{ github.actor }}",
+          "license": "MIT",
+          "files": [
+            "*.py",
+            "commands/",
+            "modules/",
+            "requirements.txt",
+            "README.md"
+          ]
+        }
+        EOF
+        
+        # Publish to GitHub Packages
+        echo "@${{ github.repository_owner }}:registry=https://npm.pkg.github.com" > .npmrc
+        echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> .npmrc
+        
+        npm publish
+        
     - name: Cleanup
       run: |
         rm -rf temp_zip
