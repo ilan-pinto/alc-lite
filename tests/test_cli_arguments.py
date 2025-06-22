@@ -3,11 +3,12 @@ Integration tests for CLI argument validation in alchimest.py
 Tests all argument combinations and edge cases for sfr and syn commands
 """
 
-import pytest
-import sys
 import os
-from unittest.mock import patch, MagicMock
+import sys
 from io import StringIO
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Add the project root to the path so we can import alchimest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,7 +64,15 @@ class TestCLIArguments:
     @pytest.mark.integration
     def test_sfr_command_with_default_profit(self, mock_option_scan, capture_output):
         """Test sfr command with default profit value"""
-        test_args = ["alchimest.py", "sfr", "-s", "SPY", "QQQ", "-l", "150"]
+        test_args = [
+            "alchimest.py",
+            "sfr",
+            "-s",
+            "SPY",
+            "QQQ",
+            "-l",
+            "150",
+        ]
 
         with patch.object(sys, "argv", test_args):
             alchimest.main()
