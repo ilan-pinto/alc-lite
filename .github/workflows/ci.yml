@@ -20,7 +20,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -59,6 +61,16 @@ jobs:
     #   run: |
     #     mypy . --ignore-missing-imports
         
+    - name: Run tests
+      run: |
+        echo "🚀 Running test suite..."
+        
+        # Run all tests with coverage (this will include all test types)
+        echo "📊 Running full test suite with coverage..."
+        python -m pytest tests/ -v --cov=commands --cov=modules --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=20
+        
+        echo "✅ All tests completed successfully!"
+        
     - name: Run tests with pytest
       run: |
         python -m pytest tests/ -v --cov=commands --cov=modules --cov-report=xml --cov-report=html
@@ -70,6 +82,47 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+        
+    - name: Auto-increment patch version
+      id: version_bump
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      run: |
+        # Read current version from alchimest.py
+        CURRENT_VERSION=$(grep -o '__version__ = "[^"]*"' alchimest.py | cut -d'"' -f2)
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Parse version components
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        
+        # Increment patch version
+        NEW_PATCH=$((PATCH + 1))
+        NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+        
+        echo "New version: $NEW_VERSION"
+        
+        # Update the version in alchimest.py
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          # macOS
+          sed -i '' "s/__version__ = \"[^\"]*\"/__version__ = \"$NEW_VERSION\"/" alchimest.py
+        else
+          # Linux
+          sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$NEW_VERSION\"/" alchimest.py
+        fi
+        
+        # Verify the change
+        UPDATED_VERSION=$(grep -o '__version__ = "[^"]*"' alchimest.py | cut -d'"' -f2)
+        echo "Updated version in file: $UPDATED_VERSION"
+        
+        # Set outputs for later steps
+        echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "previous_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        
+        # Commit and push the version change
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add alchimest.py
+        git commit -m "Auto-increment patch version to $NEW_VERSION [skip ci]"
+        git push
         
     - name: Get version information
       id: version
@@ -133,10 +186,12 @@ jobs:
           ## Alchimist Project - Arbitrage Option Strategies CLI
           
           **Version:** ${{ steps.version.outputs.version }}
+          **Previous Version:** ${{ steps.version_bump.outputs.previous_version }}
           **Commit:** ${{ steps.version.outputs.git_hash }}
           
           ### What's New
           - Automated release with version ${{ steps.version.outputs.version }}
+          - Auto-incremented patch version from ${{ steps.version_bump.outputs.previous_version }}
           - Includes all source code and dependencies
           - Excludes virtual environment for clean distribution
           - Comprehensive test coverage with pytest integration tests
@@ -171,4 +226,4 @@ jobs:
     - name: Cleanup
       run: |
         rm -rf temp_zip
-        rm -f alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip 
+        rm -f alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
