@@ -2,7 +2,7 @@
 
 import argparse
 import logging
-import pandas as pd
+
 import warnings
 
 from commands.option import OptionScan
@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Version information
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 # Custom theme for log levels
 custom_theme = Theme(
@@ -29,7 +29,7 @@ custom_theme = Theme(
 
 # Create a filter that only allows INFO-level logs
 class InfoOnlyFilter(logging.Filter):
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         return record.levelno == logging.INFO
 
 
@@ -51,7 +51,7 @@ DEFAULT_REPORT_FOLDER = "~/dev/AlchimistProject/alchimest/report"
 DEFAULT_MIN_PROFIT = 0.5
 
 
-def configure_logging(level=logging.INFO):
+def configure_logging(level: int = logging.INFO) -> None:
     logging.basicConfig(
         level=level,
         format="%(message)s",
@@ -59,7 +59,7 @@ def configure_logging(level=logging.INFO):
     )
 
 
-def main():
+def main() -> None:
     """Main function for CLI execution"""
     configure_logging()
     logger = logging.getLogger("rich")
@@ -75,7 +75,7 @@ def main():
     # Synthetic free arbitrage sub-command
     parser_sfr = subparsers.add_parser(
         "sfr",
-        help="Search for synthetic free arbitrage opportunities",
+        help="Search for synthetic risk free arbitrage opportunities",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser_sfr.add_argument(

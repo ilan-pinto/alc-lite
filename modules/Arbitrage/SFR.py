@@ -204,7 +204,7 @@ class SFRExecutor(BaseExecutor):
             spread = stock_price - put_strike
 
             min_profit = net_credit - spread
-            max_profit = spread + net_credit
+            max_profit = (call_strike - put_strike) + net_credit
 
             min_roi = (min_profit / (stock_price + net_credit)) * 100
 
