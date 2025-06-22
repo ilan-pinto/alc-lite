@@ -33,8 +33,9 @@ class SynExecutor(BaseExecutor):
         option_contracts (List[Contract]): List of option contracts (call and put)
         symbol (str): Trading symbol
         cost_limit (float): Maximum price limit for execution
-        max_loss (float): Maximum loss for execution
-        max_profit (float): Maximum profit for execution
+        max_loss_threshold (float): Maximum loss for execution
+        max_profit_threshold (float): Maximum profit for execution
+        profit_ratio_threshold (float): Maximum profit to loss ratio for execution
         expiry (str): Option expiration date
     """
 
@@ -46,8 +47,9 @@ class SynExecutor(BaseExecutor):
         option_contracts: List[Contract],
         symbol: str,
         cost_limit: float,
-        max_loss: float,
-        max_profit: float,
+        max_loss_threshold: float,
+        max_profit_threshold: float,
+        profit_ratio_threshold: float,
         expiry: str,
     ) -> None:
         """
@@ -60,8 +62,9 @@ class SynExecutor(BaseExecutor):
             option_contracts: List of option contracts (call and put)
             symbol: Trading symbol
             cost_limit: Maximum price limit for execution
-            max_loss: Maximum loss for execution
-            max_profit: Maximum profit for execution
+            max_loss_threshold: Maximum loss for execution
+            max_profit_threshold: Maximum profit for execution
+            profit_ratio_threshold: Maximum profit to loss ratio for execution
             expiry: Option expiration date
         """
         super().__init__(
@@ -74,35 +77,53 @@ class SynExecutor(BaseExecutor):
             expiry,
             time.time(),
         )
-        self.max_loss = max_loss
-        self.max_profit = max_profit
+        self.max_loss_threshold = max_loss_threshold
+        self.max_profit_threshold = max_profit_threshold
+        self.profit_ratio_threshold = profit_ratio_threshold
 
     def check_conditions(
         self,
         symbol: str,
-        profit_target: float,
         cost_limit: float,
-        put_strike: float,
         lmt_price: float,
         net_credit: float,
         min_roi: float,
-        stock_price: float,
-        max_loss: float,
         min_profit: float,
         max_profit: float,
     ) -> bool:
 
-        profit_ratio = max_profit / abs(max_loss)
+        profit_ratio = max_profit / abs(min_profit)
 
-        if max_loss >= min_profit:  # no arbitrage condition
+        if (
+            self.max_loss_threshold is not None
+            and self.max_loss_threshold >= min_profit
+        ):  # no arbitrage condition
             logger.info(
-                f"max_loss limit [{max_loss}] >  calculated max_loss [{min_profit}] - <doesn't meet conditions>"
+                f"max_loss limit [{self.max_loss_threshold}] >  calculated max_loss [{min_profit}] - <doesn't meet conditions>"
             )
             return False
 
         elif net_credit < 0:
             logger.info(
                 f"[{symbol}] net_credit[{net_credit}] < 0 - doesn't meet conditions"
+            )
+            return False
+
+        elif (
+            self.max_profit_threshold is not None
+            and self.max_profit_threshold < max_profit
+        ):
+            logger.info(
+                f"[{symbol}] max_profit threshold [{self.max_profit_threshold }] < max_profit [{max_profit}] - doesn't meet conditions"
+            )
+            return False
+
+        elif (
+            self.profit_ratio_threshold is not None
+            and self.profit_ratio_threshold > profit_ratio
+        ):
+            logger.info(
+                f"[{symbol}] profit_ratio_threshold  [{self.profit_ratio_threshold }] > profit_ratio [{profit_ratio}] - doesn't meet conditions"
             )
             return False
 
@@ -215,14 +236,10 @@ class SynExecutor(BaseExecutor):
 
             if self.check_conditions(
                 self.symbol,
-                getattr(self, "profit_target", None),
                 self.cost_limit,
-                put_strike,
                 stock_price + net_credit,
                 net_credit,
                 min_roi,  # min ROI
-                stock_price,
-                self.max_loss,
                 min_profit,
                 max_profit,
             ):
@@ -254,7 +271,14 @@ class SynExecutor(BaseExecutor):
 
 class Syn(ArbitrageClass):
 
-    async def scan(self, symbol_list, cost_limit, max_loss, max_profit):
+    async def scan(
+        self,
+        symbol_list: List[str],
+        cost_limit: float,
+        max_loss_threshold: float,
+        max_profit_threshold: float,
+        profit_ratio_threshold: float,
+    ) -> None:
         """
         scan for Syn and execute order
 
@@ -271,8 +295,9 @@ class Syn(ArbitrageClass):
 
         # set configuration
         self.cost_limit = cost_limit
-        self.max_loss = max_loss
-        self.max_profit = max_profit
+        self.max_loss_threshold = max_loss_threshold
+        self.max_profit_threshold = max_profit_threshold
+        self.profit_ratio_threshold = profit_ratio_threshold
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=2)
         # self.ib.reqMarketDataType = 3
 
@@ -290,7 +315,7 @@ class Syn(ArbitrageClass):
             stock_ticker = {}
             self.ib.pendingTickersEvent = Event("pendingTickersEvent")
 
-    async def scan_syn(self, symbol):
+    async def scan_syn(self, symbol: str) -> None:
         exchange, option_type, stock = self._get_stock_contract(symbol)
 
         # Request market data for the stock
@@ -335,8 +360,9 @@ class Syn(ArbitrageClass):
                 option_contracts=[call, put],
                 symbol=symbol,
                 cost_limit=self.cost_limit,
-                max_loss=self.max_loss,
-                max_profit=self.max_profit,
+                max_loss_threshold=self.max_loss_threshold,
+                max_profit_threshold=self.max_profit_threshold,
+                profit_ratio_threshold=self.profit_ratio_threshold,
                 expiry=expiry,
             )
 

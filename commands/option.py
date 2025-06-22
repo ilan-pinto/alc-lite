@@ -59,8 +59,9 @@ class OptionScan:
         self,
         symbol_list,
         cost_limit=120,
-        max_loss=None,
-        max_profit=None,
+        max_loss_threshold=None,
+        max_profit_threshold=None,
+        profit_ratio_threshold=None,
     ):
         syn = Syn()
         default_list = [
@@ -88,8 +89,9 @@ class OptionScan:
                 syn.scan(
                     symbol_list,
                     cost_limit=cost_limit,
-                    max_loss=max_loss,
-                    max_profit=max_profit,
+                    max_loss_threshold=max_loss_threshold,
+                    max_profit_threshold=max_profit_threshold,
+                    profit_ratio_threshold=profit_ratio_threshold,
                 )
             )
         except KeyboardInterrupt:

@@ -2,7 +2,6 @@
 
 import argparse
 import logging
-
 import warnings
 
 from commands.option import OptionScan
@@ -114,7 +113,7 @@ def main() -> None:
         type=float,
         default=120,
         required=False,
-        help="Minimum price for the contract (default: 50)",
+        help="Minimum price for the contract [default: 120]",
     )
 
     parser_syn.add_argument(
@@ -123,7 +122,7 @@ def main() -> None:
         type=float,
         default=None,
         required=False,
-        help=f"triggers a non-arbitrage scanner in which min profit can be up to max-lost defined ",
+        help=f"defines min threshold of the *max loss* for the strategy [default: None]",
     )
 
     parser_syn.add_argument(
@@ -132,7 +131,15 @@ def main() -> None:
         type=float,
         default=None,
         required=False,
-        help=f"triggers a non-arbitrage scanner in which min profit can be up to max-lost defined ",
+        help=f"defines min threshold of the *max profit* for the strategy [default: None]",
+    )
+    parser_syn.add_argument(
+        "-pr",
+        "--profit-ratio",
+        type=float,
+        default=None,
+        required=False,
+        help=f"defines min threshold of max profit to max loss [max_profit/abs(max_loss)] for the strategy [default: None]",
     )
 
     args = parser.parse_args()
@@ -150,8 +157,9 @@ def main() -> None:
         op.syn_finder(
             symbol_list=args.symbols,
             cost_limit=args.cost_limit,
-            max_loss=args.max_loss,
-            max_profit=args.max_profit,
+            max_loss_threshold=args.max_loss,
+            max_profit_threshold=args.max_profit,
+            profit_ratio_threshold=args.profit_ratio,
         )
 
     else:
