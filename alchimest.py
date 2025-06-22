@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Version information
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Custom theme for log levels
 custom_theme = Theme(
