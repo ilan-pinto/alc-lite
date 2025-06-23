@@ -6,6 +6,7 @@ import pyfiglet
 import warnings
 
 from commands.option import OptionScan
+from modules.welcome import print_welcome
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 from rich.console import Console
@@ -13,7 +14,7 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Version information
-__version__ = "0.1.5"
+__version__ = "0.2.0"
 
 # Custom theme for log levels
 custom_theme = Theme(
@@ -62,10 +63,7 @@ def configure_logging(level: int = logging.INFO) -> None:
 def main() -> None:
     """Main function for CLI execution"""
 
-    # Welcome message
-    welcome_message = pyfiglet.figlet_format("alc-lite")
-    console.print(f"[bold green]{welcome_message}[/bold green]")
-    console.print(f"[bold cyan]Version: {__version__}[/bold cyan]\n")
+    print_welcome(console, __version__, DEFAULT_MIN_PROFIT)
 
     configure_logging()
     logger = logging.getLogger("rich")

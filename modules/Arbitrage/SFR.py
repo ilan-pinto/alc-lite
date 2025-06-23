@@ -15,6 +15,9 @@ from .common import configure_logging, get_logger
 configure_logging(level=logging.INFO)
 logger = get_logger()
 
+# Global contract_ticker for use in SFRExecutor and patching in tests
+contract_ticker = {}
+
 
 class SFRExecutor(BaseExecutor):
     """

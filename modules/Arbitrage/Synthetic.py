@@ -11,6 +11,9 @@ from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManage
 
 from .common import configure_logging, get_logger
 
+# Global contract_ticker for use in SynExecutor and patching in tests
+contract_ticker = {}
+
 # Configure logging
 configure_logging(level=logging.INFO)
 logger = get_logger()
