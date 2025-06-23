@@ -25,14 +25,14 @@ version_compare() {
     local version2=$2
     local IFS=.
     local i ver1=($version1) ver2=($version2)
-    
+
     for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do
         ver1[i]=0
     done
     for ((i=${#ver2[@]}; i<${#ver1[@]}; i++)); do
         ver2[i]=0
     done
-    
+
     for ((i=0; i<${#ver1[@]}; i++)); do
         if [[ ${ver1[i]} -gt ${ver2[i]} ]]; then
             return 0
@@ -87,4 +87,4 @@ echo -e "${YELLOW}To start using the software:${NC}"
 echo "1. Open a new terminal window or run: source ~/.zshrc"
 echo "2. Type 'alc-lite' to run the program"
 echo -e "${YELLOW}Note:${NC} Make sure to activate the virtual environment when working on the project:"
-echo "source venv/bin/activate" 
+echo "source venv/bin/activate"

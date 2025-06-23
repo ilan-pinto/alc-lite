@@ -113,10 +113,10 @@ To add new tests:
 def test_new_feature(self, mock_option_scan, capture_output):
     """Test description of what this test validates"""
     test_args = ['alchimest.py', 'command', 'arg1', 'arg2']
-    
+
     with patch.object(sys, 'argv', test_args):
         alchimest.main()
-    
+
     # Assert expected behavior
     mock_option_scan.method.assert_called_once_with(expected_args)
-``` 
+```

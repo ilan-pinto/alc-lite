@@ -7,7 +7,7 @@ markdown
 matplotlib
 black
 ib_async==1.0.1
-panadas 
+panadas
 rich
 tenacity
 tabulate
@@ -16,3 +16,6 @@ Pillow
 memory_profiler
 pytest>=7.0.0
 pytest-cov>=4.0.0
+pyfiglet
+pre-commit
+isort

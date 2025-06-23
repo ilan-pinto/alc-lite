@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import pyfiglet
 import warnings
 
 from commands.option import OptionScan
@@ -60,6 +61,12 @@ def configure_logging(level: int = logging.INFO) -> None:
 
 def main() -> None:
     """Main function for CLI execution"""
+
+    # Welcome message
+    welcome_message = pyfiglet.figlet_format("alc-lite")
+    console.print(f"[bold green]{welcome_message}[/bold green]")
+    console.print(f"[bold cyan]Version: {__version__}[/bold cyan]\n")
+
     configure_logging()
     logger = logging.getLogger("rich")
 

@@ -106,6 +106,6 @@ logs/
 
 # Temporary files
 temp_zip/
-*.zip 
+*.zip
 filled_orders.txt
 .vscode/launch.json

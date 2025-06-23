@@ -1,47 +1,80 @@
-# Alchimist Project - Arbitrage Option Strategies CLI
+# Alchimist-Lite (alc-lite)
 
-## Overview
-This project provides a command-line interface (CLI) tool for executing arbitrage option strategies. It allows users to identify and execute profitable opportunities in the options market through automated trading strategies.
+**Alchimist-Lite** is a powerful command-line tool designed for traders and financial analysts to scan for and analyze arbitrage opportunities in the options market. It currently supports Synthetic-Free-Risk (SFR) and Synthetic (non-risk-free) strategies.
 
-## Installation
+The project is built with a focus on modularity and extensibility, allowing for the easy addition of new arbitrage strategies. It leverages `ib-async` for interacting with Interactive Brokers and `rich` for beautiful and informative console output.
 
-### Prerequisites
-- Python 3.8 or higher
-- pip (Python package installer)
+## 🚀 Features
 
-### Steps
-1. Clone the repository:
+- **Arbitrage Strategy Scanning**: Scan for SFR and Synthetic arbitrage opportunities.
+- **Interactive Brokers Integration**: Connects to IBKR for real-time market data.
+- **Extensible Architecture**: Easily add new strategies by inheriting from the `ArbitrageClass`.
+- **Command-Line Interface**: Simple and intuitive CLI for running scans.
+- **CI/CD Automation**: Automated versioning, testing, and releases powered by GitHub Actions.
+
+## ⚙️ Installation
+
+To get started with Alchimist-Lite, follow these steps:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/ilpinto/alc-lite.git
+    cd alc-lite
+    ```
+2.  **Create and activate a virtual environment:**
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    ```
+3.  **Install the required dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+## Usage
+
+The main entry point for the tool is `alchimest.py`. You can run different strategies using the available sub-commands.
+
+### General Help
+To see all available commands and options, run:
 ```bash
-git clone https://github.com/yourusername/alc-lite.git
-cd alc-lite
+python alchimest.py --help
 ```
 
-2. Create a virtual environment (recommended):
+### Scanning for Synthetic-Free-Risk (SFR)
+To scan for SFR opportunities for a list of symbols:
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+python alchimest.py sfr --symbols MSFT AAPL GOOG --cost-limit 100 --profit 0.75
+```
+- `--symbols`: A list of stock symbols to scan.
+- `--cost-limit`: The maximum price you are willing to pay for the BAG contract.
+- `--profit`: The minimum required ROI for a trade to be considered.
+
+### Scanning for Synthetic (Syn) Opportunities
+To scan for Synthetic (non-risk-free) opportunities:
+```bash
+python alchimest.py syn --symbols TSLA NVDA --cost-limit 120 --max-loss 50 --max-profit 100
+```
+- `--symbols`: A list of stock symbols to scan.
+- `--cost-limit`: The maximum price for the contract.
+- `--max-loss`: The maximum acceptable loss for the trade.
+- `--max-profit`: The maximum target profit for the trade.
+
+## 🧪 Testing
+
+To run the test suite, use `pytest`:
+```bash
+python -m pytest tests/ -v
 ```
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+## 🤝 Contributing
 
-4. Create a global alias (optional):
-```bash
-echo 'alias alc-lite="python $(pwd)/alc_lite.py"' >> ~/.bashrc  # For bash users
-# OR
-echo 'alias alc-lite="python $(pwd)/alc_lite.py"' >> ~/.zshrc   # For zsh users
-source ~/.bashrc  # or source ~/.zshrc for zsh users
-```
+Contributions are welcome! If you'd like to contribute, please fork the repository and create a pull request. For major changes, please open an issue first to discuss what you would like to change.
 
-## ⚠️ Warning
-**DISCLAIMER**: This software is provided for educational and research purposes only. Trading financial instruments involves significant risk of loss. Using this product is at your own risk. The developers and contributors are not responsible for any financial losses incurred through the use of this software. Always perform your own due diligence and consult with financial advisors before making any trading decisions.
+## 📜 License
 
-## Copyright
-© 2024 Alchimist Project. All rights reserved.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-This software and its documentation are protected by copyright law. Unauthorized copying, distribution, or use of this software, via any medium, is strictly prohibited. Permission to use this software must be obtained from the copyright holders.
+## ⚠️ Disclaimer
 
-## License
-[Add your license information here] 
+This software is provided for educational and research purposes only. Trading financial instruments involves significant risk. The authors and contributors are not responsible for any financial losses. Use at your own risk.

@@ -11,23 +11,23 @@ on:
 jobs:
   ci:
     runs-on: macos-latest
-    
+
     permissions:
       contents: write
       actions: read
       packages: write
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        
+
     - name: Cache pip dependencies
       uses: actions/cache@v3
       with:
@@ -35,46 +35,46 @@ jobs:
         key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
-          
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install flake8 black isort mypy
-        
+
     - name: Lint with flake8
       run: |
         # Stop the build if there are Python syntax errors or undefined names
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # Exit-zero treats all errors as warnings
         flake8 . --count --exit-zero --statistics
-        
+
     - name: Format check with black
       run: |
         black --check --diff .
-        
+
     - name: Import sorting check with isort
       run: |
         isort --check-only --diff .
-        
+
     # - name: Type checking with mypy
     #   run: |
     #     mypy . --ignore-missing-imports
-        
+
     - name: Run tests
       run: |
         echo "🚀 Running test suite..."
-        
+
         # Run all tests with coverage (this will include all test types)
         echo "📊 Running full test suite with coverage..."
         python -m pytest tests/ -v --cov=commands --cov=modules --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=20
-        
+
         echo "✅ All tests completed successfully!"
-        
+
     - name: Run tests with pytest
       run: |
         python -m pytest tests/ -v --cov=commands --cov=modules --cov-report=xml --cov-report=html
-        
+
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3
       with:
@@ -82,24 +82,25 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
-        
-    - name: Auto-increment patch version
+
+    - name: Auto-increment minor version
       id: version_bump
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       run: |
         # Read current version from alchimest.py
         CURRENT_VERSION=$(grep -o '__version__ = "[^"]*"' alchimest.py | cut -d'"' -f2)
         echo "Current version: $CURRENT_VERSION"
-        
+
         # Parse version components
         IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-        
-        # Increment patch version
-        NEW_PATCH=$((PATCH + 1))
-        NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-        
+
+        # Increment minor version and reset patch
+        NEW_MINOR=$((MINOR + 1))
+        NEW_PATCH=0
+        NEW_VERSION="$MAJOR.$NEW_MINOR.$NEW_PATCH"
+
         echo "New version: $NEW_VERSION"
-        
+
         # Update the version in alchimest.py
         if [[ "$OSTYPE" == "darwin"* ]]; then
           # macOS
@@ -108,22 +109,22 @@ jobs:
           # Linux
           sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$NEW_VERSION\"/" alchimest.py
         fi
-        
+
         # Verify the change
         UPDATED_VERSION=$(grep -o '__version__ = "[^"]*"' alchimest.py | cut -d'"' -f2)
         echo "Updated version in file: $UPDATED_VERSION"
-        
+
         # Set outputs for later steps
         echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "previous_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-        
+
         # Commit and push the version change
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add alchimest.py
-        git commit -m "Auto-increment patch version to $NEW_VERSION [skip ci]"
+        git commit -m "Auto-increment minor version to $NEW_VERSION [skip ci]"
         git push
-        
+
     - name: Get version information
       id: version
       run: |
@@ -133,46 +134,46 @@ jobs:
         else
           VERSION="0.1.0"
         fi
-        
+
         # Get git information
         GIT_HASH=$(git rev-parse --short HEAD)
         GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "dev")
-        
+
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "git_hash=$GIT_HASH" >> $GITHUB_OUTPUT
         echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
-        
+
         echo "Version: $VERSION"
         echo "Git Hash: $GIT_HASH"
         echo "Git Tag: $GIT_TAG"
-        
+
     - name: Create zip artifact
       run: |
         # Create a temporary directory for the zip
         mkdir -p temp_zip
-        
+
         # Copy all files except venv and .git
         rsync -av --exclude='venv/' --exclude='.git/' --exclude='temp_zip/' --exclude='.github/' ./ temp_zip/
-        
+
         # Create zip file with version info
         cd temp_zip
         zip -r "../alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip" .
         cd ..
-        
+
     - name: Upload zip artifact
       uses: actions/upload-artifact@v4
       with:
         name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}
         path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
         retention-days: 30
-        
+
     - name: Upload test coverage artifact
       uses: actions/upload-artifact@v4
       with:
         name: test-coverage-html
         path: htmlcov/
         retention-days: 30
-        
+
     - name: Create GitHub Release
       id: create_release
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -184,18 +185,18 @@ jobs:
         release_name: Release v${{ steps.version.outputs.version }}
         body: |
           ## Alchimist Project - Arbitrage Option Strategies CLI
-          
+
           **Version:** ${{ steps.version.outputs.version }}
           **Previous Version:** ${{ steps.version_bump.outputs.previous_version }}
           **Commit:** ${{ steps.version.outputs.git_hash }}
-          
+
           ### What's New
           - Automated release with version ${{ steps.version.outputs.version }}
-          - Auto-incremented patch version from ${{ steps.version_bump.outputs.previous_version }}
+          - Auto-incremented minor version from ${{ steps.version_bump.outputs.previous_version }}
           - Includes all source code and dependencies
           - Excludes virtual environment for clean distribution
           - Comprehensive test coverage with pytest integration tests
-          
+
           ### Installation
           1. Download the zip file
           2. Extract to your desired location
@@ -203,15 +204,15 @@ jobs:
           4. Activate the environment: `source venv/bin/activate` (Linux/Mac) or `venv\Scripts\activate` (Windows)
           5. Install dependencies: `pip install -r requirements.txt`
           6. Run the CLI: `python alchimest.py --help`
-          
+
           ### Testing
           Run the test suite: `python -m pytest tests/ -v`
-          
+
           ### ⚠️ Warning
           This software is provided for educational and research purposes only. Trading financial instruments involves significant risk of loss.
         draft: false
         prerelease: false
-        
+
     - name: Upload Release Asset
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       uses: actions/upload-release-asset@v1
@@ -222,7 +223,7 @@ jobs:
         asset_path: ./alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
         asset_name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
         asset_content_type: application/zip
-        
+
     - name: Cleanup
       run: |
         rm -rf temp_zip
