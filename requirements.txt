@@ -16,6 +16,7 @@ Pillow
 memory_profiler
 pytest>=7.0.0
 pytest-cov>=4.0.0
+pytest-asyncio==1.0.0
 pyfiglet
 pre-commit
 isort
