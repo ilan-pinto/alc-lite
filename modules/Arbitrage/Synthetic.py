@@ -54,6 +54,7 @@ class SynExecutor(BaseExecutor):
         max_profit_threshold: float,
         profit_ratio_threshold: float,
         expiry: str,
+        quantity: int = 1,
     ) -> None:
         """
         Initialize the Syn Executor.
@@ -69,6 +70,7 @@ class SynExecutor(BaseExecutor):
             max_profit_threshold: Maximum profit for execution
             profit_ratio_threshold: Maximum profit to loss ratio for execution
             expiry: Option expiration date
+            quantity: Quantity of contracts to execute
         """
         super().__init__(
             ib,
@@ -83,6 +85,7 @@ class SynExecutor(BaseExecutor):
         self.max_loss_threshold = max_loss_threshold
         self.max_profit_threshold = max_profit_threshold
         self.profit_ratio_threshold = profit_ratio_threshold
+        self.quantity = quantity
 
     def check_conditions(
         self,
@@ -264,6 +267,7 @@ class SynExecutor(BaseExecutor):
                     call_contract,
                     put_contract,
                     round(stock_price + net_credit, 2),
+                    self.quantity,
                 )
 
             return None, None
@@ -281,6 +285,7 @@ class Syn(ArbitrageClass):
         max_loss_threshold: float,
         max_profit_threshold: float,
         profit_ratio_threshold: float,
+        quantity=1,
     ) -> None:
         """
         scan for Syn and execute order
@@ -301,6 +306,7 @@ class Syn(ArbitrageClass):
         self.max_loss_threshold = max_loss_threshold
         self.max_profit_threshold = max_profit_threshold
         self.profit_ratio_threshold = profit_ratio_threshold
+        self.quantity = quantity
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=2)
         # self.ib.reqMarketDataType = 3
 
@@ -309,7 +315,7 @@ class Syn(ArbitrageClass):
         while True:
             tasks = []
             for symbol in symbol_list:
-                task = asyncio.create_task(self.scan_syn(symbol))
+                task = asyncio.create_task(self.scan_syn(symbol, self.quantity))
                 tasks.append(task)
                 await asyncio.sleep(2)
             _ = await asyncio.gather(*tasks)
@@ -318,7 +324,7 @@ class Syn(ArbitrageClass):
             stock_ticker = {}
             self.ib.pendingTickersEvent = Event("pendingTickersEvent")
 
-    async def scan_syn(self, symbol: str) -> None:
+    async def scan_syn(self, symbol: str, quantity: int) -> None:
         exchange, option_type, stock = self._get_stock_contract(symbol)
 
         # Request market data for the stock
@@ -367,6 +373,7 @@ class Syn(ArbitrageClass):
                 max_profit_threshold=self.max_profit_threshold,
                 profit_ratio_threshold=self.profit_ratio_threshold,
                 expiry=expiry,
+                quantity=quantity,
             )
 
             self.ib.pendingTickersEvent += syn.executor

@@ -53,13 +53,18 @@ class TestCLIArguments:
             "1.5",
             "-l",
             "100",
+            "-q",
+            "5",
         ]
 
         with patch.object(sys, "argv", test_args):
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY", "QQQ", "META"], profit_target=1.5, cost_limit=100
+            symbol_list=["SPY", "QQQ", "META"],
+            profit_target=1.5,
+            cost_limit=100,
+            quantity=5,
         )
 
     @pytest.mark.integration
@@ -81,7 +86,7 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY", "QQQ"], profit_target=None, cost_limit=150
+            symbol_list=["SPY", "QQQ"], profit_target=None, cost_limit=150.0, quantity=1
         )
 
     @pytest.mark.integration
@@ -97,7 +102,8 @@ class TestCLIArguments:
         mock_option_scan.sfr_finder.assert_called_once_with(
             symbol_list=["SPY", "QQQ"],
             profit_target=2.0,
-            cost_limit=120,  # Default value
+            cost_limit=120.0,  # Default value
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -111,7 +117,7 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=None, profit_target=1.0, cost_limit=200
+            symbol_list=None, profit_target=1.0, cost_limit=200.0, quantity=1
         )
 
     @pytest.mark.integration
@@ -134,6 +140,8 @@ class TestCLIArguments:
             "200",
             "-pr",
             "2.5",
+            "-q",
+            "7",
         ]
 
         with patch.object(sys, "argv", test_args):
@@ -145,6 +153,7 @@ class TestCLIArguments:
             max_loss_threshold=50,
             max_profit_threshold=200,
             profit_ratio_threshold=2.5,
+            quantity=7,
         )
 
     @pytest.mark.integration
@@ -171,10 +180,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY", "QQQ"],
-            cost_limit=120,  # Default value
-            max_loss_threshold=30,
-            max_profit_threshold=150,
+            cost_limit=120.0,  # Default value
+            max_loss_threshold=30.0,
+            max_profit_threshold=150.0,
             profit_ratio_threshold=3.0,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -189,10 +199,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=None,
-            cost_limit=80,
-            max_loss_threshold=25,
+            cost_limit=80.0,
+            max_loss_threshold=25.0,
             max_profit_threshold=None,
             profit_ratio_threshold=1.5,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -207,10 +218,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY"],
-            cost_limit=120,  # Default value
+            cost_limit=120.0,  # Default value
             max_loss_threshold=None,
-            max_profit_threshold=300,
+            max_profit_threshold=300.0,
             profit_ratio_threshold=2.0,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -235,10 +247,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY", "QQQ"],
-            cost_limit=120,  # Default value
-            max_loss_threshold=40,
+            cost_limit=120.0,  # Default value
+            max_loss_threshold=40.0,
             max_profit_threshold=None,
             profit_ratio_threshold=1.8,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -253,10 +266,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY"],
-            cost_limit=120,  # Default value
+            cost_limit=120.0,  # Default value
             max_loss_threshold=None,
             max_profit_threshold=None,
             profit_ratio_threshold=None,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -329,7 +343,10 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["!MES", "@SPX", "SPY"], profit_target=0.8, cost_limit=90
+            symbol_list=["!MES", "@SPX", "SPY"],
+            profit_target=0.8,
+            cost_limit=90.0,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -359,10 +376,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["!MES", "@SPX", "SPY"],
-            cost_limit=75,
-            max_loss_threshold=20,
-            max_profit_threshold=180,
+            cost_limit=75.0,
+            max_loss_threshold=20.0,
+            max_profit_threshold=180.0,
             profit_ratio_threshold=2.2,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -376,7 +394,7 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY"], profit_target=-0.5, cost_limit=100
+            symbol_list=["SPY"], profit_target=-0.5, cost_limit=100.0, quantity=1
         )
 
     @pytest.mark.integration
@@ -404,10 +422,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY"],
-            cost_limit=100,
-            max_loss_threshold=-10,
-            max_profit_threshold=-50,
+            cost_limit=100.0,
+            max_loss_threshold=-10.0,
+            max_profit_threshold=-50.0,
             profit_ratio_threshold=0.5,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -421,7 +440,7 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY"], profit_target=0.0, cost_limit=0
+            symbol_list=["SPY"], profit_target=0.0, cost_limit=0.0, quantity=1
         )
 
     @pytest.mark.integration
@@ -449,10 +468,11 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY"],
-            cost_limit=0,
-            max_loss_threshold=0,
-            max_profit_threshold=0,
-            profit_ratio_threshold=0,
+            cost_limit=0.0,
+            max_loss_threshold=0.0,
+            max_profit_threshold=0.0,
+            profit_ratio_threshold=0.0,
+            quantity=1,
         )
 
     @pytest.mark.integration
@@ -466,7 +486,7 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY"], profit_target=999.99, cost_limit=9999
+            symbol_list=["SPY"], profit_target=999.99, cost_limit=9999.0, quantity=1
         )
 
     @pytest.mark.integration
@@ -494,8 +514,53 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY"],
-            cost_limit=9999,
-            max_loss_threshold=5000,
-            max_profit_threshold=10000,
+            cost_limit=9999.0,
+            max_loss_threshold=5000.0,
+            max_profit_threshold=10000.0,
             profit_ratio_threshold=10.5,
+            quantity=1,
+        )
+
+    @pytest.mark.integration
+    def test_sfr_command_with_default_quantity(
+        self, mock_option_scan: MagicMock, capture_output: Tuple[StringIO, StringIO]
+    ) -> None:
+        """Test sfr command with default quantity value (should be 1)"""
+        test_args = [
+            "alchimest.py",
+            "sfr",
+            "-s",
+            "SPY",
+            "QQQ",
+        ]
+
+        with patch.object(sys, "argv", test_args):
+            alchimest.main()
+
+        mock_option_scan.sfr_finder.assert_called_once_with(
+            symbol_list=["SPY", "QQQ"], profit_target=None, cost_limit=120.0, quantity=1
+        )
+
+    @pytest.mark.integration
+    def test_syn_command_with_default_quantity(
+        self, mock_option_scan: MagicMock, capture_output: Tuple[StringIO, StringIO]
+    ) -> None:
+        """Test syn command with default quantity value (should be 1)"""
+        test_args = [
+            "alchimest.py",
+            "syn",
+            "-s",
+            "SPY",
+        ]
+
+        with patch.object(sys, "argv", test_args):
+            alchimest.main()
+
+        mock_option_scan.syn_finder.assert_called_once_with(
+            symbol_list=["SPY"],
+            cost_limit=120.0,
+            max_loss_threshold=None,
+            max_profit_threshold=None,
+            profit_ratio_threshold=None,
+            quantity=1,
         )

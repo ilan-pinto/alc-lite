@@ -20,23 +20,16 @@ def print_welcome(console, version, default_min_profit):
         "[bold magenta]sfr[/bold magenta] - Search for synthetic risk free arbitrage opportunities"
     )
     console.print(
-        "    [cyan]-s[/cyan], [cyan]--symbols[/cyan] [white](list)[/white]: List of symbols to scan (e.g., !MES, @SPX)"
+        "    [cyan]-s[/cyan], [cyan]--symbols[/cyan] [white](list)[/white]: List of symbols to scan (e.g., SPY, QQQ)"
     )
     console.print(
         f"    [cyan]-p[/cyan], [cyan]--profit[/cyan] [white](float)[/white]: Minimum required ROI profit (default: {default_min_profit})"
     )
     console.print(
-        "    [cyan]-l[/cyan], [cyan]--cost-limit[/cyan] [white](float)[/white]: The max cost paid for the option [default: 120]\n"
-    )
-
-    console.print(
-        "[bold magenta]syn[/bold magenta] - Search for synthetic conversion (synthetic) opportunities not risk free"
+        "    [cyan]-l[/cyan], [cyan]--cost-limit[/cyan] [white](float)[/white]: The max cost paid for the option [default: 120]"
     )
     console.print(
-        "    [cyan]-s[/cyan], [cyan]--symbols[/cyan] [white](list)[/white]: List of symbols to scan (e.g., !MES, @SPX)"
-    )
-    console.print(
-        "    [cyan]-l[/cyan], [cyan]--cost-limit[/cyan] [white](float)[/white]: Minimum price for the contract [default: 120]"
+        "    [cyan]-q[/cyan], [cyan]--quantity[/cyan] [white](int)[/white]: Quantity of the option"
     )
     console.print(
         "    [cyan]-ml[/cyan], [cyan]--max-loss[/cyan] [white](float)[/white]: Min threshold of the *max loss* for the strategy [default: None]"
@@ -50,8 +43,8 @@ def print_welcome(console, version, default_min_profit):
 
     console.print("[bold underline yellow]Examples:[/bold underline yellow]\n")
     console.print(
-        "[green]$ python alchimest.py sfr -s spy qqq -p 0.7 -l 100[/green]  [white]# Scan for SFR with symbols !MES and @SPX, profit >= 0.7, cost limit 100[/white]"
+        "[green]$ alc-lite sfr -s spy qqq -p 0.7 -l 100 -q 2[/green]  [white]# Scan for SFR with symbols SPY and QQQ, profit >= 0.7, cost limit 100, quantity 2[/white]"
     )
     console.print(
-        "[green]$ python alchimest.py syn -s pltr -l 120 -ml -50 -mp 200 -pr 3[/green]  [white]# Synthetic conversion for !MES, cost limit 120, min loss -50, min profit 200, profit ratio 3[/white]\n"
+        "[green]$ alc-lite syn -s PLTR -l 120 -ml -50 -mp 200 -pr 0.3 -q 3[/green]  [white]# Synthetic conversion for PLTR, cost limit 120, min loss -50, min profit 200, profit ratio 0.3, quantity 3[/white]\n"
     )

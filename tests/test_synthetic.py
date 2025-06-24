@@ -255,3 +255,26 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
         assert result == ("contract", "order")
         mock_log.assert_called()
         mock_build.assert_called()
+
+
+@pytest.mark.unit
+def test_syn_executor_build_order_quantity():
+    syn_executor = SynExecutor(
+        ib=MagicMock(),
+        order_manager=MagicMock(),
+        stock_contract=MagicMock(),
+        option_contracts=[MagicMock(), MagicMock()],
+        symbol="TEST",
+        cost_limit=100.0,
+        max_loss_threshold=None,
+        max_profit_threshold=None,
+        profit_ratio_threshold=None,
+        expiry="20240101",
+        quantity=4,
+    )
+    # Patch contracts to have required attributes
+    stock = MagicMock(conId=1)
+    call = MagicMock(conId=2, right="C")
+    put = MagicMock(conId=3, right="P")
+    combo_contract, order = syn_executor.build_order("TEST", stock, call, put, 99.0, 4)
+    assert order.totalQuantity == 4

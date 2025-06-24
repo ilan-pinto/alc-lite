@@ -18,6 +18,7 @@ class OptionScan:
         symbol_list,
         profit_target,
         cost_limit,
+        quantity=1,
         volume_limit=200,
     ):
         sfr = SFR()
@@ -48,6 +49,7 @@ class OptionScan:
                     profit_target=profit_target,
                     volume_limit=volume_limit,
                     cost_limit=cost_limit,
+                    quantity=quantity,
                 )
             )
 
@@ -62,6 +64,7 @@ class OptionScan:
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
+        quantity=1,
     ):
         syn = Syn()
         default_list = [
@@ -92,6 +95,7 @@ class OptionScan:
                     max_loss_threshold=max_loss_threshold,
                     max_profit_threshold=max_profit_threshold,
                     profit_ratio_threshold=profit_ratio_threshold,
+                    quantity=quantity,
                 )
             )
         except KeyboardInterrupt:

@@ -52,6 +52,7 @@ class SFRExecutor(BaseExecutor):
         cost_limit: float,
         expiry: str,
         start_time: float,
+        quantity: int = 1,
     ) -> None:
         """
         Initialize the SFR Executor.
@@ -66,6 +67,7 @@ class SFRExecutor(BaseExecutor):
             cost_limit: Maximum price limit for execution
             expiry: Option expiration date
             start_time: Start time of the execution
+            quantity: Quantity of contracts to execute
         """
         super().__init__(
             ib,
@@ -78,6 +80,7 @@ class SFRExecutor(BaseExecutor):
             start_time,
         )
         self.profit_target = profit_target
+        self.quantity = quantity
 
     def check_conditions(
         self,
@@ -244,6 +247,7 @@ class SFRExecutor(BaseExecutor):
                     call_contract,
                     put_contract,
                     round(stock_price + net_credit, 2),
+                    self.quantity,
                 )
 
             return None, None
@@ -260,6 +264,7 @@ class SFR(ArbitrageClass):
         cost_limit,
         profit_target=0.50,
         volume_limit=100,
+        quantity=1,
     ):
         """
         scan for SFR and execute order
@@ -281,6 +286,7 @@ class SFR(ArbitrageClass):
         self.profit_target = profit_target
         self.volume_limit = volume_limit
         self.cost_limit = cost_limit
+        self.quantity = quantity
 
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=2)
         # self.ib.reqMarketDataType = 3
@@ -290,7 +296,7 @@ class SFR(ArbitrageClass):
         while True:
             tasks = []
             for symbol in symbol_list:
-                task = asyncio.create_task(self.scan_sfr(symbol))
+                task = asyncio.create_task(self.scan_sfr(symbol, self.quantity))
                 tasks.append(task)
                 await asyncio.sleep(2)
             _ = await asyncio.gather(*tasks)
@@ -299,7 +305,7 @@ class SFR(ArbitrageClass):
             stock_ticker = {}
             self.ib.pendingTickersEvent = Event("pendingTickersEvent")
 
-    async def scan_sfr(self, symbol):
+    async def scan_sfr(self, symbol, quantity):
         exchange, option_type, stock = self._get_stock_contract(symbol)
 
         # Request market data for the stock
@@ -349,6 +355,7 @@ class SFR(ArbitrageClass):
                 cost_limit=self.cost_limit,
                 expiry=expiry,
                 start_time=time.time(),
+                quantity=quantity,
             )
 
             self.ib.pendingTickersEvent += srf.executor

@@ -44,21 +44,23 @@ python alchimest.py --help
 ### Scanning for Synthetic-Free-Risk (SFR)
 To scan for SFR opportunities for a list of symbols:
 ```bash
-python alchimest.py sfr --symbols MSFT AAPL GOOG --cost-limit 100 --profit 0.75
+python alchimest.py sfr --symbols MSFT AAPL GOOG --cost-limit 100 --profit 0.75 --quantity 2
 ```
 - `--symbols`: A list of stock symbols to scan.
 - `--cost-limit`: The maximum price you are willing to pay for the BAG contract.
 - `--profit`: The minimum required ROI for a trade to be considered.
+- `--quantity`: The maximum number of contracts to purchase (default: 1).
 
 ### Scanning for Synthetic (Syn) Opportunities
 To scan for Synthetic (non-risk-free) opportunities:
 ```bash
-python alchimest.py syn --symbols TSLA NVDA --cost-limit 120 --max-loss 50 --max-profit 100
+python alchimest.py syn --symbols TSLA NVDA --cost-limit 120 --max-loss 50 --max-profit 100 --quantity 3
 ```
 - `--symbols`: A list of stock symbols to scan.
 - `--cost-limit`: The maximum price for the contract.
 - `--max-loss`: The maximum acceptable loss for the trade.
 - `--max-profit`: The maximum target profit for the trade.
+- `--quantity`: The maximum number of contracts to purchase (default: 1).
 
 ## 🧪 Testing
 

@@ -134,6 +134,7 @@ class BaseExecutor:
         call: Contract,
         put: Contract,
         lmt_price: float,
+        quantity: int = 1,
     ) -> Tuple[Contract, Order]:
         """Build a conversion order with stock, call, and put legs."""
         stock_leg = ComboLeg(
@@ -154,7 +155,7 @@ class BaseExecutor:
             orderId=self.ib.client.getReqId(),
             orderType="LMT",
             action="BUY",
-            totalQuantity=1,
+            totalQuantity=quantity,
             lmtPrice=lmt_price,
             tif="DAY",
         )

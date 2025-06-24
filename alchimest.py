@@ -103,6 +103,15 @@ def main() -> None:
         help=f"the max cost paid for the option ",
     )
 
+    parser_sfr.add_argument(
+        "-q",
+        "--quantity",
+        type=int,
+        default=1,
+        required=False,
+        help="Maximum number of contracts to purchase (default: 1)",
+    )
+
     # Synthetic conversion (synthetic) sub-command
     parser_syn = subparsers.add_parser(
         "syn",
@@ -147,6 +156,15 @@ def main() -> None:
         help=f"defines min threshold of max profit to max loss [max_profit/abs(max_loss)] for the strategy [default: None]",
     )
 
+    parser_syn.add_argument(
+        "-q",
+        "--quantity",
+        type=int,
+        default=1,
+        required=False,
+        help="Maximum number of contracts to purchase (default: 1)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "sfr":
@@ -155,6 +173,7 @@ def main() -> None:
             symbol_list=args.symbols,
             profit_target=args.profit,
             cost_limit=args.cost_limit,
+            quantity=args.quantity,
         )
 
     elif args.command == "syn":
@@ -165,6 +184,7 @@ def main() -> None:
             max_loss_threshold=args.max_loss,
             max_profit_threshold=args.max_profit,
             profit_ratio_threshold=args.profit_ratio,
+            quantity=args.quantity,
         )
 
     else:

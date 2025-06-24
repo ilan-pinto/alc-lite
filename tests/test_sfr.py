@@ -240,3 +240,25 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
         assert result == ("contract", "order")
         mock_log.assert_called()
         mock_build.assert_called()
+
+
+@pytest.mark.unit
+def test_sfr_executor_build_order_quantity():
+    sfr_executor = SFRExecutor(
+        ib=MagicMock(),
+        order_manager=MagicMock(),
+        stock_contract=MagicMock(),
+        option_contracts=[MagicMock(), MagicMock()],
+        symbol="TEST",
+        profit_target=10.0,
+        cost_limit=100.0,
+        expiry="20240101",
+        start_time=0.0,
+        quantity=3,
+    )
+    # Patch contracts to have required attributes
+    stock = MagicMock(conId=1)
+    call = MagicMock(conId=2, right="C")
+    put = MagicMock(conId=3, right="P")
+    combo_contract, order = sfr_executor.build_order("TEST", stock, call, put, 99.0, 3)
+    assert order.totalQuantity == 3
