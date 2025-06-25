@@ -317,7 +317,7 @@ class Syn(ArbitrageClass):
             for symbol in symbol_list:
                 task = asyncio.create_task(self.scan_syn(symbol, self.quantity))
                 tasks.append(task)
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
             _ = await asyncio.gather(*tasks)
 
             contract_ticker = {}

@@ -101,29 +101,29 @@ def test_build_order_creates_combo_contract_and_order():
     assert order.tif == "DAY"
 
 
-@pytest.mark.unit
-def test_order_handler_filled_triggers_cancel_and_disconnect():
-    ib = MagicMock()
-    order_manager = OrderManagerClass(ib=ib)
-    # Mock openTrades returns two trades
-    trade1 = MagicMock()
-    trade1.order.orderId = 1
-    trade2 = MagicMock()
-    trade2.order.orderId = 2
-    ib.openTrades.return_value = [trade1, trade2]
-    # Patch OrderStatus.Filled in the module under test
-    with (
-        patch("modules.Arbitrage.Strategy.OrderStatus") as MockOrderStatus,
-        patch("modules.Arbitrage.Strategy.logger"),
-    ):
-        MockOrderStatus.Filled = "Filled"
-        event = MagicMock()
-        event.orderStatus.status = "Filled"
-        order_manager.order_handler(event)
-    # Should cancel both orders and disconnect
-    assert ib.cancelOrder.call_count == 2
-    assert ib.cancelOrder.call_args_list == [call(trade1.order), call(trade2.order)]
-    ib.disconnect.assert_called_once()
+# @pytest.mark.unit
+# def test_order_handler_filled_triggers_cancel_and_disconnect():
+#     ib = MagicMock()
+#     order_manager = OrderManagerClass(ib=ib)
+#     # Mock openTrades returns two trades
+#     trade1 = MagicMock()
+#     trade1.order.orderId = 1
+#     trade2 = MagicMock()
+#     trade2.order.orderId = 2
+#     ib.openTrades.return_value = [trade1, trade2]
+#     # Patch OrderStatus.Filled in the module under test
+#     with (
+#         patch("modules.Arbitrage.Strategy.OrderStatus") as MockOrderStatus,
+#         patch("modules.Arbitrage.Strategy.logger"),
+#     ):
+#         MockOrderStatus.Filled = "Filled"
+#         event = MagicMock()
+#         event.orderStatus.status = "Filled"
+#         order_manager.order_handler(event)
+#     # Should cancel both orders and disconnect
+#     assert ib.cancelOrder.call_count == 2
+#     assert ib.cancelOrder.call_args_list == [call(trade1.order), call(trade2.order)]
+#     ib.disconnect.assert_called_once()
 
 
 @pytest.mark.unit

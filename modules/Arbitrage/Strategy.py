@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from optparse import Option
 from typing import Dict, List, Optional, Tuple
 
-import logging
 import numpy as np
 from eventkit import Event
 from ib_async import (
@@ -17,7 +16,10 @@ from ib_async import (
     OrderStatus,
     Stock,
     Ticker,
+    Trade,
 )
+from rich.console import Console
+from rich.table import Table
 
 from .common import (
     FILLED_ORDERS_FILENAME,
@@ -60,15 +62,53 @@ class OrderManagerClass:
             logger.warning(f"[{combo_contract.symbol}]contract already exists for ")
         return combo_exists
 
+    def print_trade_fills_table(self, trade: Trade) -> None:
+        """Print a rich table of all fills in the trade, including price and quantity from fill.execution."""
+        table = Table(title=f"Trade Fills for Order {trade.order.orderId}")
+        table.add_column("secIdType", style="cyan")
+        table.add_column("symbol", style="magenta")
+        table.add_column("strike", style="green")
+        table.add_column("right", style="yellow")
+        table.add_column("comboLegs", style="blue")
+        table.add_column("price", style="bold")
+        table.add_column("quantity", style="bold")
+
+        for fill in trade.fills:
+            contract = fill.contract
+            sec_id_type = getattr(contract, "secIdType", "") or getattr(
+                contract, "secType", ""
+            )
+            symbol = getattr(contract, "symbol", "")
+            strike = str(getattr(contract, "strike", ""))
+            right = getattr(contract, "right", "")
+            combo_legs = getattr(contract, "comboLegs", None)
+            if combo_legs:
+                combo_legs_str = ", ".join(
+                    [f"{leg.conId}:{leg.action}:{leg.ratio}" for leg in combo_legs]
+                )
+            else:
+                combo_legs_str = ""
+            price = str(getattr(fill.execution, "price", ""))
+            quantity = str(getattr(fill.execution, "shares", ""))
+            table.add_row(
+                str(sec_id_type),
+                str(symbol),
+                str(strike),
+                str(right),
+                combo_legs_str,
+                price,
+                quantity,
+            )
+
+        console = Console()
+        console.print(table)
+
     def order_handler(self, event):
-
         # orders = await self.ib.reqOpenOrdersAsync()
-        orders = self.ib.openTrades()
-
+        orders: List[Trade] = self.ib.openTrades()
         if event.orderStatus.status == OrderStatus.Filled:
             for trade in orders:
-                logger.warning(f"Cancelling order {trade.order.orderId}")
-                self.ib.cancelOrder(trade.order)
+                self.print_trade_fills_table(trade)
 
             self.ib.disconnect()
             logger.info("Completed order ")
