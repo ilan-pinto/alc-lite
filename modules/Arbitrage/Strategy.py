@@ -19,7 +19,6 @@ from ib_async import (
     Trade,
 )
 from rich.console import Console
-from rich.table import Table
 
 from .common import (
     FILLED_ORDERS_FILENAME,
@@ -62,8 +61,8 @@ class OrderManagerClass:
             logger.warning(f"[{combo_contract.symbol}]contract already exists for ")
         return combo_exists
 
-    def print_trade_fills_table(self, trade: Trade) -> None:
-        """Print a rich table of all fills in the trade, including price and quantity from fill.execution."""
+    def trade_fills_table_str(self, trade: Trade) -> str:
+        """Return a string representation of a rich table of all fills in the trade, including price and quantity from fill.execution."""
         table = Table(title=f"Trade Fills for Order {trade.order.orderId}")
         table.add_column("secIdType", style="cyan")
         table.add_column("symbol", style="magenta")
@@ -100,23 +99,13 @@ class OrderManagerClass:
                 quantity,
             )
 
-        console = Console()
+        console = Console(record=True)
         console.print(table)
-
-    def order_handler(self, event):
-        # orders = await self.ib.reqOpenOrdersAsync()
-        orders: List[Trade] = self.ib.openTrades()
-        if event.orderStatus.status == OrderStatus.Filled:
-            for trade in orders:
-                self.print_trade_fills_table(trade)
-
-            self.ib.disconnect()
-            logger.info("Completed order ")
+        return console.export_text()
 
     async def place_order(self, contract, order):
 
         position_exists = self._check_position_exists(contract)
-        # trade_exists = self._check_trade_exists(contract)
         any_trade = self._check_any_trade_exists()
         if not position_exists and not any_trade:
             trade = self.ib.placeOrder(contract=contract, order=order)
@@ -302,12 +291,12 @@ class ArbitrageClass:
     def __init__(self) -> None:
         self.ib = IB()
         self.order_manager = OrderManagerClass(ib=self.ib)
-        self.ib.orderStatusEvent += self.order_manager.order_handler
         self.semaphore = asyncio.Semaphore(1000)
 
     def onFill(self, trade):
         """Called whenever any order gets filled (partially or fully)."""
-        log_filled_order(trade)
+        if log_filled_order(trade):
+            self.ib.disconnect()
 
     def filter_expirations_within_range(
         self, expiration_dates, start_num_days=40, end_num_days=45
