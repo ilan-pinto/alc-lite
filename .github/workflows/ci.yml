@@ -147,6 +147,134 @@ jobs:
         echo "Git Hash: $GIT_HASH"
         echo "Git Tag: $GIT_TAG"
 
+    - name: Generate changelog
+      id: changelog
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      run: |
+        echo "🔄 Generating changelog..."
+
+        # Get the previous version (either from version_bump step or from git tags)
+        if [ "${{ steps.version_bump.outputs.previous_version }}" != "" ]; then
+          PREVIOUS_VERSION="${{ steps.version_bump.outputs.previous_version }}"
+        else
+          # Fallback: get the latest tag or use initial version
+          PREVIOUS_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+        fi
+
+        CURRENT_VERSION="${{ steps.version.outputs.version }}"
+
+        echo "Previous version: $PREVIOUS_VERSION"
+        echo "Current version: $CURRENT_VERSION"
+
+        # Generate changelog from git commits
+        CHANGELOG_FILE="CHANGELOG_TEMP.md"
+
+        echo "### 📝 Changelog" > $CHANGELOG_FILE
+        echo "" >> $CHANGELOG_FILE
+
+        # Check if we have any previous tags to compare against
+        if git tag -l | grep -q "v$PREVIOUS_VERSION"; then
+          COMMIT_RANGE="v$PREVIOUS_VERSION..HEAD"
+          echo "**Changes since v$PREVIOUS_VERSION:**" >> $CHANGELOG_FILE
+        else
+          # If no previous tag exists, get all commits
+          COMMIT_RANGE="HEAD"
+          echo "**All changes in this version:**" >> $CHANGELOG_FILE
+        fi
+
+        echo "" >> $CHANGELOG_FILE
+
+        # Get commits with categorization
+        FEAT_COMMITS=$(git log $COMMIT_RANGE --oneline --grep="^feat" --grep="^feature" || true)
+        FIX_COMMITS=$(git log $COMMIT_RANGE --oneline --grep="^fix" --grep="^bugfix" || true)
+        REFACTOR_COMMITS=$(git log $COMMIT_RANGE --oneline --grep="^refactor" --grep="^refact" || true)
+        DOCS_COMMITS=$(git log $COMMIT_RANGE --oneline --grep="^docs" --grep="^doc" || true)
+        TEST_COMMITS=$(git log $COMMIT_RANGE --oneline --grep="^test" --grep="^tests" || true)
+        CHORE_COMMITS=$(git log $COMMIT_RANGE --oneline --grep="^chore" --grep="^ci" --grep="^build" || true)
+
+        # Get all commits for "Other Changes" section
+        ALL_COMMITS=$(git log $COMMIT_RANGE --oneline --pretty=format:"%h %s" || true)
+
+        # Function to format commits
+        format_commits() {
+          local commits="$1"
+          if [ -n "$commits" ]; then
+            echo "$commits" | while IFS= read -r line; do
+              if [ -n "$line" ]; then
+                echo "- $line"
+              fi
+            done
+          fi
+        }
+
+        # Add categorized commits to changelog
+        if [ -n "$FEAT_COMMITS" ]; then
+          echo "#### 🚀 New Features" >> $CHANGELOG_FILE
+          format_commits "$FEAT_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        if [ -n "$FIX_COMMITS" ]; then
+          echo "#### 🐛 Bug Fixes" >> $CHANGELOG_FILE
+          format_commits "$FIX_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        if [ -n "$REFACTOR_COMMITS" ]; then
+          echo "#### ♻️ Code Refactoring" >> $CHANGELOG_FILE
+          format_commits "$REFACTOR_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        if [ -n "$DOCS_COMMITS" ]; then
+          echo "#### 📚 Documentation" >> $CHANGELOG_FILE
+          format_commits "$DOCS_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        if [ -n "$TEST_COMMITS" ]; then
+          echo "#### 🧪 Tests" >> $CHANGELOG_FILE
+          format_commits "$TEST_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        if [ -n "$CHORE_COMMITS" ]; then
+          echo "#### 🔧 Chores & CI" >> $CHANGELOG_FILE
+          format_commits "$CHORE_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        # Add all commits as "Other Changes" if they don't fit above categories
+        if [ -n "$ALL_COMMITS" ]; then
+          echo "#### 📋 All Changes" >> $CHANGELOG_FILE
+          format_commits "$ALL_COMMITS" >> $CHANGELOG_FILE
+          echo "" >> $CHANGELOG_FILE
+        fi
+
+        # Add commit statistics
+        COMMIT_COUNT=$(git rev-list --count $COMMIT_RANGE 2>/dev/null || echo "0")
+        CONTRIBUTORS=$(git log $COMMIT_RANGE --format="%an" | sort -u | wc -l 2>/dev/null || echo "1")
+
+        echo "#### 📊 Statistics" >> $CHANGELOG_FILE
+        echo "- **Commits:** $COMMIT_COUNT" >> $CHANGELOG_FILE
+        echo "- **Contributors:** $CONTRIBUTORS" >> $CHANGELOG_FILE
+        echo "- **Files changed:** $(git diff --name-only $COMMIT_RANGE | wc -l 2>/dev/null || echo "N/A")" >> $CHANGELOG_FILE
+
+        # Store changelog content for use in release
+        CHANGELOG_CONTENT=$(cat $CHANGELOG_FILE)
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        # Display changelog for logging
+        echo "📋 Generated changelog:"
+        echo "========================"
+        cat $CHANGELOG_FILE
+        echo "========================"
+
+        # Clean up temp file
+        rm -f $CHANGELOG_FILE
+
     - name: Create zip artifact
       run: |
         # Create a temporary directory for the zip
@@ -190,26 +318,33 @@ jobs:
           **Previous Version:** ${{ steps.version_bump.outputs.previous_version }}
           **Commit:** ${{ steps.version.outputs.git_hash }}
 
-          ### What's New
+          ${{ steps.changelog.outputs.changelog }}
+
+          ### 🎯 What's New in This Release
           - Automated release with version ${{ steps.version.outputs.version }}
           - Auto-incremented minor version from ${{ steps.version_bump.outputs.previous_version }}
           - Includes all source code and dependencies
           - Excludes virtual environment for clean distribution
           - Comprehensive test coverage with pytest integration tests
 
-          ### Installation
-          1. Download the zip file
+          ### 📦 Installation
+          1. Download the zip file below
           2. Extract to your desired location
           3. Create a virtual environment: `python -m venv venv`
           4. Activate the environment: `source venv/bin/activate` (Linux/Mac) or `venv\Scripts\activate` (Windows)
           5. Install dependencies: `pip install -r requirements.txt`
           6. Run the CLI: `python alchimest.py --help`
 
-          ### Testing
+          ### 🧪 Testing
           Run the test suite: `python -m pytest tests/ -v`
 
-          ### ⚠️ Warning
-          This software is provided for educational and research purposes only. Trading financial instruments involves significant risk of loss.
+          ### 📋 Project Links
+          - **Repository:** [alc-lite](https://github.com/${{ github.repository }})
+          - **Issues:** [Report a bug](https://github.com/${{ github.repository }}/issues)
+          - **Discussions:** [Join the conversation](https://github.com/${{ github.repository }}/discussions)
+
+          ### ⚠️ Disclaimer
+          This software is provided for educational and research purposes only. Trading financial instruments involves significant risk of loss. Always do your own research and consider consulting with a qualified financial advisor before making investment decisions.
         draft: false
         prerelease: false
 
