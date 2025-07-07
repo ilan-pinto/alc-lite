@@ -125,6 +125,8 @@ class SFRExecutor(BaseExecutor):
 
     async def executor(self, event: Event) -> None:
         try:
+            logger.info(f"event: {len(event)}")
+            logger.info(f"contract_ticker: {len(contract_ticker)}")
             for tick in event:
                 ticker: Ticker = tick
                 contract = ticker.contract
