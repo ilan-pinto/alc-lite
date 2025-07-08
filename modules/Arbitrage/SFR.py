@@ -401,10 +401,6 @@ class SFRExecutor(BaseExecutor):
             logger.error(f"Error in calc_price_and_build_order_for_expiry: {str(e)}")
             return None
 
-    def deactivate(self):
-        """Deactivate the executor"""
-        self.is_active = False
-
 
 class SFR(ArbitrageClass):
     """
@@ -415,7 +411,6 @@ class SFR(ArbitrageClass):
 
     def __init__(self):
         super().__init__()
-        self.active_executors: Dict[str, SFRExecutor] = {}
 
     async def scan(
         self,
@@ -465,37 +460,6 @@ class SFR(ArbitrageClass):
             contract_ticker = {}
             await asyncio.sleep(30)  # Wait before next scan cycle
 
-    async def master_executor(self, event: Event) -> None:
-        """
-        Master executor that delegates to individual symbol executors.
-        This approach eliminates the need to constantly add/remove event handlers.
-        """
-        active_executors = [
-            executor
-            for executor in self.active_executors.values()
-            if executor.is_active
-        ]
-
-        if not active_executors:
-            return
-
-        # Process each active executor
-        for executor in active_executors:
-            await executor.executor(event)
-
-    def cleanup_inactive_executors(self):
-        """Remove inactive executors to prevent memory leaks"""
-        inactive_symbols = [
-            symbol
-            for symbol, executor in self.active_executors.items()
-            if not executor.is_active
-        ]
-        for symbol in inactive_symbols:
-            del self.active_executors[symbol]
-
-        if inactive_symbols:
-            logger.info(f"Cleaned up {len(inactive_symbols)} inactive executors")
-
     async def scan_sfr(self, symbol, quantity):
         """
         Scan for SFR opportunities for a specific symbol.
@@ -519,24 +483,15 @@ class SFR(ArbitrageClass):
             chain = await self._get_chain(stock, exchange="SMART")
 
             # Define parameters for the options (expiry and strike price)
-            # Expand strike range to get more strikes
-            strike_range_percent = 0.05  # 5% range above and below stock price
             valid_strikes = [
-                s
-                for s in chain.strikes
-                if s <= stock_price * (1 + strike_range_percent)
-                and s >= stock_price * (1 - strike_range_percent)
-            ]
+                s for s in chain.strikes if s <= stock_price and s > stock_price - 10
+            ]  # Example strike price
 
             if len(valid_strikes) < 2:
                 logger.info(
                     f"Not enough valid strikes found for {symbol} (found: {len(valid_strikes)})"
                 )
                 return
-
-            logger.info(
-                f"[{symbol}] Found {len(valid_strikes)} valid strikes: {valid_strikes}"
-            )
 
             # Collect all expiry options
             expiry_options = []
@@ -545,62 +500,42 @@ class SFR(ArbitrageClass):
             for expiry in self.filter_expirations_within_range(
                 chain.expirations, 19, 45
             ):
-                # Generate multiple strike combinations per expiry
-                # For SFR, we want call strike >= put strike
-                for i in range(len(valid_strikes)):
-                    for j in range(i + 1):  # j <= i to ensure call_strike >= put_strike
-                        call_strike = valid_strikes[i]
-                        put_strike = valid_strikes[j]
+                if len(valid_strikes) == 0:
+                    continue
 
-                        # Skip if strikes are too close (less than $1 apart)
-                        if call_strike - put_strike < 1:
-                            continue
+                await asyncio.sleep(0.05)
+                call = Option(stock.symbol, expiry, valid_strikes[-1], "C", "SMART")
+                put = Option(stock.symbol, expiry, valid_strikes[-2], "P", "SMART")
+                # Qualify the option contracts
+                valid_contracts = await self.ib.qualifyContractsAsync(call, put)
+                if len(valid_contracts) == 0:
+                    continue
 
-                        # Skip if spread is too wide (more than $10)
-                        if call_strike - put_strike > 10:
-                            continue
+                # Find call and put contracts
+                call_contract = None
+                put_contract = None
 
-                        call = Option(stock.symbol, expiry, call_strike, "C", "SMART")
-                        put = Option(stock.symbol, expiry, put_strike, "P", "SMART")
+                for contract in valid_contracts:
+                    if contract.right == "C":
+                        call_contract = contract
+                    elif contract.right == "P":
+                        put_contract = contract
 
-                        # Qualify the option contracts
-                        valid_contracts = await self.ib.qualifyContractsAsync(call, put)
-                        await asyncio.sleep(
-                            0.1
-                        )  # Small delay to avoid overwhelming the API
-
-                        if len(valid_contracts) == 2:
-                            # Explicitly find call and put contracts
-                            call_contract = None
-                            put_contract = None
-
-                            for contract in valid_contracts:
-                                if contract.right == "C":
-                                    call_contract = contract
-                                elif contract.right == "P":
-                                    put_contract = contract
-
-                            # Only proceed if we found both call and put
-                            if call_contract and put_contract:
-                                expiry_option = ExpiryOption(
-                                    expiry=expiry,
-                                    call_contract=call_contract,
-                                    put_contract=put_contract,
-                                    call_strike=call_strike,
-                                    put_strike=put_strike,
-                                )
-                                expiry_options.append(expiry_option)
-                                all_contracts.extend([call_contract, put_contract])
-                            else:
-                                logger.warning(
-                                    f"Could not find both call and put contracts for {symbol} expiry {expiry} "
-                                    f"strikes: call={call_strike}, put={put_strike}"
-                                )
-                        else:
-                            logger.debug(
-                                f"Failed to qualify contracts for {symbol} {expiry} "
-                                f"call={call_strike}, put={put_strike}"
-                            )
+                # Only proceed if we found both call and put
+                if call_contract and put_contract:
+                    expiry_option = ExpiryOption(
+                        expiry=expiry,
+                        call_contract=call_contract,
+                        put_contract=put_contract,
+                        call_strike=valid_strikes[-1],
+                        put_strike=valid_strikes[-2],
+                    )
+                    expiry_options.append(expiry_option)
+                    all_contracts.extend([call_contract, put_contract])
+                else:
+                    logger.warning(
+                        f"Could not find both call and put contracts for {symbol} expiry {expiry}"
+                    )
 
             if not expiry_options:
                 logger.info(f"No valid expiry options found for {symbol}")

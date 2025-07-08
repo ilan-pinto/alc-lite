@@ -114,6 +114,7 @@ class BaseExecutor:
         self.expiry = expiry
         self.start_time = start_time or time.time()
         self.contracts = [self.stock_contract] + self.option_contracts
+        self.is_active = True
 
     def calculate_combo_limit_price(
         self,
@@ -292,6 +293,10 @@ class BaseExecutor:
 
         log_order_details(order_details)
 
+    def deactivate(self):
+        """Deactivate the executor"""
+        self.is_active = False
+
     async def executor(self, event: Event) -> None:
         """Base executor method - should be overridden by subclasses."""
         try:
@@ -311,11 +316,46 @@ class ArbitrageClass:
         self.ib = IB()
         self.order_manager = OrderManagerClass(ib=self.ib)
         self.semaphore = asyncio.Semaphore(1000)
+        self.active_executors: Dict[str, BaseExecutor] = {}
 
     def onFill(self, trade):
         """Called whenever any order gets filled (partially or fully)."""
         if log_filled_order(trade):
             self.ib.disconnect()
+
+    async def master_executor(self, event: Event) -> None:
+        """
+        Master executor that delegates to individual symbol executors.
+        This approach eliminates the need to constantly add/remove event handlers.
+        """
+        active_executors = [
+            executor
+            for executor in self.active_executors.values()
+            if executor.is_active
+        ]
+
+        if not active_executors:
+            return
+
+        # Process each active executor in parallel
+        try:
+            tasks = [executor.executor(event) for executor in active_executors]
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            logger.error(f"Error in master_executor parallel processing: {str(e)}")
+
+    def cleanup_inactive_executors(self):
+        """Remove inactive executors to prevent memory leaks"""
+        inactive_symbols = [
+            symbol
+            for symbol, executor in self.active_executors.items()
+            if not executor.is_active
+        ]
+        for symbol in inactive_symbols:
+            del self.active_executors[symbol]
+
+        if inactive_symbols:
+            logger.info(f"Cleaned up {len(inactive_symbols)} inactive executors")
 
     def filter_expirations_within_range(
         self, expiration_dates, start_num_days=40, end_num_days=45
@@ -341,7 +381,11 @@ class ArbitrageClass:
             stock.conId,
         )
 
-        chain = next(c for c in chains if c.exchange == exchange)
+        chain = next(
+            c
+            for c in chains
+            if c.exchange == exchange and c.tradingClass == stock.symbol
+        )
         return chain
 
     async def _get_chains(self, stock: Contract, exchange="CBOE"):
@@ -365,7 +409,7 @@ class ArbitrageClass:
 
         if symbol.find("!") == 0:
             symbol = symbol.replace("!", "")
-            # cont = self.ib.reqMatchingSymbols(symbol)
+
             stock = Index(symbol, exchange="CME", currency="USD")
             exchange = "CME"
             option_type = FuturesOption
