@@ -3,23 +3,33 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from modules.Arbitrage.Synthetic import SynExecutor
+from modules.Arbitrage.Synthetic import ExpiryOption, SynExecutor
 
 
 @pytest.mark.unit
 def test_syn_executor_check_conditions_all_false_branches():
     """Test all False branches of SynExecutor.check_conditions."""
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=10.0,
         max_profit_threshold=200.0,
         profit_ratio_threshold=2.0,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
     # 1. max_loss_threshold >= min_profit
     assert not syn_executor.check_conditions(
@@ -92,17 +102,27 @@ def test_syn_executor_check_conditions_all_false_branches():
 @pytest.mark.unit
 def test_syn_executor_check_conditions_true_branch():
     """Test True branch of SynExecutor.check_conditions."""
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
     assert syn_executor.check_conditions(
         symbol="TEST",
@@ -118,38 +138,58 @@ def test_syn_executor_check_conditions_true_branch():
 @pytest.mark.unit
 def test_calc_price_and_build_order_no_stock_ticker():
     """Test calc_price_and_build_order returns (None, None) if no ticker for stock contract."""
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {}  # No ticker for stock
-    result = syn_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = syn_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_missing_option_data(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if option data is missing."""
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -158,24 +198,34 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
         "_extract_option_data",
         lambda _: (None, None, None, None, None, None),
     )
-    result = syn_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = syn_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if call_strike < put_strike."""
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -185,24 +235,34 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
         "_extract_option_data",
         lambda _: (MagicMock(), MagicMock(), 90.0, 100.0, 10.0, 5.0),
     )
-    result = syn_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = syn_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if check_conditions returns False."""
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -213,63 +273,82 @@ def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
         lambda _: (MagicMock(), MagicMock(), 110.0, 100.0, 10.0, 5.0),
     )
     monkeypatch.setattr(syn_executor, "check_conditions", lambda *a, **kw: False)
-    result = syn_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = syn_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     """Test calc_price_and_build_order returns build_order result if check_conditions returns True."""
+    # Create mock contracts with specific conIds
+    call_contract = MagicMock(conId=2)
+    put_contract = MagicMock(conId=3)
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=call_contract,
+            put_contract=put_contract,
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
+        quantity=1,
     )
-    # Patch contract_ticker in the Synthetic module, not just locally
+    # Patch contract_ticker in the Synthetic module with stock and option data
     monkeypatch.setattr(
         "modules.Arbitrage.Synthetic.contract_ticker",
-        {1: MagicMock(ask=100.0, close=99.0)},
+        {
+            1: MagicMock(ask=100.0, close=99.0),  # Stock ticker
+            2: MagicMock(bid=5.0, close=5.0),  # Call ticker
+            3: MagicMock(ask=3.0, close=3.0),  # Put ticker
+        },
     )
-    call_contract = object()
-    put_contract = object()
-    monkeypatch.setattr(
-        syn_executor,
-        "_extract_option_data",
-        lambda _: (call_contract, put_contract, 110.0, 100.0, 10.0, 5.0),
-    )
+    # Mock check_conditions to return True for successful execution
     monkeypatch.setattr(syn_executor, "check_conditions", lambda *a, **kw: True)
-    with (
-        patch.object(syn_executor, "_log_trade_details") as mock_log,
-        patch.object(
-            syn_executor, "build_order", return_value=("contract", "order")
-        ) as mock_build,
-    ):
-        result = syn_executor.calc_price_and_build_order()
-        assert result == ("contract", "order")
-        mock_log.assert_called()
+    with patch.object(
+        syn_executor, "build_order", return_value=("contract", "order")
+    ) as mock_build:
+        result = syn_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+        assert result is not None
+        assert len(result) == 4  # (contract, order, min_profit, trade_details)
+        assert result[0] == "contract"
+        assert result[1] == "order"
         mock_build.assert_called()
 
 
 @pytest.mark.unit
 def test_syn_executor_build_order_quantity():
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     syn_executor = SynExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         cost_limit=100.0,
         max_loss_threshold=None,
         max_profit_threshold=None,
         profit_ratio_threshold=None,
-        expiry="20240101",
+        start_time=0.0,
         quantity=4,
     )
     # Patch contracts to have required attributes

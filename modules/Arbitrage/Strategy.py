@@ -1,7 +1,8 @@
 import asyncio
 import time
 from datetime import datetime, timedelta
-from optparse import Option
+
+# from optparse import Option
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -12,6 +13,7 @@ from ib_async import (
     Contract,
     FuturesOption,
     Index,
+    Option,
     Order,
     OrderStatus,
     Stock,
@@ -113,6 +115,42 @@ class BaseExecutor:
         self.start_time = start_time or time.time()
         self.contracts = [self.stock_contract] + self.option_contracts
 
+    def calculate_combo_limit_price(
+        self,
+        stock_price: float,
+        call_price: float,
+        put_price: float,
+        buffer_percent: float = 0.02,  # 2% buffer for slippage
+    ) -> float:
+        """
+        Calculate precise combo limit price based on individual leg target prices.
+
+        Args:
+            stock_price: Current stock price
+            call_price: Target call option price (what we want to receive)
+            put_price: Target put option price (what we want to pay)
+            buffer_percent: Buffer percentage to account for slippage
+
+        Returns:
+            Calculated limit price for the combo order
+        """
+        # For conversion: Buy stock, Sell call, Buy put
+        # Net cost = Stock price - Call premium + Put premium
+        theoretical_cost = stock_price - call_price + put_price
+
+        # Add buffer for market movement and slippage
+        buffer_amount = theoretical_cost * buffer_percent
+        limit_price = theoretical_cost + buffer_amount
+
+        logger.info(
+            f"Calculated combo limit: stock={stock_price:.2f}, call={call_price:.2f}, put={put_price:.2f}"
+        )
+        logger.info(
+            f"Theoretical cost: {theoretical_cost:.2f}, with buffer: {limit_price:.2f}"
+        )
+
+        return round(limit_price, 2)
+
     def build_order(
         self,
         symbol: str,
@@ -121,8 +159,25 @@ class BaseExecutor:
         put: Contract,
         lmt_price: float,
         quantity: int = 1,
+        call_price: Optional[float] = None,
+        put_price: Optional[float] = None,
     ) -> Tuple[Contract, Order]:
-        """Build a conversion order with stock, call, and put legs."""
+        """
+        Build a conversion order with stock, call, and put legs.
+
+        Args:
+            symbol: Trading symbol
+            stock: Stock contract
+            call: Call option contract
+            put: Put option contract
+            lmt_price: Overall limit price for the combo
+            quantity: Number of contracts
+            call_price: Target call price (for precise limit calculation)
+            put_price: Target put price (for precise limit calculation)
+
+        Returns:
+            Tuple of (conversion_contract, order)
+        """
         stock_leg = ComboLeg(
             conId=stock.conId, ratio=100, action="BUY", exchange="SMART"
         )
@@ -145,6 +200,13 @@ class BaseExecutor:
             lmtPrice=lmt_price,
             tif="DAY",
         )
+
+        # Log the target vs actual limit price
+        if call_price is not None and put_price is not None:
+            logger.info(
+                f"Target leg prices: call={call_price:.2f}, put={put_price:.2f}"
+            )
+            logger.info(f"Combo limit price: {lmt_price:.2f}")
 
         return conversion_contract, order
 
@@ -278,6 +340,7 @@ class ArbitrageClass:
             stock.secType,
             stock.conId,
         )
+
         chain = next(c for c in chains if c.exchange == exchange)
         return chain
 

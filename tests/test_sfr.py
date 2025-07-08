@@ -3,22 +3,31 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from modules.Arbitrage.SFR import SFRExecutor
+from modules.Arbitrage.SFR import ExpiryOption, SFRExecutor
 
 
 @pytest.mark.unit
 def test_sfr_executor_check_conditions_all_false_branches():
     # Setup dummy SFRExecutor
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
     # 1. spread > net_credit
     assert not sfr_executor.check_conditions(
@@ -84,16 +93,25 @@ def test_sfr_executor_check_conditions_all_false_branches():
 
 @pytest.mark.unit
 def test_sfr_executor_check_conditions_true_branch():
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
     # All conditions met
     assert sfr_executor.check_conditions(
@@ -111,35 +129,53 @@ def test_sfr_executor_check_conditions_true_branch():
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_no_stock_ticker():
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {}  # No ticker for stock
-    result = sfr_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = sfr_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_missing_option_data(monkeypatch):
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -148,22 +184,31 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
         "_extract_option_data",
         lambda _: (None, None, None, None, None, None),
     )
-    result = sfr_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = sfr_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch):
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -173,22 +218,31 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
         "_extract_option_data",
         lambda _: (MagicMock(), MagicMock(), 90.0, 100.0, 10.0, 5.0),
     )
-    result = sfr_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = sfr_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -199,60 +253,78 @@ def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
         lambda _: (MagicMock(), MagicMock(), 110.0, 100.0, 10.0, 5.0),
     )
     monkeypatch.setattr(sfr_executor, "check_conditions", lambda *a, **kw: False)
-    result = sfr_executor.calc_price_and_build_order()
-    assert result == (None, None)
+    result = sfr_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+    assert result is None
 
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     from modules.Arbitrage.SFR import SFRExecutor
 
+    # Create mock contracts with specific conIds
+    call_contract = MagicMock(conId=2)
+    put_contract = MagicMock(conId=3)
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=call_contract,
+            put_contract=put_contract,
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(conId=1),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
+        quantity=1,
     )
-    # Patch contract_ticker in the SFR module, not just locally
+    # Patch contract_ticker in the SFR module with stock and option data
     monkeypatch.setattr(
-        "modules.Arbitrage.SFR.contract_ticker", {1: MagicMock(ask=100.0, close=99.0)}
+        "modules.Arbitrage.SFR.contract_ticker",
+        {
+            1: MagicMock(ask=100.0, close=99.0),  # Stock ticker
+            2: MagicMock(bid=5.0, close=5.0),  # Call ticker
+            3: MagicMock(ask=3.0, close=3.0),  # Put ticker
+        },
     )
-    call_contract = object()
-    put_contract = object()
-    monkeypatch.setattr(
-        sfr_executor,
-        "_extract_option_data",
-        lambda _: (call_contract, put_contract, 110.0, 100.0, 10.0, 5.0),
-    )
+    # Mock check_conditions to return True for successful execution
     monkeypatch.setattr(sfr_executor, "check_conditions", lambda *a, **kw: True)
-    with (
-        patch.object(sfr_executor, "_log_trade_details") as mock_log,
-        patch.object(
-            sfr_executor, "build_order", return_value=("contract", "order")
-        ) as mock_build,
-    ):
-        result = sfr_executor.calc_price_and_build_order()
-        assert result == ("contract", "order")
-        mock_log.assert_called()
+    with patch.object(
+        sfr_executor, "build_order", return_value=("contract", "order")
+    ) as mock_build:
+        result = sfr_executor.calc_price_and_build_order_for_expiry(expiry_options[0])
+        assert result is not None
+        assert len(result) == 4  # (contract, order, min_profit, trade_details)
+        assert result[0] == "contract"
+        assert result[1] == "order"
         mock_build.assert_called()
 
 
 @pytest.mark.unit
 def test_sfr_executor_build_order_quantity():
+    expiry_options = [
+        ExpiryOption(
+            expiry="20240101",
+            call_contract=MagicMock(),
+            put_contract=MagicMock(),
+            call_strike=100.0,
+            put_strike=95.0,
+        )
+    ]
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
         stock_contract=MagicMock(),
-        option_contracts=[MagicMock(), MagicMock()],
+        expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
-        expiry="20240101",
         start_time=0.0,
         quantity=3,
     )

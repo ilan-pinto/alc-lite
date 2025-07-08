@@ -1,5 +1,6 @@
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import logging
@@ -19,12 +20,23 @@ configure_logging(level=logging.INFO)
 logger = get_logger()
 
 
+@dataclass
+class ExpiryOption:
+    """Data class to hold option contract information for a specific expiry"""
+
+    expiry: str
+    call_contract: Contract
+    put_contract: Contract
+    call_strike: float
+    put_strike: float
+
+
 class SynExecutor(BaseExecutor):
     """
     Synthetic not free risk (Syn) Executor class that handles the execution of Syn Synthetic option strategies.
 
     This class is responsible for:
-    1. Monitoring market data for stock and options
+    1. Monitoring market data for stock and options across multiple expiries
     2. Calculating potential arbitrage opportunities
     3. Executing trades when conditions are met
     4. Logging trade details and results
@@ -33,13 +45,17 @@ class SynExecutor(BaseExecutor):
         ib (IB): Interactive Brokers connection instance
         order_manager (OrderManagerClass): Manager for handling order execution
         stock_contract (Contract): The underlying stock contract
-        option_contracts (List[Contract]): List of option contracts (call and put)
+        expiry_options (List[ExpiryOption]): List of option data for different expiries
         symbol (str): Trading symbol
         cost_limit (float): Maximum price limit for execution
         max_loss_threshold (float): Maximum loss for execution
         max_profit_threshold (float): Maximum profit for execution
         profit_ratio_threshold (float): Maximum profit to loss ratio for execution
-        expiry (str): Option expiration date
+        start_time (float): Start time of the execution
+        quantity (int): Quantity of contracts to execute
+        all_contracts (List[Contract]): All contracts (stock + all options)
+        is_active (bool): Whether the executor is currently active
+        data_timeout (float): Maximum time to wait for all contract data (seconds)
     """
 
     def __init__(
@@ -47,14 +63,15 @@ class SynExecutor(BaseExecutor):
         ib: IB,
         order_manager: OrderManagerClass,
         stock_contract: Contract,
-        option_contracts: List[Contract],
+        expiry_options: List[ExpiryOption],
         symbol: str,
         cost_limit: float,
         max_loss_threshold: float,
         max_profit_threshold: float,
         profit_ratio_threshold: float,
-        expiry: str,
+        start_time: float,
         quantity: int = 1,
+        data_timeout: float = 30.0,  # 30 seconds timeout for data collection
     ) -> None:
         """
         Initialize the Syn Executor.
@@ -63,15 +80,23 @@ class SynExecutor(BaseExecutor):
             ib: Interactive Brokers connection instance
             order_manager: Manager for handling order execution
             stock_contract: The underlying stock contract
-            option_contracts: List of option contracts (call and put)
+            expiry_options: List of option data for different expiries
             symbol: Trading symbol
             cost_limit: Maximum price limit for execution
             max_loss_threshold: Maximum loss for execution
             max_profit_threshold: Maximum profit for execution
             profit_ratio_threshold: Maximum profit to loss ratio for execution
-            expiry: Option expiration date
+            start_time: Start time of the execution
             quantity: Quantity of contracts to execute
+            data_timeout: Maximum time to wait for all contract data (seconds)
         """
+        # Create list of all option contracts
+        option_contracts = []
+        for expiry_option in expiry_options:
+            option_contracts.extend(
+                [expiry_option.call_contract, expiry_option.put_contract]
+            )
+
         super().__init__(
             ib,
             order_manager,
@@ -79,13 +104,18 @@ class SynExecutor(BaseExecutor):
             option_contracts,
             symbol,
             cost_limit,
-            expiry,
-            time.time(),
+            expiry_options[0].expiry if expiry_options else "",
+            start_time,
         )
         self.max_loss_threshold = max_loss_threshold
         self.max_profit_threshold = max_profit_threshold
         self.profit_ratio_threshold = profit_ratio_threshold
         self.quantity = quantity
+        self.expiry_options = expiry_options
+        self.all_contracts = [stock_contract] + option_contracts
+        self.is_active = True
+        self.data_timeout = data_timeout
+        self.data_collection_start = time.time()
 
     def check_conditions(
         self,
@@ -146,137 +176,277 @@ class SynExecutor(BaseExecutor):
             return True
 
     async def executor(self, event: Event) -> None:
+        """
+        Main executor method that processes market data events for all contracts.
+        This method is called once per symbol and handles all expiries for that symbol.
+        """
+        if not self.is_active:
+            return
+
         try:
+            # Update contract_ticker with new data
             for tick in event:
                 ticker: Ticker = tick
                 contract = ticker.contract
-                contract_ticker[contract.conId] = ticker
 
+                # Update ticker data - be more lenient with volume requirements
+                # Accept any ticker with valid price data, log warning for low volume
                 if ticker.volume > 10:
                     contract_ticker[contract.conId] = ticker
-                else:
-                    self.ib.pendingTickersEvent -= self.executor
-                    logger.debug(f"removed {self.symbol} - {tick.last} - {self.expiry}")
-                    return
-
-                self.contracts = [self.stock_contract] + self.option_contracts
-                if all(
-                    contract_ticker.get(c.conId) is not None for c in self.contracts
+                elif ticker.volume >= 0 and (
+                    ticker.bid > 0 or ticker.ask > 0 or ticker.close > 0
                 ):
+                    # Accept low volume contracts if they have valid price data
+                    contract_ticker[contract.conId] = ticker
+                    logger.warning(
+                        f"[{self.symbol}] Low volume ({ticker.volume}) for contract {contract.conId}, "
+                        f"but accepting due to valid price data"
+                    )
+                else:
+                    logger.debug(f"Skipping contract {contract.conId}: no valid data")
+
+            # Check for timeout
+            elapsed_time = time.time() - self.data_collection_start
+            if elapsed_time > self.data_timeout:
+                missing_contracts = [
+                    c
+                    for c in self.all_contracts
+                    if contract_ticker.get(c.conId) is None
+                ]
+                logger.warning(
+                    f"[{self.symbol}] Data collection timeout after {elapsed_time:.1f}s. "
+                    f"Missing data for {len(missing_contracts)} contracts out of {len(self.all_contracts)}"
+                )
+                # Log details of missing contracts
+                for c in missing_contracts[:5]:  # Log first 5 missing
                     logger.info(
-                        f"time to execution: {time.time() - self.start_time} sec"
+                        f"  Missing: {c.symbol} {c.right} {c.strike} {c.lastTradeDateOrContractMonth}"
                     )
 
-                    self.ib.pendingTickersEvent -= self.executor
+                # Deactivate after timeout
+                self.is_active = False
+                return
 
-                    # calc limit price
-                    conversion_contract, order = self.calc_price_and_build_order()
+            # Check if we have data for all contracts
+            if all(
+                contract_ticker.get(c.conId) is not None for c in self.all_contracts
+            ):
+                logger.info(
+                    f"[{self.symbol}] Fetched ticker for {len(self.all_contracts)} contracts"
+                )
+                logger.info(f"time to execution: {time.time() - self.start_time} sec")
 
-                    if order and conversion_contract:
+                # Process all expiries
+                best_opportunity = None
+                best_risk_reward_ratio = float(
+                    "-inf"
+                )  # Start with negative infinity for synthetic
+
+                # TODO: Implement additional selection criteria
+                # - Time decay: favor closer expirations
+                # - Liquidity: favor higher volume options
+                # - Market spread: favor tighter bid-ask spreads
+                # Example: score = risk_reward_ratio * 0.6 + volume_score * 0.2 + spread_score * 0.2
+
+                for expiry_option in self.expiry_options:
+                    opportunity = self.calc_price_and_build_order_for_expiry(
+                        expiry_option
+                    )
+                    if opportunity:
+                        trade_details = opportunity[
+                            3
+                        ]  # opportunity[3] is trade_details dict
+                        max_profit = trade_details["max_profit"]
+                        min_profit = trade_details["min_profit"]
+
+                        # Calculate risk-reward ratio: max_profit / abs(min_profit)
+                        if min_profit != 0:
+                            risk_reward_ratio = max_profit / abs(min_profit)
+                            logger.info(
+                                f"[{self.symbol}] Expiry: {trade_details['expiry']} - "
+                                f"Risk-Reward Ratio: {risk_reward_ratio:.3f} "
+                                f"(max_profit: {max_profit:.2f}, min_profit: {min_profit:.2f})"
+                            )
+
+                            if risk_reward_ratio > best_risk_reward_ratio:
+                                best_opportunity = opportunity
+                                best_risk_reward_ratio = risk_reward_ratio
+
+                # Execute the best opportunity
+                if best_opportunity:
+                    conversion_contract, order, _, trade_details = best_opportunity
+                    if conversion_contract and order:
+                        # Log trade details right before placing the order
+                        logger.info(
+                            f"[{self.symbol}] About to place trade for expiry: {trade_details['expiry']}"
+                        )
+                        self._log_trade_details(
+                            trade_details["call_strike"],
+                            trade_details["call_price"],
+                            trade_details["put_strike"],
+                            trade_details["put_price"],
+                            trade_details["stock_price"],
+                            trade_details["net_credit"],
+                            trade_details["min_profit"],
+                            trade_details["max_profit"],
+                            trade_details["min_roi"],
+                        )
+
+                        self.is_active = (
+                            False  # Deactivate to prevent multiple executions
+                        )
                         trade = await self.order_manager.place_order(
                             conversion_contract, order
                         )
+                        logger.info(f"Executed best opportunity for {self.symbol}")
+
+                else:
+                    logger.info(f"No suitable opportunities found for {self.symbol}")
+                    self.is_active = False
+
+            else:
+                # Still waiting for data from some contracts
+                missing_contracts = [
+                    c
+                    for c in self.all_contracts
+                    if contract_ticker.get(c.conId) is None
+                ]
+                logger.debug(
+                    f"[{self.symbol}] Still waiting for data from {len(missing_contracts)} contracts "
+                    f"(elapsed: {elapsed_time:.1f}s)"
+                )
 
         except Exception as e:
             logger.error(f"Error in executor: {str(e)}")
-            self.ib.pendingTickersEvent -= self.executor
+            self.is_active = False
 
-    def calc_price_and_build_order(self) -> Tuple[Optional[Contract], Optional[Order]]:
+    def calc_price_and_build_order_for_expiry(
+        self, expiry_option: ExpiryOption
+    ) -> Optional[Tuple[Contract, Order, float, Dict]]:
+        """
+        Calculate price and build order for a specific expiry option.
+        Returns tuple of (contract, order, min_profit, trade_details) or None if no opportunity.
+        """
         try:
-            net_credit = 0
-            stock_price = 0
+            # Get stock data
+            stock_ticker = contract_ticker.get(self.stock_contract.conId)
+            if not stock_ticker:
+                return None
 
-            stock_data = self.stock_contract
-            ticker = contract_ticker.get(self.stock_contract.conId)
-            if not ticker:
-                logger.error("No ticker data for stock contract")
-                return None, None
+            stock_price = (
+                stock_ticker.ask
+                if not np.isnan(stock_ticker.ask)
+                else stock_ticker.close
+            )
 
-            stock_midpoint = ticker.ask if not np.isnan(ticker.ask) else ticker.close
-            stock_price += stock_midpoint
+            # Get option data
+            call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
+            put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
 
-            # Extract option data using base class method
-            (
-                call_contract,
-                put_contract,
-                call_strike,
-                put_strike,
-                call_price,
-                put_price,
-            ) = self._extract_option_data(contract_ticker)
+            if not call_ticker or not put_ticker:
+                return None
 
-            if not all(
-                [
-                    call_contract,
-                    put_contract,
-                    call_strike,
-                    put_strike,
-                    call_price,
-                    put_price,
-                ]
-            ):
-                logger.error("Missing required option data")
-                return None, None
+            # Get validated prices for individual legs
+            call_price = (
+                call_ticker.bid if not np.isnan(call_ticker.bid) else call_ticker.close
+            )
+            put_price = (
+                put_ticker.ask if not np.isnan(put_ticker.ask) else put_ticker.close
+            )
+
+            if np.isnan(call_price) or np.isnan(put_price):
+                return None
 
             # Calculate net credit
             net_credit = call_price - put_price
-
-            # temp condition
-            if call_strike < put_strike:
-                logger.info(f"call_strike:{call_strike} < put_strike:{put_strike}")
-                return None, None
-
             stock_price = round(stock_price, 2)
             net_credit = round(net_credit, 2)
+            call_price = round(call_price, 2)
+            put_price = round(put_price, 2)
 
-            spread = stock_price - put_strike
+            # temp condition
+            if expiry_option.call_strike < expiry_option.put_strike:
+                logger.info(
+                    f"call_strike:{expiry_option.call_strike} < put_strike:{expiry_option.put_strike}"
+                )
+                return None
 
+            spread = stock_price - expiry_option.put_strike
             min_profit = net_credit - spread  # max loss
-            max_profit = (call_strike - put_strike) + min_profit
-
+            max_profit = (
+                expiry_option.call_strike - expiry_option.put_strike
+            ) + min_profit
             min_roi = (min_profit / (stock_price + net_credit)) * 100
 
+            # Calculate precise combo limit price based on target leg prices
+            combo_limit_price = self.calculate_combo_limit_price(
+                stock_price=stock_price,
+                call_price=call_price,
+                put_price=put_price,
+                buffer_percent=0.015,  # 1.5% buffer for better execution
+            )
+
             logger.info(
-                f"[{self.symbol}] min_profit:{min_profit}, max_profit:{max_profit}, min_roi:[{min_roi}% ]"
+                f"[{self.symbol}] Expiry: {expiry_option.expiry} min_profit:{min_profit:.2f}, max_profit:{max_profit:.2f}, min_roi:{min_roi:.2f}%"
             )
 
             if self.check_conditions(
                 self.symbol,
                 self.cost_limit,
-                stock_price + net_credit,
+                combo_limit_price,  # Use calculated precise limit price
                 net_credit,
-                min_roi,  # min ROI
+                min_roi,
                 min_profit,
                 max_profit,
             ):
-                self._log_trade_details(
-                    call_strike,
-                    call_price,
-                    put_strike,
-                    put_price,
-                    stock_price,
-                    net_credit,
-                    min_profit,
-                    max_profit,
-                    min_roi,
-                )
-
-                return self.build_order(
+                # Build order with precise limit price and target leg prices
+                conversion_contract, order = self.build_order(
                     self.symbol,
-                    stock_data,
-                    call_contract,
-                    put_contract,
-                    round(stock_price + net_credit, 2),
+                    self.stock_contract,
+                    expiry_option.call_contract,
+                    expiry_option.put_contract,
+                    combo_limit_price,  # Use calculated precise limit price
                     self.quantity,
+                    call_price=call_price,  # Target call leg price
+                    put_price=put_price,  # Target put leg price
                 )
 
-            return None, None
+                # Prepare trade details for logging (don't log yet)
+                trade_details = {
+                    "call_strike": expiry_option.call_strike,
+                    "call_price": call_price,
+                    "put_strike": expiry_option.put_strike,
+                    "put_price": put_price,
+                    "stock_price": stock_price,
+                    "net_credit": net_credit,
+                    "min_profit": min_profit,
+                    "max_profit": max_profit,
+                    "min_roi": min_roi,
+                    "expiry": expiry_option.expiry,
+                }
+
+                return conversion_contract, order, min_profit, trade_details
+
+            return None
         except Exception as e:
-            logger.error(f"Error in calc_price_and_build_order: {str(e)}")
-            return None, None
+            logger.error(f"Error in calc_price_and_build_order_for_expiry: {str(e)}")
+            return None
+
+    def deactivate(self):
+        """Deactivate the executor"""
+        self.is_active = False
 
 
 class Syn(ArbitrageClass):
+    """
+    Synthetic arbitrage strategy class.
+    This class uses a more efficient approach by creating one executor per symbol
+    that handles all expiries, eliminating the need to constantly add/remove event handlers.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.active_executors: Dict[str, SynExecutor] = {}
 
     async def scan(
         self,
@@ -294,12 +464,11 @@ class Syn(ArbitrageClass):
         cost_limit - min price for the contract. e.g limit=50 means willing to pay up to 5000$
         max_loss - max loss for the contract. e.g max_loss=50 means willing to lose up to 5000$
         max_profit - max profit for the contract. e.g max_profit=50 means willing to profit up to 5000$
+        quantity - number of contracts to trade
         """
         # Global
         global contract_ticker
-        global stock_ticker
         contract_ticker = {}
-        stock_ticker = {}
 
         # set configuration
         self.cost_limit = cost_limit
@@ -308,9 +477,10 @@ class Syn(ArbitrageClass):
         self.profit_ratio_threshold = profit_ratio_threshold
         self.quantity = quantity
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=2)
-        # self.ib.reqMarketDataType = 3
-
         self.ib.orderStatusEvent += self.onFill
+
+        # Set up single event handler for all symbols
+        self.ib.pendingTickersEvent += self.master_executor
 
         while True:
             tasks = []
@@ -320,60 +490,212 @@ class Syn(ArbitrageClass):
                 await asyncio.sleep(5)
             _ = await asyncio.gather(*tasks)
 
+            # Clean up inactive executors
+            self.cleanup_inactive_executors()
+
+            # Reset for next iteration
             contract_ticker = {}
-            stock_ticker = {}
-            self.ib.pendingTickersEvent = Event("pendingTickersEvent")
+            await asyncio.sleep(30)  # Wait before next scan cycle
 
-    async def scan_syn(self, symbol: str, quantity: int) -> None:
-        exchange, option_type, stock = self._get_stock_contract(symbol)
-
-        # Request market data for the stock
-        market_data = await self._get_market_data_async(stock)
-
-        stock_price = (
-            market_data.last if not np.isnan(market_data.last) else market_data.close
-        )
-
-        logger.info(f"price for [{symbol}: {stock_price} ]")
-
-        # Request options chain
-        chain = await self._get_chain(stock)
-
-        # Define parameters for the options (expiry and strike price)
-        valid_strikes = [
-            s for s in chain.strikes if s <= stock_price and s > stock_price - 10
+    async def master_executor(self, event: Event) -> None:
+        """
+        Master executor that delegates to individual symbol executors.
+        This approach eliminates the need to constantly add/remove event handlers.
+        """
+        active_executors = [
+            executor
+            for executor in self.active_executors.values()
+            if executor.is_active
         ]
 
-        for expiry in self.filter_expirations_within_range(chain.expirations, 19, 45):
+        if not active_executors:
+            return
 
-            if len(valid_strikes) == 0:
-                continue
+        # Process each active executor
+        for executor in active_executors:
+            await executor.executor(event)
 
-            await asyncio.sleep(0.05)
-            call = Option(stock.symbol, expiry, valid_strikes[-1], "C", "SMART")
-            put = Option(stock.symbol, expiry, valid_strikes[-2], "P", "SMART")
-            # Qualify the option contracts
-            valid_contracts = await self.ib.qualifyContractsAsync(call, put)
-            if len(valid_contracts) == 0:
-                continue
+    def cleanup_inactive_executors(self):
+        """Remove inactive executors to prevent memory leaks"""
+        inactive_symbols = [
+            symbol
+            for symbol, executor in self.active_executors.items()
+            if not executor.is_active
+        ]
+        for symbol in inactive_symbols:
+            del self.active_executors[symbol]
 
-            # Request market data for the options
-            self.ib.reqMktData(stock)
-            self.ib.reqMktData(call)
-            self.ib.reqMktData(put)
+        if inactive_symbols:
+            logger.info(f"Cleaned up {len(inactive_symbols)} inactive executors")
 
-            syn = SynExecutor(
+    async def scan_syn(self, symbol: str, quantity: int) -> None:
+        """
+        Scan for Syn opportunities for a specific symbol.
+        Creates a single executor per symbol that handles all expiries.
+        """
+        try:
+            exchange, option_type, stock = self._get_stock_contract(symbol)
+
+            # Request market data for the stock
+            market_data = await self._get_market_data_async(stock)
+
+            stock_price = (
+                market_data.last
+                if not np.isnan(market_data.last)
+                else market_data.close
+            )
+
+            logger.info(f"price for [{symbol}: {stock_price} ]")
+
+            # Request options chain
+            chain = await self._get_chain(stock)
+
+            # Define parameters for the options (expiry and strike price)
+            # Expand strike range to get more strikes
+            strike_range_percent = 0.05  # 5% range above and below stock price
+            valid_strikes = [
+                s
+                for s in chain.strikes
+                if s <= stock_price * (1 + strike_range_percent)
+                and s >= stock_price * (1 - strike_range_percent)
+            ]
+
+            if len(valid_strikes) < 2:
+                logger.info(
+                    f"Not enough valid strikes found for {symbol} (found: {len(valid_strikes)})"
+                )
+                return
+
+            logger.info(
+                f"[{symbol}] Found {len(valid_strikes)} valid strikes: {valid_strikes}"
+            )
+
+            # Collect all expiry options
+            expiry_options = []
+            all_contracts = [stock]
+
+            for expiry in self.filter_expirations_within_range(
+                chain.expirations, 19, 45
+            ):
+                # Generate multiple strike combinations per expiry
+                # For Synthetic, we want call strike >= put strike
+                for i in range(len(valid_strikes)):
+                    for j in range(i + 1):  # j <= i to ensure call_strike >= put_strike
+                        call_strike = valid_strikes[i]
+                        put_strike = valid_strikes[j]
+
+                        # Skip if strikes are too close (less than $1 apart)
+                        if call_strike - put_strike < 1:
+                            continue
+
+                        # Skip if spread is too wide (more than $10)
+                        if call_strike - put_strike > 10:
+                            continue
+
+                        call = Option(stock.symbol, expiry, call_strike, "C", "SMART")
+                        put = Option(stock.symbol, expiry, put_strike, "P", "SMART")
+
+                        # Qualify the option contracts
+                        valid_contracts = await self.ib.qualifyContractsAsync(call, put)
+                        await asyncio.sleep(
+                            0.1
+                        )  # Small delay to avoid overwhelming the API
+
+                        if len(valid_contracts) == 2:
+                            # Explicitly find call and put contracts
+                            call_contract = None
+                            put_contract = None
+
+                            for contract in valid_contracts:
+                                if contract.right == "C":
+                                    call_contract = contract
+                                elif contract.right == "P":
+                                    put_contract = contract
+
+                            # Only proceed if we found both call and put
+                            if call_contract and put_contract:
+                                expiry_option = ExpiryOption(
+                                    expiry=expiry,
+                                    call_contract=call_contract,
+                                    put_contract=put_contract,
+                                    call_strike=call_strike,
+                                    put_strike=put_strike,
+                                )
+                                expiry_options.append(expiry_option)
+                                all_contracts.extend([call_contract, put_contract])
+                            else:
+                                logger.warning(
+                                    f"Could not find both call and put contracts for {symbol} expiry {expiry} "
+                                    f"strikes: call={call_strike}, put={put_strike}"
+                                )
+                        else:
+                            logger.debug(
+                                f"Failed to qualify contracts for {symbol} {expiry} "
+                                f"call={call_strike}, put={put_strike}"
+                            )
+
+            if not expiry_options:
+                logger.info(f"No valid expiry options found for {symbol}")
+                return
+
+            # Log the total number of combinations being scanned
+            logger.info(
+                f"[{symbol}] Scanning {len(expiry_options)} strike combinations across "
+                f"{len(set(opt.expiry for opt in expiry_options))} expiries"
+            )
+
+            # Create single executor for this symbol
+            syn_executor = SynExecutor(
                 ib=self.ib,
                 order_manager=self.order_manager,
                 stock_contract=stock,
-                option_contracts=[call, put],
+                expiry_options=expiry_options,
                 symbol=symbol,
                 cost_limit=self.cost_limit,
                 max_loss_threshold=self.max_loss_threshold,
                 max_profit_threshold=self.max_profit_threshold,
                 profit_ratio_threshold=self.profit_ratio_threshold,
-                expiry=expiry,
+                start_time=time.time(),
                 quantity=quantity,
+                data_timeout=45.0,  # Give more time for data collection
             )
 
-            self.ib.pendingTickersEvent += syn.executor
+            # Store executor and request market data for all contracts
+            self.active_executors[symbol] = syn_executor
+
+            # Clean up any stale data in contract_ticker for this symbol's contracts
+            for contract in all_contracts:
+                if contract.conId in contract_ticker:
+                    del contract_ticker[contract.conId]
+                    logger.debug(f"Cleaned up stale data for contract {contract.conId}")
+
+            # Request market data for all contracts with detailed logging
+            logger.info(
+                f"[{symbol}] Requesting market data for {len(all_contracts)} contracts:"
+            )
+
+            # Log stock contract
+            logger.info(f"  Stock: {stock.symbol} (conId: {stock.conId})")
+            self.ib.reqMktData(stock)
+
+            # Log option contracts
+            for expiry_option in expiry_options:
+                logger.info(
+                    f"  Call: {expiry_option.call_contract.symbol} {expiry_option.call_strike} "
+                    f"{expiry_option.expiry} (conId: {expiry_option.call_contract.conId})"
+                )
+                self.ib.reqMktData(expiry_option.call_contract)
+
+                logger.info(
+                    f"  Put: {expiry_option.put_contract.symbol} {expiry_option.put_strike} "
+                    f"{expiry_option.expiry} (conId: {expiry_option.put_contract.conId})"
+                )
+                self.ib.reqMktData(expiry_option.put_contract)
+
+            logger.info(
+                f"Created executor for {symbol} with {len(expiry_options)} expiry options "
+                f"({len(all_contracts)} total contracts)"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in scan_syn for {symbol}: {str(e)}")
