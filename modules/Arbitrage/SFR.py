@@ -504,12 +504,15 @@ class SFR(ArbitrageClass):
                     continue
 
                 await asyncio.sleep(0.05)
-                call = Option(stock.symbol, expiry, valid_strikes[-1], "C", "SMART")
-                put = Option(stock.symbol, expiry, valid_strikes[-2], "P", "SMART")
+
+                call_strike = valid_strikes[-1]
+                put_strike = valid_strikes[-2]
+
+                call = Option(stock.symbol, expiry, call_strike, "C", "SMART")
+                put = Option(stock.symbol, expiry, put_strike, "P", "SMART")
+
                 # Qualify the option contracts
                 valid_contracts = await self.ib.qualifyContractsAsync(call, put)
-                if len(valid_contracts) == 0:
-                    continue
 
                 # Find call and put contracts
                 call_contract = None
@@ -521,14 +524,56 @@ class SFR(ArbitrageClass):
                     elif contract.right == "P":
                         put_contract = contract
 
-                # Only proceed if we found both call and put
+                # If call contract is invalid, continue to next iteration
+                if not call_contract:
+                    logger.warning(
+                        f"Invalid call contract for {symbol} expiry {expiry}, skipping"
+                    )
+                    continue
+
+                # If put contract is invalid, try shifting one strike below
+                if not put_contract:
+                    put_strike_index = valid_strikes.index(put_strike)
+                    if put_strike_index > 0:  # Can shift one strike below
+                        new_put_strike = valid_strikes[put_strike_index - 1]
+                        logger.info(
+                            f"Retrying put contract for {symbol} with strike {new_put_strike}"
+                        )
+
+                        put_retry = Option(
+                            stock.symbol, expiry, new_put_strike, "P", "SMART"
+                        )
+                        valid_contracts_retry = await self.ib.qualifyContractsAsync(
+                            put_retry
+                        )
+
+                        for contract in valid_contracts_retry:
+                            if contract.right == "P":
+                                put_contract = contract
+                                put_strike = (
+                                    new_put_strike  # Update the actual strike used
+                                )
+                                break
+
+                        if not put_contract:
+                            logger.warning(
+                                f"Still no valid put contract for {symbol} expiry {expiry} after retry, skipping"
+                            )
+                            continue
+                    else:
+                        logger.warning(
+                            f"Cannot shift put strike below for {symbol} expiry {expiry}, skipping"
+                        )
+                        continue
+
+                # Both contracts are valid at this point, create ExpiryOption
                 if call_contract and put_contract:
                     expiry_option = ExpiryOption(
                         expiry=expiry,
                         call_contract=call_contract,
                         put_contract=put_contract,
-                        call_strike=valid_strikes[-1],
-                        put_strike=valid_strikes[-2],
+                        call_strike=call_strike,
+                        put_strike=put_strike,
                     )
                     expiry_options.append(expiry_option)
                     all_contracts.extend([call_contract, put_contract])
