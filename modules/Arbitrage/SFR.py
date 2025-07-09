@@ -450,7 +450,7 @@ class SFR(ArbitrageClass):
             for symbol in symbol_list:
                 task = asyncio.create_task(self.scan_sfr(symbol, self.quantity))
                 tasks.append(task)
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
             _ = await asyncio.gather(*tasks)
 
             # Clean up inactive executors
@@ -526,8 +526,8 @@ class SFR(ArbitrageClass):
 
                 # If call contract is invalid, continue to next iteration
                 if not call_contract:
-                    logger.warning(
-                        f"Invalid call contract for {symbol} expiry {expiry}, skipping"
+                    logger.info(
+                        f"Invalid call- [{call_strike}] contract for {symbol} expiry {expiry}, skipping"
                     )
                     continue
 

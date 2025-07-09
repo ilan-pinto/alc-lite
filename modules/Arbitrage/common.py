@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import logging
+from ib_async import Trade
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
@@ -70,7 +71,7 @@ def log_order_details(
         f.write(f"{order_details}\n")
 
 
-def trade_fills_table_str(trade) -> None:
+def trade_fills_table_str(trade: Trade) -> None:
     """Return a string representation of a rich table of all fills in the trade, including price and quantity from fill.execution."""
     table = Table(title=f"Trade Fills for Order {trade.order.orderId}")
     table.add_column("secIdType", style="cyan")

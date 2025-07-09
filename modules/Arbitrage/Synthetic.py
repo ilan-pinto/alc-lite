@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 import numpy as np
 from eventkit import Event
-from ib_async import IB, ComboLeg, Contract, Option, Order, Stock, Ticker
+from ib_async import IB, Contract, Option, Order, Ticker
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
@@ -487,7 +487,7 @@ class Syn(ArbitrageClass):
             for symbol in symbol_list:
                 task = asyncio.create_task(self.scan_syn(symbol, self.quantity))
                 tasks.append(task)
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
             _ = await asyncio.gather(*tasks)
 
             # Clean up inactive executors
@@ -496,37 +496,6 @@ class Syn(ArbitrageClass):
             # Reset for next iteration
             contract_ticker = {}
             await asyncio.sleep(30)  # Wait before next scan cycle
-
-    async def master_executor(self, event: Event) -> None:
-        """
-        Master executor that delegates to individual symbol executors.
-        This approach eliminates the need to constantly add/remove event handlers.
-        """
-        active_executors = [
-            executor
-            for executor in self.active_executors.values()
-            if executor.is_active
-        ]
-
-        if not active_executors:
-            return
-
-        # Process each active executor
-        for executor in active_executors:
-            await executor.executor(event)
-
-    def cleanup_inactive_executors(self):
-        """Remove inactive executors to prevent memory leaks"""
-        inactive_symbols = [
-            symbol
-            for symbol, executor in self.active_executors.items()
-            if not executor.is_active
-        ]
-        for symbol in inactive_symbols:
-            del self.active_executors[symbol]
-
-        if inactive_symbols:
-            logger.info(f"Cleaned up {len(inactive_symbols)} inactive executors")
 
     async def scan_syn(self, symbol: str, quantity: int) -> None:
         """
@@ -594,8 +563,8 @@ class Syn(ArbitrageClass):
 
                 # If call contract is invalid, continue to next iteration
                 if not call_contract:
-                    logger.warning(
-                        f"Invalid call contract for {symbol} expiry {expiry}, skipping"
+                    logger.info(
+                        f"Invalid call- [{call_strike}] contract for {symbol} expiry {expiry}, skipping"
                     )
                     continue
 
