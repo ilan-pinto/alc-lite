@@ -328,6 +328,32 @@ class SFRExecutor(BaseExecutor):
             if np.isnan(call_price) or np.isnan(put_price):
                 return None
 
+            # Check bid-ask spread for both call and put contracts to prevent crazy price ranges
+            call_bid_ask_spread = (
+                abs(call_ticker.ask - call_ticker.bid)
+                if (not np.isnan(call_ticker.ask) and not np.isnan(call_ticker.bid))
+                else float("inf")
+            )
+            put_bid_ask_spread = (
+                abs(put_ticker.ask - put_ticker.bid)
+                if (not np.isnan(put_ticker.ask) and not np.isnan(put_ticker.bid))
+                else float("inf")
+            )
+
+            if call_bid_ask_spread > 15:
+                logger.info(
+                    f"[{self.symbol}] Call contract bid-ask spread too wide: {call_bid_ask_spread:.2f} > 15.00, "
+                    f"expiry: {expiry_option.expiry}, strike: {expiry_option.call_strike}"
+                )
+                return None
+
+            if put_bid_ask_spread > 15:
+                logger.info(
+                    f"[{self.symbol}] Put contract bid-ask spread too wide: {put_bid_ask_spread:.2f} > 15.00, "
+                    f"expiry: {expiry_option.expiry}, strike: {expiry_option.put_strike}"
+                )
+                return None
+
             # Calculate net credit
             net_credit = call_price - put_price
             stock_price = round(stock_price, 2)
