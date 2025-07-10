@@ -28,6 +28,7 @@ from .common import (
     log_filled_order,
     log_order_details,
 )
+from .metrics import metrics_collector
 
 logger = get_logger()
 
@@ -70,6 +71,7 @@ class OrderManagerClass:
         if not position_exists and not any_trade:
             trade = self.ib.placeOrder(contract=contract, order=order)
             logger.info(f"placed order:{ order.orderId} ")
+            metrics_collector.record_order_placed()
 
             await asyncio.sleep(50)
 
@@ -321,6 +323,7 @@ class ArbitrageClass:
     def onFill(self, trade):
         """Called whenever any order gets filled (partially or fully)."""
         if log_filled_order(trade):
+            metrics_collector.record_order_filled()
             self.ib.disconnect()
 
     async def master_executor(self, event: Event) -> None:
@@ -402,6 +405,33 @@ class ArbitrageClass:
         market_data = self.ib.reqMktData(stock)
         await asyncio.sleep(1)
         return market_data
+
+    async def request_market_data_batch(self, contracts: List[Contract]) -> None:
+        """Request market data for multiple contracts in parallel with improved performance"""
+        try:
+            # Request market data for all contracts concurrently
+            tasks = []
+            for contract in contracts:
+                task = asyncio.create_task(self._request_single_market_data(contract))
+                tasks.append(task)
+
+            # Execute all requests in parallel
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Give a brief moment for initial data to arrive
+            await asyncio.sleep(0.5)
+
+        except Exception as e:
+            logger.error(f"Error in batch market data request: {str(e)}")
+
+    async def _request_single_market_data(self, contract: Contract) -> None:
+        """Request market data for a single contract"""
+        try:
+            self.ib.reqMktData(contract)
+        except Exception as e:
+            logger.error(
+                f"Error requesting market data for contract {contract.conId}: {str(e)}"
+            )
 
     def _get_stock_contract(self, symbol: str):
         exchange = "SMART"

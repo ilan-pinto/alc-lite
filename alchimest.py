@@ -6,6 +6,7 @@ import pyfiglet
 import warnings
 
 from commands.option import OptionScan
+from modules.Arbitrage.metrics import metrics_collector
 from modules.welcome import print_welcome
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -118,6 +119,25 @@ def main() -> None:
         help="Search for synthetic conversion (synthetic) opportunities not risk free",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+
+    # Metrics reporting sub-command
+    parser_metrics = subparsers.add_parser(
+        "metrics",
+        help="Generate performance metrics report",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser_metrics.add_argument(
+        "--format",
+        choices=["json", "console"],
+        default="json",
+        help="Output format (default: json)",
+    )
+    parser_metrics.add_argument(
+        "--output", "-o", type=str, help="Output filename (optional)"
+    )
+    parser_metrics.add_argument(
+        "--reset", action="store_true", help="Reset metrics after generating report"
+    )
     parser_syn.add_argument(
         "-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)"
     )
@@ -186,6 +206,20 @@ def main() -> None:
             profit_ratio_threshold=args.profit_ratio,
             quantity=args.quantity,
         )
+
+    elif args.command == "metrics":
+        # Generate metrics report
+        if args.format.lower() == "json":
+            output_file = metrics_collector.export_to_json(args.output)
+            print(f"Metrics exported to: {output_file}")
+
+        # Always print summary to console
+        metrics_collector.print_summary()
+
+        # Reset if requested
+        if args.reset:
+            metrics_collector.reset_session()
+            print("Metrics have been reset.")
 
     else:
         parser.print_help()

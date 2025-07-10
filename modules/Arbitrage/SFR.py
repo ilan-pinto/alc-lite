@@ -11,6 +11,7 @@ from ib_async import IB, ComboLeg, Contract, Option, Order, Stock, Ticker
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
 from .common import configure_logging, get_logger
+from .metrics import metrics_collector
 
 # Configure logging
 configure_logging(level=logging.INFO)
@@ -209,7 +210,9 @@ class SFRExecutor(BaseExecutor):
                 logger.info(
                     f"[{self.symbol}] Fetched ticker for {len(self.all_contracts)} contracts"
                 )
-                logger.info(f"time to execution: {time.time() - self.start_time} sec")
+                execution_time = time.time() - self.start_time
+                logger.info(f"time to execution: {execution_time} sec")
+                metrics_collector.record_execution_time(execution_time)
 
                 # Process all expiries
                 best_opportunity = None
@@ -266,6 +269,7 @@ class SFRExecutor(BaseExecutor):
                             conversion_contract, order
                         )
                         logger.info(f"Executed best opportunity for {self.symbol}")
+                        metrics_collector.record_opportunity_found()
 
                 else:
                     logger.info(f"No suitable opportunities found for {self.symbol}")
@@ -456,6 +460,10 @@ class SFR(ArbitrageClass):
             # Clean up inactive executors
             self.cleanup_inactive_executors()
 
+            # Print metrics summary periodically
+            if len(metrics_collector.scan_metrics) > 0:
+                metrics_collector.print_summary()
+
             # Reset for next iteration
             contract_ticker = {}
             await asyncio.sleep(30)  # Wait before next scan cycle
@@ -465,6 +473,9 @@ class SFR(ArbitrageClass):
         Scan for SFR opportunities for a specific symbol.
         Creates a single executor per symbol that handles all expiries.
         """
+        # Start metrics collection for this scan
+        scan_metrics = metrics_collector.start_scan(symbol, "SFR")
+
         try:
             exchange, option_type, stock = self._get_stock_contract(symbol)
 
@@ -622,7 +633,6 @@ class SFR(ArbitrageClass):
 
             # Log stock contract
             logger.info(f"  Stock: {stock.symbol} (conId: {stock.conId})")
-            self.ib.reqMktData(stock)
 
             # Log option contracts
             for expiry_option in expiry_options:
@@ -630,18 +640,29 @@ class SFR(ArbitrageClass):
                     f"  Call: {expiry_option.call_contract.symbol} {expiry_option.call_strike} "
                     f"{expiry_option.expiry} (conId: {expiry_option.call_contract.conId})"
                 )
-                self.ib.reqMktData(expiry_option.call_contract)
-
                 logger.info(
                     f"  Put: {expiry_option.put_contract.symbol} {expiry_option.put_strike} "
                     f"{expiry_option.expiry} (conId: {expiry_option.put_contract.conId})"
                 )
-                self.ib.reqMktData(expiry_option.put_contract)
+
+            # Request market data for all contracts in parallel
+            data_collection_start = time.time()
+            await self.request_market_data_batch(all_contracts)
+            data_collection_time = time.time() - data_collection_start
+
+            # Record metrics
+            metrics_collector.record_contracts_count(len(all_contracts))
+            metrics_collector.record_data_collection_time(data_collection_time)
+            metrics_collector.record_expiries_scanned(len(expiry_options))
 
             logger.info(
                 f"Created executor for {symbol} with {len(expiry_options)} expiry options "
                 f"({len(all_contracts)} total contracts)"
             )
 
+            # Mark scan as successful
+            metrics_collector.finish_scan(success=True)
+
         except Exception as e:
             logger.error(f"Error in scan_sfr for {symbol}: {str(e)}")
+            metrics_collector.finish_scan(success=False, error_message=str(e))
