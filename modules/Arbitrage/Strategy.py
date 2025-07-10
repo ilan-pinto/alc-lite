@@ -406,32 +406,52 @@ class ArbitrageClass:
         await asyncio.sleep(1)
         return market_data
 
-    async def request_market_data_batch(self, contracts: List[Contract]) -> None:
-        """Request market data for multiple contracts in parallel with improved performance"""
+    def request_market_data_batch_optimized(self, contracts: List[Contract]) -> None:
+        """Request market data for multiple contracts with optimized batching"""
         try:
-            # Request market data for all contracts concurrently
-            tasks = []
+            # IB reqMktData is synchronous and fast - batch them efficiently
+            successful_requests = 0
+            failed_requests = 0
+
             for contract in contracts:
-                task = asyncio.create_task(self._request_single_market_data(contract))
-                tasks.append(task)
+                try:
+                    # Optimized IB request - no snapshots, no regulatory data
+                    self.ib.reqMktData(contract, "", False, False)
+                    successful_requests += 1
+                except Exception as e:
+                    failed_requests += 1
+                    logger.debug(
+                        f"Failed to request data for contract {contract.conId}: {str(e)}"
+                    )
 
-            # Execute all requests in parallel
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Give a brief moment for initial data to arrive
-            await asyncio.sleep(0.5)
+            logger.debug(
+                f"Batch request: {successful_requests} successful, {failed_requests} failed"
+            )
 
         except Exception as e:
             logger.error(f"Error in batch market data request: {str(e)}")
 
-    async def _request_single_market_data(self, contract: Contract) -> None:
-        """Request market data for a single contract"""
-        try:
-            self.ib.reqMktData(contract)
-        except Exception as e:
-            logger.error(
-                f"Error requesting market data for contract {contract.conId}: {str(e)}"
-            )
+    async def request_market_data_batch(self, contracts: List[Contract]) -> None:
+        """Request market data for multiple contracts with timing optimization"""
+        start_time = time.time()
+
+        # Use optimized synchronous batch request (IB reqMktData is not awaitable)
+        self.request_market_data_batch_optimized(contracts)
+
+        # Adaptive wait based on number of contracts
+        base_wait = 0.1  # Base 100ms
+        per_contract_wait = 0.01  # 10ms per contract
+        max_wait = 2.0  # Maximum 2 seconds
+
+        calculated_wait = min(
+            base_wait + (len(contracts) * per_contract_wait), max_wait
+        )
+
+        logger.debug(f"Waiting {calculated_wait:.3f}s for {len(contracts)} contracts")
+        await asyncio.sleep(calculated_wait)
+
+        total_time = time.time() - start_time
+        logger.debug(f"Market data batch request completed in {total_time:.3f}s")
 
     def _get_stock_contract(self, symbol: str):
         exchange = "SMART"
