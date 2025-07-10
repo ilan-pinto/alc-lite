@@ -123,7 +123,7 @@ class BaseExecutor:
         stock_price: float,
         call_price: float,
         put_price: float,
-        buffer_percent: float = 0.02,  # 2% buffer for slippage
+        buffer_percent: float = 0.00,  # 2% buffer for slippage
     ) -> float:
         """
         Calculate precise combo limit price based on individual leg target prices.

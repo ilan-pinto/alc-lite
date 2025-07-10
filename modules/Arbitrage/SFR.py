@@ -354,7 +354,7 @@ class SFRExecutor(BaseExecutor):
                 stock_price=stock_price,
                 call_price=call_price,
                 put_price=put_price,
-                buffer_percent=0.015,  # 1.5% buffer for better execution
+                buffer_percent=0.00,  # 1.5% buffer for better execution
             )
 
             logger.info(
