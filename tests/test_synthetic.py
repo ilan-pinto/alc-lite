@@ -32,7 +32,7 @@ def test_syn_executor_check_conditions_all_false_branches():
         quantity=1,
     )
     # 1. max_loss_threshold >= min_profit
-    assert not syn_executor.check_conditions(
+    result, reason = syn_executor.check_conditions(
         symbol="TEST",
         cost_limit=100.0,
         lmt_price=50.0,
@@ -41,9 +41,12 @@ def test_syn_executor_check_conditions_all_false_branches():
         min_profit=10.0,
         max_profit=30.0,
     )
+    assert not result
+    assert reason is not None
+
     # 2. net_credit < 0
     syn_executor.max_loss_threshold = None
-    assert not syn_executor.check_conditions(
+    result, reason = syn_executor.check_conditions(
         symbol="TEST",
         cost_limit=100.0,
         lmt_price=50.0,
@@ -52,10 +55,13 @@ def test_syn_executor_check_conditions_all_false_branches():
         min_profit=5.0,
         max_profit=30.0,
     )
+    assert not result
+    assert reason is not None
+
     # 3. max_profit_threshold < max_profit
     syn_executor.max_loss_threshold = None
     syn_executor.max_profit_threshold = 10.0
-    assert not syn_executor.check_conditions(
+    result, reason = syn_executor.check_conditions(
         symbol="TEST",
         cost_limit=100.0,
         lmt_price=50.0,
@@ -64,10 +70,13 @@ def test_syn_executor_check_conditions_all_false_branches():
         min_profit=5.0,
         max_profit=30.0,
     )
+    assert not result
+    assert reason is not None
+
     # 4. profit_ratio_threshold > profit_ratio
     syn_executor.max_profit_threshold = None
     syn_executor.profit_ratio_threshold = 10.0
-    assert not syn_executor.check_conditions(
+    result, reason = syn_executor.check_conditions(
         symbol="TEST",
         cost_limit=100.0,
         lmt_price=50.0,
@@ -76,9 +85,12 @@ def test_syn_executor_check_conditions_all_false_branches():
         min_profit=5.0,
         max_profit=10.0,
     )
+    assert not result
+    assert reason is not None
+
     # 5. np.isnan(lmt_price)
     syn_executor.profit_ratio_threshold = None
-    assert not syn_executor.check_conditions(
+    result, reason = syn_executor.check_conditions(
         symbol="TEST",
         cost_limit=100.0,
         lmt_price=np.nan,
@@ -87,8 +99,11 @@ def test_syn_executor_check_conditions_all_false_branches():
         min_profit=5.0,
         max_profit=10.0,
     )
+    assert not result
+    assert reason is not None
+
     # 6. lmt_price > cost_limit
-    assert not syn_executor.check_conditions(
+    result, reason = syn_executor.check_conditions(
         symbol="TEST",
         cost_limit=50.0,
         lmt_price=100.0,
@@ -97,6 +112,8 @@ def test_syn_executor_check_conditions_all_false_branches():
         min_profit=5.0,
         max_profit=10.0,
     )
+    assert not result
+    assert reason is not None
 
 
 @pytest.mark.unit
@@ -309,13 +326,13 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     monkeypatch.setattr(
         "modules.Arbitrage.Synthetic.contract_ticker",
         {
-            1: MagicMock(ask=100.0, close=99.0),  # Stock ticker
-            2: MagicMock(bid=5.0, close=5.0),  # Call ticker
-            3: MagicMock(ask=3.0, close=3.0),  # Put ticker
+            1: MagicMock(ask=100.0, close=99.0, volume=1000),  # Stock ticker
+            2: MagicMock(bid=5.0, close=5.0, ask=5.5, volume=500),  # Call ticker
+            3: MagicMock(ask=3.0, close=3.0, bid=2.5, volume=500),  # Put ticker
         },
     )
-    # Mock check_conditions to return True for successful execution
-    monkeypatch.setattr(syn_executor, "check_conditions", lambda *a, **kw: True)
+    # Mock check_conditions to return (True, None) for successful execution
+    monkeypatch.setattr(syn_executor, "check_conditions", lambda *a, **kw: (True, None))
     with patch.object(
         syn_executor, "build_order", return_value=("contract", "order")
     ) as mock_build:
