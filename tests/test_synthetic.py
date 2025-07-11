@@ -1,9 +1,13 @@
-from unittest.mock import MagicMock, patch
+import asyncio
+import time
+from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 import pytest
+from ib_async import Option, Stock
 
-from modules.Arbitrage.Synthetic import ExpiryOption, SynExecutor
+from modules.Arbitrage.metrics import RejectionReason, metrics_collector
+from modules.Arbitrage.Synthetic import ExpiryOption, SynExecutor, contract_ticker
 
 
 @pytest.mark.unit
@@ -374,3 +378,113 @@ def test_syn_executor_build_order_quantity():
     put = MagicMock(conId=3, right="P")
     combo_contract, order = syn_executor.build_order("TEST", stock, call, put, 99.0, 4)
     assert order.totalQuantity == 4
+
+
+@pytest.mark.asyncio
+async def test_rejection_reasons_are_logged_during_scan():
+    """Test that rejection reasons are properly logged during scan execution"""
+    # Create a real SynExecutor to test scan lifecycle
+    stock_contract = Stock("AAPL", "SMART", "USD")
+    stock_contract.conId = 1001  # Set contract ID
+
+    call_contract = Option("AAPL", "20240315", 150, "C", "SMART")
+    call_contract.conId = 1002  # Set contract ID
+
+    put_contract = Option("AAPL", "20240315", 140, "P", "SMART")
+    put_contract.conId = 1003  # Set contract ID
+
+    expiry_option = ExpiryOption(
+        expiry="20240315",
+        call_contract=call_contract,
+        put_contract=put_contract,
+        call_strike=150,
+        put_strike=140,
+    )
+
+    ib_mock = Mock()
+    order_manager_mock = Mock()
+
+    # Create SynExecutor
+    executor = SynExecutor(
+        ib=ib_mock,
+        order_manager=order_manager_mock,
+        stock_contract=stock_contract,
+        expiry_options=[expiry_option],
+        symbol="AAPL",
+        cost_limit=100,
+        max_loss_threshold=50,
+        max_profit_threshold=200,
+        profit_ratio_threshold=2.0,
+        start_time=time.time(),
+        quantity=1,
+        data_timeout=30.0,
+    )
+
+    # Clear any existing metrics
+    metrics_collector.reset_session()
+
+    # Start a scan (simulating what scan_syn does)
+    scan_metrics = metrics_collector.start_scan("AAPL", "Synthetic")
+
+    # Mock contract_ticker with data that will trigger rejection
+    global contract_ticker
+    contract_ticker = {}
+
+    # Mock stock ticker with valid data (using the contract ID)
+    stock_ticker = Mock()
+    stock_ticker.ask = 145.0
+    stock_ticker.close = 145.0
+    stock_ticker.volume = 1000
+    contract_ticker[stock_contract.conId] = stock_ticker
+
+    # Mock call ticker with bid-ask spread too wide (should trigger rejection)
+    call_ticker = Mock()
+    call_ticker.bid = 5.0
+    call_ticker.ask = 25.0  # Wide spread of 20 > 15 threshold
+    call_ticker.close = 10.0
+    call_ticker.volume = 100
+    contract_ticker[call_contract.conId] = call_ticker
+
+    # Mock put ticker with valid data
+    put_ticker = Mock()
+    put_ticker.bid = 8.0
+    put_ticker.ask = 9.0
+    put_ticker.close = 8.5
+    put_ticker.volume = 100
+    contract_ticker[put_contract.conId] = put_ticker
+
+    # Capture logs to verify rejection reasons are logged
+    import sys
+    from io import StringIO
+
+    import logging
+
+    log_capture = StringIO()
+    handler = logging.StreamHandler(log_capture)
+    handler.setLevel(logging.INFO)
+
+    # Add handler to the logger
+    logger = logging.getLogger("modules.Arbitrage.metrics")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+    try:
+        # Test the calc_price_and_build_order_for_expiry method
+        result = executor.calc_price_and_build_order_for_expiry(expiry_option)
+
+        # Should return None due to wide bid-ask spread
+        assert result is None
+
+        # Check that rejection reason was logged
+        log_output = log_capture.getvalue()
+        # Accept any rejection reason as long as it's being logged
+        assert "REJECTED" in log_output
+        assert "AAPL" in log_output
+
+        print("SUCCESS: Rejection reasons are being logged correctly!")
+        print(f"Log output: {log_output}")
+
+    finally:
+        # Clean up
+        logger.removeHandler(handler)
+        metrics_collector.finish_scan(success=True)

@@ -75,7 +75,31 @@ class OrderManagerClass:
 
             await asyncio.sleep(50)
 
-            self.ib.cancelOrder(order)
+            # Check if order was filled before cancelling
+            if trade.orderStatus.status not in ["Filled", "PartiallyFilled"]:
+                logger.info(
+                    f"[{contract.symbol}] Order {order.orderId} not filled within timeout, cancelling"
+                )
+                # Record rejection reason for unfilled order
+                from .metrics import RejectionReason
+
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.ORDER_NOT_FILLED,
+                    {
+                        "symbol": contract.symbol,
+                        "order_id": order.orderId,
+                        "order_status": trade.orderStatus.status,
+                        "timeout_seconds": 50,
+                        "filled_quantity": trade.orderStatus.filled,
+                        "total_quantity": order.totalQuantity,
+                    },
+                )
+                self.ib.cancelOrder(order)
+            else:
+                logger.info(
+                    f"[{contract.symbol}] Order {order.orderId} filled successfully"
+                )
+
             return trade
         else:
             logger.info(

@@ -201,6 +201,10 @@ class SFRExecutor(BaseExecutor):
 
                 # Deactivate after timeout
                 self.is_active = False
+                # Finish scan with timeout error
+                metrics_collector.finish_scan(
+                    success=False, error_message="Data collection timeout"
+                )
                 return
 
             # Check if we have data for all contracts
@@ -270,10 +274,14 @@ class SFRExecutor(BaseExecutor):
                         )
                         logger.info(f"Executed best opportunity for {self.symbol}")
                         metrics_collector.record_opportunity_found()
+                        # Finish scan successfully when an order is placed
+                        metrics_collector.finish_scan(success=True)
 
                 else:
                     logger.info(f"No suitable opportunities found for {self.symbol}")
                     self.is_active = False
+                    # Finish scan successfully even if no opportunities found
+                    metrics_collector.finish_scan(success=True)
 
             else:
                 # Still waiting for data from some contracts
@@ -290,6 +298,8 @@ class SFRExecutor(BaseExecutor):
         except Exception as e:
             logger.error(f"Error in executor: {str(e)}")
             self.is_active = False
+            # Finish scan with error
+            metrics_collector.finish_scan(success=False, error_message=str(e))
 
     def calc_price_and_build_order_for_expiry(
         self, expiry_option: ExpiryOption
@@ -799,8 +809,8 @@ class SFR(ArbitrageClass):
                 f"({len(all_contracts)} total contracts)"
             )
 
-            # Mark scan as successful
-            metrics_collector.finish_scan(success=True)
+            # Don't finish scan here - let the executor finish it when done processing
+            # The executor will call metrics_collector.finish_scan() when it's inactive
 
         except Exception as e:
             logger.error(f"Error in scan_sfr for {symbol}: {str(e)}")

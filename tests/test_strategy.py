@@ -132,23 +132,37 @@ async def test_place_order_places_and_cancels_order(monkeypatch):
     ib = MagicMock()
     order_manager = OrderManagerClass(ib=ib)
     contract = MagicMock()
+    contract.symbol = "TEST"  # Add symbol for logging
     order = MagicMock()
+    order.orderId = 123  # Add orderId for logging
+    order.totalQuantity = 1  # Add totalQuantity for logging
+
     # _check_position_exists returns False, _check_any_trade_exists returns False
     order_manager._check_position_exists = MagicMock(return_value=False)
     order_manager._check_any_trade_exists = MagicMock(return_value=False)
-    ib.placeOrder.return_value = "trade_obj"
+
+    # Create a proper mock trade object with orderStatus
+    mock_trade = MagicMock()
+    mock_trade.orderStatus.status = "Submitted"  # Not filled, so it will be cancelled
+    mock_trade.orderStatus.filled = 0
+    ib.placeOrder.return_value = mock_trade
 
     # Patch asyncio.sleep to avoid real sleep
     async def fake_sleep(x):
         return None
 
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-    # Patch logger to silence output
-    with patch("modules.Arbitrage.Strategy.logger"):
+
+    # Patch logger and metrics_collector to silence output and avoid issues
+    with (
+        patch("modules.Arbitrage.Strategy.logger"),
+        patch("modules.Arbitrage.Strategy.metrics_collector"),
+    ):
         result = await order_manager.place_order(contract, order)
+
     ib.placeOrder.assert_called_once_with(contract=contract, order=order)
     ib.cancelOrder.assert_called_once_with(order)
-    assert result == "trade_obj"
+    assert result == mock_trade
 
 
 @pytest.mark.unit
