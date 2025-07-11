@@ -11,7 +11,7 @@ from ib_async import IB, Contract, Option, Order, Ticker
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
 from .common import configure_logging, get_logger
-from .metrics import metrics_collector
+from .metrics import RejectionReason, metrics_collector
 
 # Global contract_ticker for use in SynExecutor and patching in tests
 contract_ticker = {}
@@ -127,7 +127,7 @@ class SynExecutor(BaseExecutor):
         min_roi: float,
         min_profit: float,
         max_profit: float,
-    ) -> bool:
+    ) -> Tuple[bool, Optional[RejectionReason]]:
 
         profit_ratio = max_profit / abs(min_profit)
 
@@ -138,13 +138,13 @@ class SynExecutor(BaseExecutor):
             logger.info(
                 f"max_loss limit [{self.max_loss_threshold}] >  calculated max_loss [{min_profit}] - <doesn't meet conditions>"
             )
-            return False
+            return False, RejectionReason.MAX_LOSS_THRESHOLD_EXCEEDED
 
         elif net_credit < 0:
             logger.info(
                 f"[{symbol}] net_credit[{net_credit}] < 0 - doesn't meet conditions"
             )
-            return False
+            return False, RejectionReason.NET_CREDIT_NEGATIVE
 
         elif (
             self.max_profit_threshold is not None
@@ -153,7 +153,7 @@ class SynExecutor(BaseExecutor):
             logger.info(
                 f"[{symbol}] max_profit threshold [{self.max_profit_threshold }] < max_profit [{max_profit}] - doesn't meet conditions"
             )
-            return False
+            return False, RejectionReason.MAX_PROFIT_THRESHOLD_NOT_MET
 
         elif (
             self.profit_ratio_threshold is not None
@@ -162,19 +162,19 @@ class SynExecutor(BaseExecutor):
             logger.info(
                 f"[{symbol}] profit_ratio_threshold  [{self.profit_ratio_threshold }] > profit_ratio [{profit_ratio}] - doesn't meet conditions"
             )
-            return False
+            return False, RejectionReason.PROFIT_RATIO_THRESHOLD_NOT_MET
 
         elif np.isnan(lmt_price) or lmt_price > cost_limit:
             logger.info(
                 f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions"
             )
-            return False
+            return False, RejectionReason.PRICE_LIMIT_EXCEEDED
 
         else:
             logger.info(
                 f"[{symbol}] meets conditions - initiating order. [profit_ratio: {profit_ratio}]"
             )
-            return True
+            return True, None
 
     async def executor(self, event: Event) -> None:
         """
@@ -335,6 +335,15 @@ class SynExecutor(BaseExecutor):
             # Get stock data
             stock_ticker = contract_ticker.get(self.stock_contract.conId)
             if not stock_ticker:
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.MISSING_MARKET_DATA,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "stock",
+                        "expiry": expiry_option.expiry,
+                        "reason": "no stock ticker data",
+                    },
+                )
                 return None
 
             stock_price = (
@@ -348,6 +357,18 @@ class SynExecutor(BaseExecutor):
             put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
 
             if not call_ticker or not put_ticker:
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.MISSING_MARKET_DATA,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "options",
+                        "expiry": expiry_option.expiry,
+                        "call_strike": expiry_option.call_strike,
+                        "put_strike": expiry_option.put_strike,
+                        "missing_call_data": not call_ticker,
+                        "missing_put_data": not put_ticker,
+                    },
+                )
                 return None
 
             # Get validated prices for individual legs
@@ -359,6 +380,18 @@ class SynExecutor(BaseExecutor):
             )
 
             if np.isnan(call_price) or np.isnan(put_price):
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INVALID_CONTRACT_DATA,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "options",
+                        "expiry": expiry_option.expiry,
+                        "call_strike": expiry_option.call_strike,
+                        "put_strike": expiry_option.put_strike,
+                        "call_price_invalid": np.isnan(call_price),
+                        "put_price_invalid": np.isnan(put_price),
+                    },
+                )
                 return None
 
             # Check bid-ask spread for both call and put contracts to prevent crazy price ranges
@@ -378,12 +411,34 @@ class SynExecutor(BaseExecutor):
                     f"[{self.symbol}] Call contract bid-ask spread too wide: {call_bid_ask_spread:.2f} > 15.00, "
                     f"expiry: {expiry_option.expiry}, strike: {expiry_option.call_strike}"
                 )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.BID_ASK_SPREAD_TOO_WIDE,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "call",
+                        "expiry": expiry_option.expiry,
+                        "strike": expiry_option.call_strike,
+                        "bid_ask_spread": call_bid_ask_spread,
+                        "threshold": 15.0,
+                    },
+                )
                 return None
 
             if put_bid_ask_spread > 15:
                 logger.info(
                     f"[{self.symbol}] Put contract bid-ask spread too wide: {put_bid_ask_spread:.2f} > 15.00, "
                     f"expiry: {expiry_option.expiry}, strike: {expiry_option.put_strike}"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.BID_ASK_SPREAD_TOO_WIDE,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "put",
+                        "expiry": expiry_option.expiry,
+                        "strike": expiry_option.put_strike,
+                        "bid_ask_spread": put_bid_ask_spread,
+                        "threshold": 15.0,
+                    },
                 )
                 return None
 
@@ -398,6 +453,16 @@ class SynExecutor(BaseExecutor):
             if expiry_option.call_strike < expiry_option.put_strike:
                 logger.info(
                     f"call_strike:{expiry_option.call_strike} < put_strike:{expiry_option.put_strike}"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INVALID_STRIKE_COMBINATION,
+                    {
+                        "symbol": self.symbol,
+                        "expiry": expiry_option.expiry,
+                        "call_strike": expiry_option.call_strike,
+                        "put_strike": expiry_option.put_strike,
+                        "reason": "call_strike < put_strike",
+                    },
                 )
                 return None
 
@@ -420,7 +485,7 @@ class SynExecutor(BaseExecutor):
                 f"[{self.symbol}] Expiry: {expiry_option.expiry} min_profit:{min_profit:.2f}, max_profit:{max_profit:.2f}, min_roi:{min_roi:.2f}%"
             )
 
-            if self.check_conditions(
+            conditions_met, rejection_reason = self.check_conditions(
                 self.symbol,
                 self.cost_limit,
                 combo_limit_price,  # Use calculated precise limit price
@@ -428,7 +493,9 @@ class SynExecutor(BaseExecutor):
                 min_roi,
                 min_profit,
                 max_profit,
-            ):
+            )
+
+            if conditions_met:
                 # Build order with precise limit price and target leg prices
                 conversion_contract, order = self.build_order(
                     self.symbol,
@@ -456,6 +523,28 @@ class SynExecutor(BaseExecutor):
                 }
 
                 return conversion_contract, order, min_profit, trade_details
+            else:
+                # Record rejection reason
+                if rejection_reason:
+                    metrics_collector.add_rejection_reason(
+                        rejection_reason,
+                        {
+                            "symbol": self.symbol,
+                            "expiry": expiry_option.expiry,
+                            "call_strike": expiry_option.call_strike,
+                            "put_strike": expiry_option.put_strike,
+                            "stock_price": stock_price,
+                            "net_credit": net_credit,
+                            "min_profit": min_profit,
+                            "max_profit": max_profit,
+                            "min_roi": min_roi,
+                            "combo_limit_price": combo_limit_price,
+                            "cost_limit": self.cost_limit,
+                            "max_loss_threshold": self.max_loss_threshold,
+                            "max_profit_threshold": self.max_profit_threshold,
+                            "profit_ratio_threshold": self.profit_ratio_threshold,
+                        },
+                    )
 
             return None
         except Exception as e:
@@ -513,6 +602,9 @@ class Syn(ArbitrageClass):
         self.ib.pendingTickersEvent += self.master_executor
 
         while True:
+            # Start cycle tracking
+            cycle_metrics = metrics_collector.start_cycle(len(symbol_list))
+
             tasks = []
             for symbol in symbol_list:
                 task = asyncio.create_task(self.scan_syn(symbol, self.quantity))
@@ -522,6 +614,9 @@ class Syn(ArbitrageClass):
 
             # Clean up inactive executors
             self.cleanup_inactive_executors()
+
+            # Finish cycle tracking
+            metrics_collector.finish_cycle()
 
             # Print metrics summary periodically
             if len(metrics_collector.scan_metrics) > 0:
@@ -564,6 +659,15 @@ class Syn(ArbitrageClass):
             if len(valid_strikes) < 2:
                 logger.info(
                     f"Not enough valid strikes found for {symbol} (found: {len(valid_strikes)})"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INSUFFICIENT_VALID_STRIKES,
+                    {
+                        "symbol": symbol,
+                        "valid_strikes_count": len(valid_strikes),
+                        "required_strikes": 2,
+                        "stock_price": stock_price,
+                    },
                 )
                 return
 
@@ -658,6 +762,18 @@ class Syn(ArbitrageClass):
 
             if not expiry_options:
                 logger.info(f"No valid expiry options found for {symbol}")
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INVALID_CONTRACT_DATA,
+                    {
+                        "symbol": symbol,
+                        "reason": "no valid expiry options found",
+                        "total_expiries_checked": len(
+                            self.filter_expirations_within_range(
+                                chain.expirations, 19, 45
+                            )
+                        ),
+                    },
+                )
                 return
 
             # Log the total number of combinations being scanned

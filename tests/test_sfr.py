@@ -30,7 +30,7 @@ def test_sfr_executor_check_conditions_all_false_branches():
         quantity=1,
     )
     # 1. spread > net_credit
-    assert not sfr_executor.check_conditions(
+    result, reason = sfr_executor.check_conditions(
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
@@ -41,8 +41,11 @@ def test_sfr_executor_check_conditions_all_false_branches():
         stock_price=100.0,
         min_profit=10.0,
     )
+    assert not result
+    assert reason is not None
+
     # 2. net_credit < 0
-    assert not sfr_executor.check_conditions(
+    result, reason = sfr_executor.check_conditions(
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
@@ -53,8 +56,11 @@ def test_sfr_executor_check_conditions_all_false_branches():
         stock_price=90.0,
         min_profit=10.0,
     )
+    assert not result
+    assert reason is not None
+
     # 3. profit_target > min_roi
-    assert not sfr_executor.check_conditions(
+    result, reason = sfr_executor.check_conditions(
         symbol="TEST",
         profit_target=30.0,
         cost_limit=100.0,
@@ -65,8 +71,11 @@ def test_sfr_executor_check_conditions_all_false_branches():
         stock_price=90.0,
         min_profit=10.0,
     )
+    assert not result
+    assert reason is not None
+
     # 4. np.isnan(lmt_price)
-    assert not sfr_executor.check_conditions(
+    result, reason = sfr_executor.check_conditions(
         symbol="TEST",
         profit_target=10.0,
         cost_limit=100.0,
@@ -77,8 +86,11 @@ def test_sfr_executor_check_conditions_all_false_branches():
         stock_price=90.0,
         min_profit=10.0,
     )
+    assert not result
+    assert reason is not None
+
     # 5. lmt_price > cost_limit
-    assert not sfr_executor.check_conditions(
+    result, reason = sfr_executor.check_conditions(
         symbol="TEST",
         profit_target=10.0,
         cost_limit=50.0,
@@ -89,6 +101,8 @@ def test_sfr_executor_check_conditions_all_false_branches():
         stock_price=90.0,
         min_profit=10.0,
     )
+    assert not result
+    assert reason is not None
 
 
 @pytest.mark.unit
@@ -114,7 +128,7 @@ def test_sfr_executor_check_conditions_true_branch():
         quantity=1,
     )
     # All conditions met
-    assert sfr_executor.check_conditions(
+    result, reason = sfr_executor.check_conditions(
         symbol="TEST",
         profit_target=5.0,
         cost_limit=100.0,
@@ -125,6 +139,8 @@ def test_sfr_executor_check_conditions_true_branch():
         stock_price=90.0,
         min_profit=10.0,
     )
+    assert result
+    assert reason is None
 
 
 @pytest.mark.unit
@@ -288,13 +304,13 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     monkeypatch.setattr(
         "modules.Arbitrage.SFR.contract_ticker",
         {
-            1: MagicMock(ask=100.0, close=99.0),  # Stock ticker
-            2: MagicMock(bid=5.0, close=5.0),  # Call ticker
-            3: MagicMock(ask=3.0, close=3.0),  # Put ticker
+            1: MagicMock(ask=100.0, close=99.0, volume=1000),  # Stock ticker
+            2: MagicMock(bid=5.0, close=5.0, ask=5.5, volume=500),  # Call ticker
+            3: MagicMock(ask=3.0, close=3.0, bid=2.5, volume=500),  # Put ticker
         },
     )
-    # Mock check_conditions to return True for successful execution
-    monkeypatch.setattr(sfr_executor, "check_conditions", lambda *a, **kw: True)
+    # Mock check_conditions to return (True, None) for successful execution
+    monkeypatch.setattr(sfr_executor, "check_conditions", lambda *a, **kw: (True, None))
     with patch.object(
         sfr_executor, "build_order", return_value=("contract", "order")
     ) as mock_build:

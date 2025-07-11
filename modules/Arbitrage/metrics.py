@@ -6,6 +6,8 @@ This module provides comprehensive metrics tracking for:
 - Order counts and success rates
 - Performance analytics
 - Data collection metrics
+- Order rejection reasons
+- Historical performance comparisons
 """
 
 import json
@@ -13,11 +15,49 @@ import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class RejectionReason(Enum):
+    """Enumeration of reasons why an order was not placed"""
+
+    # Price/Spread conditions
+    SPREAD_TOO_WIDE = "spread_too_wide"
+    BID_ASK_SPREAD_TOO_WIDE = "bid_ask_spread_too_wide"
+    PRICE_LIMIT_EXCEEDED = "price_limit_exceeded"
+    NET_CREDIT_NEGATIVE = "net_credit_negative"
+
+    # Profitability conditions
+    PROFIT_TARGET_NOT_MET = "profit_target_not_met"
+    MIN_ROI_NOT_MET = "min_roi_not_met"
+    MAX_LOSS_THRESHOLD_EXCEEDED = "max_loss_threshold_exceeded"
+    MAX_PROFIT_THRESHOLD_NOT_MET = "max_profit_threshold_not_met"
+    PROFIT_RATIO_THRESHOLD_NOT_MET = "profit_ratio_threshold_not_met"
+
+    # Arbitrage conditions
+    ARBITRAGE_CONDITION_NOT_MET = "arbitrage_condition_not_met"
+
+    # Contract/Data issues
+    INVALID_CONTRACT_DATA = "invalid_contract_data"
+    MISSING_MARKET_DATA = "missing_market_data"
+    DATA_COLLECTION_TIMEOUT = "data_collection_timeout"
+
+    # Order execution issues
+    ORDER_NOT_FILLED = "order_not_filled"
+    ORDER_REJECTED = "order_rejected"
+
+    # Strike/Option issues
+    INVALID_STRIKE_COMBINATION = "invalid_strike_combination"
+    INSUFFICIENT_VALID_STRIKES = "insufficient_valid_strikes"
+
+    # Volume/Liquidity issues
+    VOLUME_TOO_LOW = "volume_too_low"
+    LIQUIDITY_INSUFFICIENT = "liquidity_insufficient"
 
 
 @dataclass
@@ -65,10 +105,28 @@ class ScanMetrics:
     data_collection_time: Optional[float] = None
     execution_time: Optional[float] = None
     orders_placed: int = 0
+    orders_filled: int = 0
     opportunities_found: int = 0
     expiries_scanned: int = 0
     success: bool = False
     error_message: Optional[str] = None
+    rejection_reasons: List[RejectionReason] = None
+    rejection_details: List[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        """Initialize lists if None"""
+        if self.rejection_reasons is None:
+            self.rejection_reasons = []
+        if self.rejection_details is None:
+            self.rejection_details = []
+
+    def add_rejection(
+        self, reason: RejectionReason, details: Dict[str, Any] = None
+    ) -> None:
+        """Add a rejection reason with optional details"""
+        self.rejection_reasons.append(reason)
+        if details:
+            self.rejection_details.append(details)
 
     def finish(self, success: bool = True, error_message: Optional[str] = None) -> None:
         """Mark scan as complete"""
@@ -84,6 +142,52 @@ class ScanMetrics:
         return None
 
 
+@dataclass
+class CycleMetrics:
+    """Metrics for a complete cycle (all symbols scanned)"""
+
+    cycle_start_time: float
+    cycle_end_time: Optional[float] = None
+    total_symbols: int = 0
+    successful_scans: int = 0
+    failed_scans: int = 0
+    total_opportunities: int = 0
+    total_orders_placed: int = 0
+    total_orders_filled: int = 0
+    total_contracts_processed: int = 0
+    rejection_summary: Dict[str, int] = None
+
+    def __post_init__(self):
+        """Initialize rejection summary if None"""
+        if self.rejection_summary is None:
+            self.rejection_summary = {}
+
+    def finish(self) -> None:
+        """Mark cycle as complete"""
+        self.cycle_end_time = time.time()
+
+    @property
+    def cycle_duration(self) -> Optional[float]:
+        """Total cycle duration"""
+        if self.cycle_end_time:
+            return self.cycle_end_time - self.cycle_start_time
+        return None
+
+    @property
+    def success_rate(self) -> float:
+        """Success rate as percentage"""
+        if self.total_symbols > 0:
+            return (self.successful_scans / self.total_symbols) * 100
+        return 0.0
+
+    @property
+    def fill_rate(self) -> float:
+        """Order fill rate as percentage"""
+        if self.total_orders_placed > 0:
+            return (self.total_orders_filled / self.total_orders_placed) * 100
+        return 0.0
+
+
 class MetricsCollector:
     """
     Central metrics collection system for arbitrage strategies.
@@ -92,6 +196,8 @@ class MetricsCollector:
     - Timing measurements with context managers
     - Counter tracking for orders, contracts, etc.
     - Per-scan and aggregate metrics
+    - Rejection reason tracking
+    - Historical performance comparison
     - Export to JSON/CSV formats
     - Performance analytics
     """
@@ -101,7 +207,9 @@ class MetricsCollector:
         self.active_timings: Dict[str, TimingMetric] = {}
         self.counters: Dict[str, CounterMetric] = {}
         self.scan_metrics: List[ScanMetrics] = []
+        self.cycle_metrics: List[CycleMetrics] = []
         self.current_scan: Optional[ScanMetrics] = None
+        self.current_cycle: Optional[CycleMetrics] = None
 
         # Initialize common counters
         self._init_counters()
@@ -136,6 +244,59 @@ class MetricsCollector:
             if timing_metric.duration and timing_metric.duration > 0.1:
                 logger.debug(f"Timing [{name}]: {timing_metric.duration:.3f}s")
 
+    def start_cycle(self, total_symbols: int) -> CycleMetrics:
+        """Start tracking a new cycle"""
+        self.current_cycle = CycleMetrics(
+            cycle_start_time=time.time(), total_symbols=total_symbols
+        )
+        return self.current_cycle
+
+    def finish_cycle(self) -> None:
+        """Complete the current cycle tracking"""
+        if self.current_cycle:
+            self.current_cycle.finish()
+            # Calculate rejection summary from scan metrics in this cycle
+            cycle_start_time = self.current_cycle.cycle_start_time
+            cycle_scans = [
+                scan
+                for scan in self.scan_metrics
+                if scan.scan_start_time >= cycle_start_time
+            ]
+
+            # Count rejection reasons
+            rejection_summary = {}
+            for scan in cycle_scans:
+                for reason in scan.rejection_reasons:
+                    reason_key = reason.value
+                    rejection_summary[reason_key] = (
+                        rejection_summary.get(reason_key, 0) + 1
+                    )
+
+            self.current_cycle.rejection_summary = rejection_summary
+
+            # Update cycle totals
+            self.current_cycle.successful_scans = sum(
+                1 for scan in cycle_scans if scan.success
+            )
+            self.current_cycle.failed_scans = sum(
+                1 for scan in cycle_scans if not scan.success
+            )
+            self.current_cycle.total_opportunities = sum(
+                scan.opportunities_found for scan in cycle_scans
+            )
+            self.current_cycle.total_orders_placed = sum(
+                scan.orders_placed for scan in cycle_scans
+            )
+            self.current_cycle.total_orders_filled = sum(
+                scan.orders_filled for scan in cycle_scans
+            )
+            self.current_cycle.total_contracts_processed = sum(
+                scan.total_contracts for scan in cycle_scans
+            )
+
+            self.cycle_metrics.append(self.current_cycle)
+            self.current_cycle = None
+
     def start_scan(self, symbol: str, strategy: str) -> ScanMetrics:
         """Start tracking a new scan operation"""
         self.current_scan = ScanMetrics(
@@ -156,6 +317,13 @@ class MetricsCollector:
                 self.increment_counter("total_errors")
 
             self.current_scan = None
+
+    def add_rejection_reason(
+        self, reason: RejectionReason, details: Dict[str, Any] = None
+    ) -> None:
+        """Add a rejection reason to the current scan"""
+        if self.current_scan:
+            self.current_scan.add_rejection(reason, details or {})
 
     def increment_counter(self, name: str, value: int = 1) -> None:
         """Increment a counter by value"""
@@ -191,6 +359,8 @@ class MetricsCollector:
 
     def record_order_filled(self) -> None:
         """Record that an order was filled"""
+        if self.current_scan:
+            self.current_scan.orders_filled += 1
         self.increment_counter("total_orders_filled")
 
     def record_opportunity_found(self) -> None:
@@ -203,6 +373,100 @@ class MetricsCollector:
         """Record number of expiries scanned"""
         if self.current_scan:
             self.current_scan.expiries_scanned = count
+
+    def get_performance_comparison(self) -> Dict[str, Any]:
+        """Get performance comparison with previous cycle"""
+        if len(self.cycle_metrics) < 2:
+            return {"comparison_available": False, "reason": "Not enough cycle data"}
+
+        current_cycle = self.cycle_metrics[-1]
+        previous_cycle = self.cycle_metrics[-2]
+
+        def calculate_percentage_change(current: float, previous: float) -> float:
+            """Calculate percentage change between two values"""
+            if previous == 0:
+                return 100.0 if current > 0 else 0.0
+            return ((current - previous) / previous) * 100
+
+        comparison = {
+            "comparison_available": True,
+            "current_cycle": {
+                "duration": current_cycle.cycle_duration,
+                "success_rate": current_cycle.success_rate,
+                "fill_rate": current_cycle.fill_rate,
+                "opportunities": current_cycle.total_opportunities,
+                "orders_placed": current_cycle.total_orders_placed,
+                "orders_filled": current_cycle.total_orders_filled,
+                "contracts_processed": current_cycle.total_contracts_processed,
+            },
+            "previous_cycle": {
+                "duration": previous_cycle.cycle_duration,
+                "success_rate": previous_cycle.success_rate,
+                "fill_rate": previous_cycle.fill_rate,
+                "opportunities": previous_cycle.total_opportunities,
+                "orders_placed": previous_cycle.total_orders_placed,
+                "orders_filled": previous_cycle.total_orders_filled,
+                "contracts_processed": previous_cycle.total_contracts_processed,
+            },
+            "percentage_changes": {
+                "duration": calculate_percentage_change(
+                    current_cycle.cycle_duration or 0,
+                    previous_cycle.cycle_duration or 0,
+                ),
+                "success_rate": calculate_percentage_change(
+                    current_cycle.success_rate, previous_cycle.success_rate
+                ),
+                "fill_rate": calculate_percentage_change(
+                    current_cycle.fill_rate, previous_cycle.fill_rate
+                ),
+                "opportunities": calculate_percentage_change(
+                    current_cycle.total_opportunities,
+                    previous_cycle.total_opportunities,
+                ),
+                "orders_placed": calculate_percentage_change(
+                    current_cycle.total_orders_placed,
+                    previous_cycle.total_orders_placed,
+                ),
+                "orders_filled": calculate_percentage_change(
+                    current_cycle.total_orders_filled,
+                    previous_cycle.total_orders_filled,
+                ),
+                "contracts_processed": calculate_percentage_change(
+                    current_cycle.total_contracts_processed,
+                    previous_cycle.total_contracts_processed,
+                ),
+            },
+        }
+
+        return comparison
+
+    def get_rejection_analysis(self) -> Dict[str, Any]:
+        """Get detailed analysis of rejection reasons"""
+        if not self.scan_metrics:
+            return {"total_rejections": 0, "rejection_breakdown": {}}
+
+        rejection_counts = {}
+        total_rejections = 0
+
+        for scan in self.scan_metrics:
+            for reason in scan.rejection_reasons:
+                reason_key = reason.value
+                rejection_counts[reason_key] = rejection_counts.get(reason_key, 0) + 1
+                total_rejections += 1
+
+        # Calculate percentages
+        rejection_breakdown = {}
+        for reason, count in rejection_counts.items():
+            percentage = (count / total_rejections) * 100 if total_rejections > 0 else 0
+            rejection_breakdown[reason] = {"count": count, "percentage": percentage}
+
+        return {
+            "total_rejections": total_rejections,
+            "rejection_breakdown": rejection_breakdown,
+            "most_common_rejections": sorted(
+                rejection_breakdown.items(), key=lambda x: x[1]["count"], reverse=True
+            )[:5],
+        }
 
     def get_session_summary(self) -> Dict[str, Any]:
         """Get comprehensive session summary"""
@@ -248,6 +512,7 @@ class MetricsCollector:
                 "total_scans": len(self.scan_metrics),
                 "successful_scans": len(completed_scans),
                 "failed_scans": len(failed_scans),
+                "total_cycles": len(self.cycle_metrics),
             },
             "performance_metrics": {
                 "avg_scan_time": avg_scan_time,
@@ -263,6 +528,8 @@ class MetricsCollector:
                 if self.scan_metrics
                 else 0
             ),
+            "rejection_analysis": self.get_rejection_analysis(),
+            "performance_comparison": self.get_performance_comparison(),
         }
 
     def export_to_json(self, filename: Optional[str] = None) -> str:
@@ -274,11 +541,12 @@ class MetricsCollector:
         data = {
             "summary": self.get_session_summary(),
             "scan_details": [asdict(scan) for scan in self.scan_metrics],
+            "cycle_details": [asdict(cycle) for cycle in self.cycle_metrics],
             "export_timestamp": datetime.now().isoformat(),
         }
 
         with open(filename, "w") as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, default=str)
 
         return filename
 
@@ -287,6 +555,7 @@ class MetricsCollector:
         from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
+        from rich.text import Text
 
         console = Console()
         summary = self.get_session_summary()
@@ -299,8 +568,41 @@ Total Scans: {session_info['total_scans']}
 Successful: {session_info['successful_scans']}
 Failed: {session_info['failed_scans']}
 Success Rate: {summary['success_rate']:.1%}
+Total Cycles: {session_info['total_cycles']}
         """
         console.print(Panel(session_text.strip(), title="Session Summary"))
+
+        # Performance comparison panel
+        perf_comparison = summary["performance_comparison"]
+        if perf_comparison["comparison_available"]:
+            comparison_text = ""
+            for metric, change in perf_comparison["percentage_changes"].items():
+                direction = "↑" if change > 0 else "↓" if change < 0 else "→"
+                color = "green" if change > 0 else "red" if change < 0 else "yellow"
+                comparison_text += (
+                    f"{metric.replace('_', ' ').title()}: {direction} {change:+.1f}%\n"
+                )
+
+            console.print(
+                Panel(comparison_text.strip(), title="Performance vs Previous Cycle")
+            )
+
+        # Rejection analysis table
+        rejection_analysis = summary["rejection_analysis"]
+        if rejection_analysis["total_rejections"] > 0:
+            rejection_table = Table(title="Rejection Analysis")
+            rejection_table.add_column("Reason", style="cyan")
+            rejection_table.add_column("Count", style="magenta")
+            rejection_table.add_column("Percentage", style="green")
+
+            for reason, data in rejection_analysis["rejection_breakdown"].items():
+                rejection_table.add_row(
+                    reason.replace("_", " ").title(),
+                    str(data["count"]),
+                    f"{data['percentage']:.1f}%",
+                )
+
+            console.print(rejection_table)
 
         # Performance metrics table
         perf_table = Table(title="Performance Metrics")
@@ -337,7 +639,9 @@ Success Rate: {summary['success_rate']:.1%}
         self.session_start_time = time.time()
         self.active_timings.clear()
         self.scan_metrics.clear()
+        self.cycle_metrics.clear()
         self.current_scan = None
+        self.current_cycle = None
 
         # Reset all counters
         for counter in self.counters.values():
