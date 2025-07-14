@@ -16,8 +16,11 @@ from .metrics import RejectionReason, metrics_collector
 # Global contract_ticker for use in SynExecutor and patching in tests
 contract_ticker = {}
 
+# Global variable to store debug mode
+_debug_mode = False
+
 # Configure logging
-configure_logging(level=logging.INFO)
+configure_logging(level=logging.INFO, debug=_debug_mode)
 logger = get_logger()
 
 
@@ -573,8 +576,12 @@ class Syn(ArbitrageClass):
     that handles all expiries, eliminating the need to constantly add/remove event handlers.
     """
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, log_file: str = None, debug: bool = False):
+        global _debug_mode
+        _debug_mode = debug
+        # Reconfigure logging with debug mode
+        configure_logging(level=logging.INFO, debug=debug)
+        super().__init__(log_file=log_file)
         self.active_executors: Dict[str, SynExecutor] = {}
 
     async def scan(

@@ -53,11 +53,38 @@ DEFAULT_REPORT_FOLDER = "~/dev/AlchimistProject/alchimest/report"
 DEFAULT_MIN_PROFIT = 0.5
 
 
-def configure_logging(level: int = logging.INFO) -> None:
+def configure_logging(
+    level: int = logging.INFO, log_file: str = None, debug: bool = False
+) -> None:
+    # Create console handler - remove InfoOnlyFilter if debug is enabled
+    console_handler = RichHandler(
+        console=console,
+        show_time=True,
+        show_level=True,
+        show_path=True,
+        rich_tracebacks=True,
+    )
+    console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    # Only add InfoOnlyFilter if not in debug mode
+    if not debug:
+        console_handler.addFilter(InfoOnlyFilter())
+
+    handlers = [console_handler]
+
+    # Add file handler if log file is specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file, mode="a")
+        file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+        handlers.append(file_handler)
+
     logging.basicConfig(
-        level=level,
+        level=logging.DEBUG if debug else level,
         format="%(message)s",
-        handlers=[handler],
+        handlers=handlers,
     )
 
 
@@ -66,12 +93,14 @@ def main() -> None:
 
     print_welcome(console, __version__, DEFAULT_MIN_PROFIT)
 
-    configure_logging()
-    logger = logging.getLogger("rich")
-
     parser = argparse.ArgumentParser(
         description="Stock market analysis and trading tool with multiple features including scanning, analysis, and option strategies",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows all log levels)",
     )
     subparsers = parser.add_subparsers(
         dest="command", help="Available commands", required=True
@@ -111,6 +140,18 @@ def main() -> None:
         default=1,
         required=False,
         help="Maximum number of contracts to purchase (default: 1)",
+    )
+    parser_sfr.add_argument(
+        "--log",
+        type=str,
+        default=None,
+        required=False,
+        help="Log file path to write all logs to a text file",
+    )
+    parser_sfr.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows all log levels)",
     )
 
     # Synthetic conversion (synthetic) sub-command
@@ -184,8 +225,25 @@ def main() -> None:
         required=False,
         help="Maximum number of contracts to purchase (default: 1)",
     )
+    parser_syn.add_argument(
+        "--log",
+        type=str,
+        default=None,
+        required=False,
+        help="Log file path to write all logs to a text file",
+    )
+    parser_syn.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows all log levels)",
+    )
 
     args = parser.parse_args()
+
+    # Configure logging with optional file output and debug mode
+    log_file = getattr(args, "log", None)
+    debug_mode = getattr(args, "debug", False)
+    configure_logging(log_file=log_file, debug=debug_mode)
 
     if args.command == "sfr":
         op = OptionScan()
@@ -194,6 +252,8 @@ def main() -> None:
             profit_target=args.profit,
             cost_limit=args.cost_limit,
             quantity=args.quantity,
+            log_file=log_file,
+            debug=args.debug,
         )
 
     elif args.command == "syn":
@@ -205,6 +265,8 @@ def main() -> None:
             max_profit_threshold=args.max_profit,
             profit_ratio_threshold=args.profit_ratio,
             quantity=args.quantity,
+            log_file=log_file,
+            debug=args.debug,
         )
 
     elif args.command == "metrics":

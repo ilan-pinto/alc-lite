@@ -20,8 +20,10 @@ class OptionScan:
         cost_limit,
         quantity=1,
         volume_limit=200,
+        log_file=None,
+        debug=False,
     ):
-        sfr = SFR()
+        sfr = SFR(log_file=log_file, debug=debug)
         default_list = [
             "SPY",
             "MRK",
@@ -65,8 +67,10 @@ class OptionScan:
         max_profit_threshold=None,
         profit_ratio_threshold=None,
         quantity=1,
+        log_file=None,
+        debug=False,
     ):
-        syn = Syn()
+        syn = Syn(log_file=log_file, debug=debug)
         default_list = [
             "SPY",
             "MRK",

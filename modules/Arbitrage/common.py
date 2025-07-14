@@ -47,12 +47,16 @@ def get_console_handler(use_info_filter: bool = True) -> RichHandler:
     return handler
 
 
-def configure_logging(level: int = logging.INFO, use_info_filter: bool = True) -> None:
+def configure_logging(
+    level: int = logging.INFO, use_info_filter: bool = True, debug: bool = False
+) -> None:
     """Configure logging with Rich handler."""
-    handler = get_console_handler(use_info_filter)
+    # If debug is enabled, disable the info filter
+    use_filter = use_info_filter and not debug
+    handler = get_console_handler(use_filter)
 
     logging.basicConfig(
-        level=level,
+        level=logging.DEBUG if debug else level,
         format="%(message)s",
         handlers=[handler],
     )

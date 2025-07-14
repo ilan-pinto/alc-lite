@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 # from optparse import Option
 from typing import Dict, List, Optional, Tuple
 
+import logging
 import numpy as np
 from eventkit import Event
 from ib_async import (
@@ -338,11 +339,38 @@ class BaseExecutor:
 
 
 class ArbitrageClass:
-    def __init__(self) -> None:
+    def __init__(self, log_file: str = None) -> None:
         self.ib = IB()
         self.order_manager = OrderManagerClass(ib=self.ib)
         self.semaphore = asyncio.Semaphore(1000)
         self.active_executors: Dict[str, BaseExecutor] = {}
+
+        # Configure file logging if specified
+        if log_file:
+            self._configure_file_logging(log_file)
+
+    def _configure_file_logging(self, log_file: str) -> None:
+        """Configure file logging for all arbitrage operations"""
+        # Create file handler
+        file_handler = logging.FileHandler(log_file, mode="a")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+
+        # Add file handler to all relevant loggers
+        loggers_to_update = [
+            "modules.Arbitrage.SFR",
+            "modules.Arbitrage.Synthetic",
+            "modules.Arbitrage.Strategy",
+            "modules.Arbitrage.common",
+            "modules.Arbitrage.metrics",
+        ]
+
+        for logger_name in loggers_to_update:
+            target_logger = logging.getLogger(logger_name)
+            target_logger.addHandler(file_handler)
+            target_logger.setLevel(logging.INFO)
 
     def onFill(self, trade):
         """Called whenever any order gets filled (partially or fully)."""
