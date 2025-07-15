@@ -63,8 +63,10 @@ class TestCLIArguments:
         mock_option_scan.sfr_finder.assert_called_once_with(
             symbol_list=["SPY", "QQQ", "META"],
             profit_target=1.5,
-            cost_limit=100,
+            cost_limit=100.0,
             quantity=5,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -86,7 +88,12 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY", "QQQ"], profit_target=None, cost_limit=150.0, quantity=1
+            symbol_list=["SPY", "QQQ"],
+            profit_target=None,
+            cost_limit=150.0,
+            quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -104,6 +111,8 @@ class TestCLIArguments:
             profit_target=2.0,
             cost_limit=120.0,  # Default value
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -117,7 +126,12 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=None, profit_target=1.0, cost_limit=200.0, quantity=1
+            symbol_list=None,
+            profit_target=1.0,
+            cost_limit=200.0,
+            quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -149,11 +163,13 @@ class TestCLIArguments:
 
         mock_option_scan.syn_finder.assert_called_once_with(
             symbol_list=["SPY", "QQQ", "META"],
-            cost_limit=100,
-            max_loss_threshold=50,
-            max_profit_threshold=200,
+            cost_limit=100.0,
+            max_loss_threshold=50.0,
+            max_profit_threshold=200.0,
             profit_ratio_threshold=2.5,
             quantity=7,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -185,6 +201,8 @@ class TestCLIArguments:
             max_profit_threshold=150.0,
             profit_ratio_threshold=3.0,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -204,6 +222,8 @@ class TestCLIArguments:
             max_profit_threshold=None,
             profit_ratio_threshold=1.5,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -223,6 +243,8 @@ class TestCLIArguments:
             max_profit_threshold=300.0,
             profit_ratio_threshold=2.0,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -252,6 +274,8 @@ class TestCLIArguments:
             max_profit_threshold=None,
             profit_ratio_threshold=1.8,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -271,6 +295,8 @@ class TestCLIArguments:
             max_profit_threshold=None,
             profit_ratio_threshold=None,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -347,6 +373,8 @@ class TestCLIArguments:
             profit_target=0.8,
             cost_limit=90.0,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -381,6 +409,8 @@ class TestCLIArguments:
             max_profit_threshold=180.0,
             profit_ratio_threshold=2.2,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -394,7 +424,12 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY"], profit_target=-0.5, cost_limit=100.0, quantity=1
+            symbol_list=["SPY"],
+            profit_target=-0.5,
+            cost_limit=100.0,
+            quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -427,6 +462,8 @@ class TestCLIArguments:
             max_profit_threshold=-50.0,
             profit_ratio_threshold=0.5,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -440,7 +477,12 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY"], profit_target=0.0, cost_limit=0.0, quantity=1
+            symbol_list=["SPY"],
+            profit_target=0.0,
+            cost_limit=0.0,
+            quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -473,6 +515,8 @@ class TestCLIArguments:
             max_profit_threshold=0.0,
             profit_ratio_threshold=0.0,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -486,7 +530,12 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY"], profit_target=999.99, cost_limit=9999.0, quantity=1
+            symbol_list=["SPY"],
+            profit_target=999.99,
+            cost_limit=9999.0,
+            quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -519,6 +568,8 @@ class TestCLIArguments:
             max_profit_threshold=10000.0,
             profit_ratio_threshold=10.5,
             quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -538,7 +589,12 @@ class TestCLIArguments:
             alchimest.main()
 
         mock_option_scan.sfr_finder.assert_called_once_with(
-            symbol_list=["SPY", "QQQ"], profit_target=None, cost_limit=120.0, quantity=1
+            symbol_list=["SPY", "QQQ"],
+            profit_target=None,
+            cost_limit=120.0,
+            quantity=1,
+            log_file=None,
+            debug=False,
         )
 
     @pytest.mark.integration
@@ -563,4 +619,6 @@ class TestCLIArguments:
             max_profit_threshold=None,
             profit_ratio_threshold=None,
             quantity=1,
+            log_file=None,
+            debug=False,
         )

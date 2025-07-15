@@ -239,6 +239,10 @@ class SynExecutor(BaseExecutor):
             if all(
                 contract_ticker.get(c.conId) is not None for c in self.all_contracts
             ):
+                # Check if still active before proceeding
+                if not self.is_active:
+                    return
+
                 logger.info(
                     f"[{self.symbol}] Fetched ticker for {len(self.all_contracts)} contracts"
                 )
@@ -312,6 +316,8 @@ class SynExecutor(BaseExecutor):
                         metrics_collector.record_opportunity_found()
                         # Finish scan successfully when an order is placed
                         metrics_collector.finish_scan(success=True)
+                        # Deactivate immediately after order placement
+                        self.deactivate()
 
                 else:
                     logger.info(f"No suitable opportunities found for {self.symbol}")
@@ -539,6 +545,11 @@ class SynExecutor(BaseExecutor):
             else:
                 # Record rejection reason
                 if rejection_reason:
+                    # Calculate profit_ratio for context
+                    profit_ratio = (
+                        max_profit / abs(min_profit) if min_profit != 0 else 0
+                    )
+
                     metrics_collector.add_rejection_reason(
                         rejection_reason,
                         {
@@ -556,6 +567,8 @@ class SynExecutor(BaseExecutor):
                             "max_loss_threshold": self.max_loss_threshold,
                             "max_profit_threshold": self.max_profit_threshold,
                             "profit_ratio_threshold": self.profit_ratio_threshold,
+                            "spread": spread,
+                            "profit_ratio": profit_ratio,
                         },
                     )
 

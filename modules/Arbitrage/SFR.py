@@ -214,6 +214,10 @@ class SFRExecutor(BaseExecutor):
             if all(
                 contract_ticker.get(c.conId) is not None for c in self.all_contracts
             ):
+                # Check if still active before proceeding
+                if not self.is_active:
+                    return
+
                 logger.info(
                     f"[{self.symbol}] Fetched ticker for {len(self.all_contracts)} contracts"
                 )
@@ -279,6 +283,8 @@ class SFRExecutor(BaseExecutor):
                         metrics_collector.record_opportunity_found()
                         # Finish scan successfully when an order is placed
                         metrics_collector.finish_scan(success=True)
+                        # Deactivate immediately after order placement
+                        self.deactivate()
 
                 else:
                     logger.info(f"No suitable opportunities found for {self.symbol}")
@@ -508,6 +514,11 @@ class SFRExecutor(BaseExecutor):
             else:
                 # Record rejection reason
                 if rejection_reason:
+                    # Calculate profit_ratio for context
+                    profit_ratio = (
+                        max_profit / abs(min_profit) if min_profit != 0 else 0
+                    )
+
                     metrics_collector.add_rejection_reason(
                         rejection_reason,
                         {
@@ -518,10 +529,13 @@ class SFRExecutor(BaseExecutor):
                             "stock_price": stock_price,
                             "net_credit": net_credit,
                             "min_profit": min_profit,
+                            "max_profit": max_profit,
                             "min_roi": min_roi,
                             "combo_limit_price": combo_limit_price,
                             "cost_limit": self.cost_limit,
                             "profit_target": self.profit_target,
+                            "spread": spread,
+                            "profit_ratio": profit_ratio,
                         },
                     )
 

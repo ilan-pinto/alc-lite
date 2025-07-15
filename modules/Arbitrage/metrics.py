@@ -341,7 +341,7 @@ class MetricsCollector:
                 limit_price = details.get("combo_limit_price", 0) if details else 0
                 cost_limit = details.get("cost_limit", 0) if details else 0
                 logger.info(
-                    f"[{symbol}] REJECTED - {reason_text}: limit price {limit_price:.2f} > cost limit {cost_limit}"
+                    f"[{symbol}] REJECTED - {reason_text}: limit price {limit_price:.2f} > cost limit {cost_limit:.2f}"
                 )
             elif reason == RejectionReason.PROFIT_TARGET_NOT_MET:
                 profit_target = details.get("profit_target", 0) if details else 0
@@ -354,8 +354,18 @@ class MetricsCollector:
                     details.get("max_loss_threshold", 0) if details else 0
                 )
                 min_profit = details.get("min_profit", 0) if details else 0
+                profit_ratio = details.get("profit_ratio", 0) if details else 0
                 logger.info(
-                    f"[{symbol}] REJECTED - {reason_text}: max loss {max_loss_threshold:.2f} >= calculated loss {min_profit:.2f}"
+                    f"[{symbol}] REJECTED - {reason_text}: max loss {max_loss_threshold:.2f} >= calculated loss {min_profit:.2f} (profit ratio: {profit_ratio:.2f})"
+                )
+            elif reason == RejectionReason.MAX_PROFIT_THRESHOLD_NOT_MET:
+                max_profit_threshold = (
+                    details.get("max_profit_threshold", 0) if details else 0
+                )
+                max_profit = details.get("max_profit", 0) if details else 0
+                profit_ratio = details.get("profit_ratio", 0) if details else 0
+                logger.info(
+                    f"[{symbol}] REJECTED - {reason_text}: threshold {max_profit_threshold:.2f} < max profit {max_profit:.2f} (profit ratio: {profit_ratio:.2f})"
                 )
             elif reason == RejectionReason.PROFIT_RATIO_THRESHOLD_NOT_MET:
                 profit_ratio_threshold = (
@@ -385,11 +395,17 @@ class MetricsCollector:
                     f"[{symbol}] REJECTED - {reason_text}: missing {contract_type} data"
                 )
             elif reason == RejectionReason.ARBITRAGE_CONDITION_NOT_MET:
-                logger.info(f"[{symbol}] REJECTED - {reason_text}: spread > net credit")
-            elif reason == RejectionReason.NET_CREDIT_NEGATIVE:
+                spread = details.get("spread", 0) if details else 0
                 net_credit = details.get("net_credit", 0) if details else 0
                 logger.info(
-                    f"[{symbol}] REJECTED - {reason_text}: net credit {net_credit:.2f} < 0"
+                    f"[{symbol}] REJECTED - {reason_text}: spread {spread:.2f} > net credit {net_credit:.2f}"
+                )
+            elif reason == RejectionReason.NET_CREDIT_NEGATIVE:
+                net_credit = details.get("net_credit", 0) if details else 0
+                stock_price = details.get("stock_price", 0) if details else 0
+                spread = details.get("spread", 0) if details else 0
+                logger.info(
+                    f"[{symbol}] REJECTED - {reason_text}: net credit {net_credit:.2f} < 0 (stock: {stock_price:.2f}, spread: {spread:.2f})"
                 )
             elif reason == RejectionReason.ORDER_NOT_FILLED:
                 order_id = details.get("order_id", "") if details else ""

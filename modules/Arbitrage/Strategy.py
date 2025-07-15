@@ -376,6 +376,8 @@ class ArbitrageClass:
         """Called whenever any order gets filled (partially or fully)."""
         if log_filled_order(trade):
             metrics_collector.record_order_filled()
+            # Deactivate all executors to stop metric collection
+            self.deactivate_all_executors()
             self.ib.disconnect()
 
     async def master_executor(self, event: Event) -> None:
@@ -398,6 +400,14 @@ class ArbitrageClass:
             await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             logger.error(f"Error in master_executor parallel processing: {str(e)}")
+
+    def deactivate_all_executors(self):
+        """Deactivate all executors to stop metric collection"""
+        for executor in self.active_executors.values():
+            executor.deactivate()
+        logger.info(
+            f"Deactivated {len(self.active_executors)} executors due to order fill"
+        )
 
     def cleanup_inactive_executors(self):
         """Remove inactive executors to prevent memory leaks"""
