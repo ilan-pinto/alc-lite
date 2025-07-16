@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 
 import argparse
-import logging
 import pyfiglet
 import warnings
 
 from commands.option import OptionScan
+from modules.Arbitrage.common import configure_logging
 from modules.Arbitrage.metrics import metrics_collector
 from modules.welcome import print_welcome
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Version information
@@ -28,64 +27,12 @@ custom_theme = Theme(
     }
 )
 
-
-# Create a filter that only allows INFO-level logs
-class InfoOnlyFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        return record.levelno == logging.INFO
-
-
 console = Console(theme=custom_theme)
-handler = RichHandler(
-    console=console,
-    show_time=True,
-    show_level=True,
-    show_path=True,
-    rich_tracebacks=True,
-)
-
-handler.setLevel(logging.INFO)
-handler.addFilter(InfoOnlyFilter())  # ⬅️ This is what filters out warnings, errors, etc.
 
 
 # const
 DEFAULT_REPORT_FOLDER = "~/dev/AlchimistProject/alchimest/report"
 DEFAULT_MIN_PROFIT = 0.5
-
-
-def configure_logging(
-    level: int = logging.INFO, log_file: str = None, debug: bool = False
-) -> None:
-    # Create console handler - remove InfoOnlyFilter if debug is enabled
-    console_handler = RichHandler(
-        console=console,
-        show_time=True,
-        show_level=True,
-        show_path=True,
-        rich_tracebacks=True,
-    )
-    console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
-
-    # Only add InfoOnlyFilter if not in debug mode
-    if not debug:
-        console_handler.addFilter(InfoOnlyFilter())
-
-    handlers = [console_handler]
-
-    # Add file handler if log file is specified
-    if log_file:
-        file_handler = logging.FileHandler(log_file, mode="a")
-        file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
-        handlers.append(file_handler)
-
-    logging.basicConfig(
-        level=logging.DEBUG if debug else level,
-        format="%(message)s",
-        handlers=handlers,
-    )
 
 
 def main() -> None:
@@ -96,11 +43,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Stock market analysis and trading tool with multiple features including scanning, analysis, and option strategies",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging (shows all log levels)",
     )
     subparsers = parser.add_subparsers(
         dest="command", help="Available commands", required=True
@@ -152,6 +94,11 @@ def main() -> None:
         "--debug",
         action="store_true",
         help="Enable debug logging (shows all log levels)",
+    )
+    parser_sfr.add_argument(
+        "--warning",
+        action="store_true",
+        help="Enable warning logging (shows INFO and WARNING levels)",
     )
     parser_sfr.add_argument(
         "-f",
@@ -246,6 +193,11 @@ def main() -> None:
         help="Enable debug logging (shows all log levels)",
     )
     parser_syn.add_argument(
+        "--warning",
+        action="store_true",
+        help="Enable warning logging (shows INFO and WARNING levels)",
+    )
+    parser_syn.add_argument(
         "-f",
         "--fin",
         type=str,
@@ -256,10 +208,11 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Configure logging with optional file output and debug mode
+    # Configure logging with optional file output and debug/warning modes
     log_file = getattr(args, "log", None)
     debug_mode = getattr(args, "debug", False)
-    configure_logging(log_file=log_file, debug=debug_mode)
+    warning_mode = getattr(args, "warning", False)
+    configure_logging(debug=debug_mode, warning=warning_mode, log_file=log_file)
 
     if args.command == "sfr":
         op = OptionScan()

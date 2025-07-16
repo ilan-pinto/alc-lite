@@ -24,6 +24,11 @@ python alchimest.py sfr --symbols MSFT AAPL --cost-limit 100 --profit 0.75 --qua
 
 # Synthetic (non-risk-free) arbitrage scanning
 python alchimest.py syn --symbols TSLA NVDA --cost-limit 120 --max-loss 50 --max-profit 100 --quantity 3
+
+# Logging options
+python alchimest.py sfr --warning --symbols SPY  # Shows INFO + WARNING messages
+python alchimest.py syn --debug --symbols QQQ     # Shows all log levels (DEBUG, INFO, WARNING, ERROR)
+python alchimest.py sfr --log trading.log --symbols META  # Log to file
 ```
 
 ### Testing
@@ -55,6 +60,32 @@ mypy .
 # Linting
 flake8 .
 ```
+
+## Logging Options
+
+The application supports three logging levels to control output verbosity:
+
+### Default Logging (INFO only)
+```bash
+python alchimest.py sfr --symbols SPY  # Shows only INFO messages
+```
+
+### Warning Logging (INFO + WARNING)
+```bash
+python alchimest.py sfr --warning --symbols SPY  # Shows INFO and WARNING messages
+```
+
+### Debug Logging (All levels)
+```bash
+python alchimest.py sfr --debug --symbols SPY  # Shows DEBUG, INFO, WARNING, ERROR messages
+```
+
+### File Logging
+```bash
+python alchimest.py sfr --log trading.log --symbols SPY  # Log to file (captures all levels)
+```
+
+**Note**: Debug mode takes precedence over warning mode when both flags are used.
 
 ## Architecture Overview
 

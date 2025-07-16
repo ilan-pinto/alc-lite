@@ -25,12 +25,29 @@ FILLED_ORDERS_FILENAME = "filled_orders.txt"
 class InfoOnlyFilter(logging.Filter):
     """Filter that only allows INFO-level logs through."""
 
-    # def filter(self, record):
-    #     return record.levelno == logging.INFO
+    def filter(self, record):
+        return record.levelno == logging.INFO
 
 
-def get_console_handler(use_info_filter: bool = True) -> RichHandler:
-    """Create and configure a RichHandler for console output."""
+class WarningFilter(logging.Filter):
+    """Filter that allows INFO and WARNING-level logs through."""
+
+    def filter(self, record):
+        return record.levelno in [logging.INFO, logging.WARNING]
+
+
+def get_console_handler(filter_type: str = "info") -> RichHandler:
+    """Create and configure a RichHandler for console output.
+
+    Args:
+        filter_type: Type of filter to apply:
+            - "info": Show only INFO messages (default)
+            - "warning": Show INFO and WARNING messages
+            - "none": Show all log levels (DEBUG, INFO, WARNING, ERROR)
+
+    Returns:
+        RichHandler: Configured handler with appropriate filter
+    """
     console = Console(theme=CUSTOM_THEME)
     handler = RichHandler(
         console=console,
@@ -40,25 +57,67 @@ def get_console_handler(use_info_filter: bool = True) -> RichHandler:
         rich_tracebacks=True,
     )
 
-    handler.setLevel(logging.INFO)
-    if use_info_filter:
+    handler.setLevel(logging.DEBUG)
+
+    if filter_type == "info":
+        handler.addFilter(InfoOnlyFilter())
+    elif filter_type == "warning":
+        handler.addFilter(WarningFilter())
+    elif filter_type == "none":
+        pass  # No filter added
+    else:
+        # Default to info filter for unknown types
         handler.addFilter(InfoOnlyFilter())
 
     return handler
 
 
 def configure_logging(
-    level: int = logging.INFO, use_info_filter: bool = True, debug: bool = False
+    level: int = logging.INFO,
+    use_info_filter: bool = True,
+    debug: bool = False,
+    warning: bool = False,
+    log_file: str = None,
 ) -> None:
-    """Configure logging with Rich handler."""
-    # If debug is enabled, disable the info filter
-    use_filter = use_info_filter and not debug
-    handler = get_console_handler(use_filter)
+    """Configure logging with Rich handler and optional file output.
+
+    Args:
+        level: Base logging level (default: INFO)
+        use_info_filter: Whether to use INFO-only filter when debug/warning are False
+        debug: If True, show all log levels (DEBUG, INFO, WARNING, ERROR)
+        warning: If True, show INFO and WARNING levels only
+        log_file: Optional path to log file for persistent logging
+
+    Note:
+        - debug=True takes precedence over warning=True
+        - When both debug and warning are False, uses INFO-only filter (if use_info_filter=True)
+        - File logging (if enabled) captures all levels regardless of console filter
+    """
+    # Determine filter type based on flags
+    if debug:
+        filter_type = "none"  # Show all levels
+    elif warning:
+        filter_type = "warning"  # Show INFO and WARNING
+    else:
+        filter_type = "info" if use_info_filter else "none"  # Show INFO only or all
+
+    console_handler = get_console_handler(filter_type)
+
+    handlers = [console_handler]
+
+    # Add file handler if log file is specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file, mode="a")
+        file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+        handlers.append(file_handler)
 
     logging.basicConfig(
         level=logging.DEBUG if debug else level,
         format="%(message)s",
-        handlers=[handler],
+        handlers=handlers,
     )
 
 

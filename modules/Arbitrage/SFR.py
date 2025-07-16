@@ -16,8 +16,7 @@ from .metrics import RejectionReason, metrics_collector
 # Global variable to store debug mode
 _debug_mode = False
 
-# Configure logging
-configure_logging(level=logging.INFO, debug=_debug_mode)
+# Configure logging will be done in main
 logger = get_logger()
 
 # Global contract_ticker for use in SFRExecutor and patching in tests
