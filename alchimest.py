@@ -153,6 +153,14 @@ def main() -> None:
         action="store_true",
         help="Enable debug logging (shows all log levels)",
     )
+    parser_sfr.add_argument(
+        "-f",
+        "--fin",
+        type=str,
+        default=None,
+        required=False,
+        help="Finviz screener URL to extract ticker symbols from (wrap in quotes)",
+    )
 
     # Synthetic conversion (synthetic) sub-command
     parser_syn = subparsers.add_parser(
@@ -237,6 +245,14 @@ def main() -> None:
         action="store_true",
         help="Enable debug logging (shows all log levels)",
     )
+    parser_syn.add_argument(
+        "-f",
+        "--fin",
+        type=str,
+        default=None,
+        required=False,
+        help="Finviz screener URL to extract ticker symbols from (wrap in quotes)",
+    )
 
     args = parser.parse_args()
 
@@ -254,6 +270,7 @@ def main() -> None:
             quantity=args.quantity,
             log_file=log_file,
             debug=args.debug,
+            finviz_url=args.fin,
         )
 
     elif args.command == "syn":
@@ -267,6 +284,7 @@ def main() -> None:
             quantity=args.quantity,
             log_file=log_file,
             debug=args.debug,
+            finviz_url=args.fin,
         )
 
     elif args.command == "metrics":

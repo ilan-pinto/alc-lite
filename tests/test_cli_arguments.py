@@ -67,6 +67,7 @@ class TestCLIArguments:
             quantity=5,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -94,6 +95,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -113,6 +115,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -132,6 +135,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -170,6 +174,7 @@ class TestCLIArguments:
             quantity=7,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -203,6 +208,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -224,6 +230,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -245,6 +252,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -276,6 +284,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -297,6 +306,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -375,6 +385,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -411,6 +422,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -430,6 +442,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -464,6 +477,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -483,6 +497,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -517,6 +532,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -536,6 +552,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -570,6 +587,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -595,6 +613,7 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )
 
     @pytest.mark.integration
@@ -621,4 +640,5 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            finviz_url=None,
         )

@@ -7,6 +7,7 @@ from ib_async import *
 
 from modules.Arbitrage.SFR import SFR
 from modules.Arbitrage.Synthetic import Syn
+from modules.finviz_scraper import scrape_tickers_from_finviz
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class OptionScan:
         volume_limit=200,
         log_file=None,
         debug=False,
+        finviz_url=None,
     ):
         sfr = SFR(log_file=log_file, debug=debug)
         default_list = [
@@ -41,8 +43,27 @@ class OptionScan:
             "AMD",
         ]
 
-        if not symbol_list:
+        if finviz_url:
+            logger.info(f"Scraping ticker symbols from Finviz URL: {finviz_url}")
+            scraped_symbols = scrape_tickers_from_finviz(finviz_url)
+            if scraped_symbols:
+                if symbol_list:
+                    logger.warning(
+                        "Both Finviz URL and manual symbols provided, using Finviz tickers"
+                    )
+                symbol_list = scraped_symbols
+                logger.info(
+                    f"Successfully loaded {len(symbol_list)} tickers from Finviz: {symbol_list}"
+                )
+            else:
+                logger.error(
+                    "Failed to scrape tickers from Finviz URL, falling back to provided or default symbols"
+                )
+                symbol_list = symbol_list if symbol_list else default_list
+        elif not symbol_list:
             symbol_list = default_list
+
+        logger.info(f"Starting SFR scan with {len(symbol_list)} symbols: {symbol_list}")
 
         try:
             asyncio.run(
@@ -69,6 +90,7 @@ class OptionScan:
         quantity=1,
         log_file=None,
         debug=False,
+        finviz_url=None,
     ):
         syn = Syn(log_file=log_file, debug=debug)
         default_list = [
@@ -88,8 +110,27 @@ class OptionScan:
             "AMD",
         ]
 
-        if not symbol_list:
+        if finviz_url:
+            logger.info(f"Scraping ticker symbols from Finviz URL: {finviz_url}")
+            scraped_symbols = scrape_tickers_from_finviz(finviz_url)
+            if scraped_symbols:
+                if symbol_list:
+                    logger.warning(
+                        "Both Finviz URL and manual symbols provided, using Finviz tickers"
+                    )
+                symbol_list = scraped_symbols
+                logger.info(
+                    f"Successfully loaded {len(symbol_list)} tickers from Finviz: {symbol_list}"
+                )
+            else:
+                logger.error(
+                    "Failed to scrape tickers from Finviz URL, falling back to provided or default symbols"
+                )
+                symbol_list = symbol_list if symbol_list else default_list
+        elif not symbol_list:
             symbol_list = default_list
+
+        logger.info(f"Starting SYN scan with {len(symbol_list)} symbols: {symbol_list}")
 
         try:
             asyncio.run(

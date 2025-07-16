@@ -25,8 +25,8 @@ FILLED_ORDERS_FILENAME = "filled_orders.txt"
 class InfoOnlyFilter(logging.Filter):
     """Filter that only allows INFO-level logs through."""
 
-    def filter(self, record):
-        return record.levelno == logging.INFO
+    # def filter(self, record):
+    #     return record.levelno == logging.INFO
 
 
 def get_console_handler(use_info_filter: bool = True) -> RichHandler:
