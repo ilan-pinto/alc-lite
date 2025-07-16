@@ -95,7 +95,7 @@ def scrape_tickers_from_finviz(url: str, timeout: int = 15) -> Optional[List[str
                     tickers.append(ticker)
 
         logger.info(f"Successfully scraped {len(tickers)} tickers from Finviz")
-        logger.debug(f"Scraped tickers: {tickers}")
+        logger.info(f"Scraped tickers: {tickers}")
 
         return tickers if tickers else None
 
