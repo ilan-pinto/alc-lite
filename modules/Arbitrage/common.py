@@ -91,7 +91,7 @@ def configure_logging(
     Note:
         - debug=True takes precedence over warning=True
         - When both debug and warning are False, uses INFO-only filter (if use_info_filter=True)
-        - File logging (if enabled) captures all levels regardless of console filter
+        - File logging (if enabled) applies the same filter as console logging
     """
     # Determine filter type based on flags
     if debug:
@@ -112,6 +112,14 @@ def configure_logging(
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
+
+        # Apply the same filter to file handler as console handler
+        if filter_type == "info":
+            file_handler.addFilter(InfoOnlyFilter())
+        elif filter_type == "warning":
+            file_handler.addFilter(WarningFilter())
+        # No filter for "none" type (debug mode)
+
         handlers.append(file_handler)
 
     logging.basicConfig(

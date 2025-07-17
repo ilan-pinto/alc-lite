@@ -82,7 +82,8 @@ python alchimest.py sfr --debug --symbols SPY  # Shows DEBUG, INFO, WARNING, ERR
 
 ### File Logging
 ```bash
-python alchimest.py sfr --log trading.log --symbols SPY  # Log to file (captures all levels)
+python alchimest.py sfr --log trading.log --symbols SPY  # Log to file (same filter as console)
+python alchimest.py sfr --debug --log debug.log --symbols SPY  # Debug mode logs all levels to file
 ```
 
 **Note**: Debug mode takes precedence over warning mode when both flags are used.

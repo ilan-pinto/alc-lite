@@ -424,7 +424,7 @@ class SynExecutor(BaseExecutor):
                 else float("inf")
             )
 
-            if call_bid_ask_spread > 15:
+            if call_bid_ask_spread > 20:
                 logger.info(
                     f"[{self.symbol}] Call contract bid-ask spread too wide: {call_bid_ask_spread:.2f} > 15.00, "
                     f"expiry: {expiry_option.expiry}, strike: {expiry_option.call_strike}"
@@ -437,12 +437,12 @@ class SynExecutor(BaseExecutor):
                         "expiry": expiry_option.expiry,
                         "strike": expiry_option.call_strike,
                         "bid_ask_spread": call_bid_ask_spread,
-                        "threshold": 15.0,
+                        "threshold": 20.0,
                     },
                 )
                 return None
 
-            if put_bid_ask_spread > 15:
+            if put_bid_ask_spread > 20:
                 logger.info(
                     f"[{self.symbol}] Put contract bid-ask spread too wide: {put_bid_ask_spread:.2f} > 15.00, "
                     f"expiry: {expiry_option.expiry}, strike: {expiry_option.put_strike}"
@@ -455,7 +455,7 @@ class SynExecutor(BaseExecutor):
                         "expiry": expiry_option.expiry,
                         "strike": expiry_option.put_strike,
                         "bid_ask_spread": put_bid_ask_spread,
-                        "threshold": 15.0,
+                        "threshold": 20.0,
                     },
                 )
                 return None
