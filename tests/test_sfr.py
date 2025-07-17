@@ -11,7 +11,7 @@ def test_sfr_executor_check_conditions_all_false_branches():
     # Setup dummy SFRExecutor
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -109,7 +109,7 @@ def test_sfr_executor_check_conditions_all_false_branches():
 def test_sfr_executor_check_conditions_true_branch():
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -147,7 +147,7 @@ def test_sfr_executor_check_conditions_true_branch():
 def test_calc_price_and_build_order_no_stock_ticker():
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -175,7 +175,7 @@ def test_calc_price_and_build_order_no_stock_ticker():
 def test_calc_price_and_build_order_missing_option_data(monkeypatch):
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -208,7 +208,7 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
 def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch):
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -242,7 +242,7 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
 def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -282,7 +282,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     put_contract = MagicMock(conId=3)
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",  # Future date within valid range
             call_contract=call_contract,
             put_contract=put_contract,
             call_strike=100.0,
@@ -326,7 +326,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
 def test_sfr_executor_build_order_quantity():
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,

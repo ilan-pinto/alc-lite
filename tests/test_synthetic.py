@@ -15,7 +15,7 @@ def test_syn_executor_check_conditions_all_false_branches():
     """Test all False branches of SynExecutor.check_conditions."""
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -125,7 +125,7 @@ def test_syn_executor_check_conditions_true_branch():
     """Test True branch of SynExecutor.check_conditions."""
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -161,7 +161,7 @@ def test_calc_price_and_build_order_no_stock_ticker():
     """Test calc_price_and_build_order returns (None, None) if no ticker for stock contract."""
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -192,7 +192,7 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if option data is missing."""
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -228,7 +228,7 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
     """Test calc_price_and_build_order returns (None, None) if call_strike < put_strike."""
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -265,7 +265,7 @@ def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if check_conditions returns False."""
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -306,7 +306,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     put_contract = MagicMock(conId=3)
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",  # Future date within valid range
             call_contract=call_contract,
             put_contract=put_contract,
             call_strike=100.0,
@@ -352,7 +352,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
 def test_syn_executor_build_order_quantity():
     expiry_options = [
         ExpiryOption(
-            expiry="20240101",
+            expiry="20250830",
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -387,14 +387,14 @@ async def test_rejection_reasons_are_logged_during_scan():
     stock_contract = Stock("AAPL", "SMART", "USD")
     stock_contract.conId = 1001  # Set contract ID
 
-    call_contract = Option("AAPL", "20240315", 150, "C", "SMART")
+    call_contract = Option("AAPL", "20250830", 150, "C", "SMART")
     call_contract.conId = 1002  # Set contract ID
 
-    put_contract = Option("AAPL", "20240315", 140, "P", "SMART")
+    put_contract = Option("AAPL", "20250830", 140, "P", "SMART")
     put_contract.conId = 1003  # Set contract ID
 
     expiry_option = ExpiryOption(
-        expiry="20240315",
+        expiry="20250830",
         call_contract=call_contract,
         put_contract=put_contract,
         call_strike=150,
@@ -420,22 +420,19 @@ async def test_rejection_reasons_are_logged_during_scan():
         data_timeout=30.0,
     )
 
-    # Clear any existing metrics
+    # Clear any existing metrics first, then start a scan
     metrics_collector.reset_session()
-
-    # Start a scan (simulating what scan_syn does)
     scan_metrics = metrics_collector.start_scan("AAPL", "Synthetic")
 
     # Mock contract_ticker with data that will trigger rejection
-    global contract_ticker
-    contract_ticker = {}
+    from modules.Arbitrage import Synthetic
 
     # Mock stock ticker with valid data (using the contract ID)
     stock_ticker = Mock()
     stock_ticker.ask = 145.0
     stock_ticker.close = 145.0
     stock_ticker.volume = 1000
-    contract_ticker[stock_contract.conId] = stock_ticker
+    Synthetic.contract_ticker[stock_contract.conId] = stock_ticker
 
     # Mock call ticker with bid-ask spread too wide (should trigger rejection)
     call_ticker = Mock()
@@ -443,7 +440,7 @@ async def test_rejection_reasons_are_logged_during_scan():
     call_ticker.ask = 25.0  # Wide spread of 20 > 15 threshold
     call_ticker.close = 10.0
     call_ticker.volume = 100
-    contract_ticker[call_contract.conId] = call_ticker
+    Synthetic.contract_ticker[call_contract.conId] = call_ticker
 
     # Mock put ticker with valid data
     put_ticker = Mock()
@@ -451,7 +448,7 @@ async def test_rejection_reasons_are_logged_during_scan():
     put_ticker.ask = 9.0
     put_ticker.close = 8.5
     put_ticker.volume = 100
-    contract_ticker[put_contract.conId] = put_ticker
+    Synthetic.contract_ticker[put_contract.conId] = put_ticker
 
     # Capture logs to verify rejection reasons are logged
     import sys
@@ -472,17 +469,15 @@ async def test_rejection_reasons_are_logged_during_scan():
         # Test the calc_price_and_build_order_for_expiry method
         result = executor.calc_price_and_build_order_for_expiry(expiry_option)
 
-        # Should return None due to wide bid-ask spread
+        # Should return None due to rejection
         assert result is None
 
         # Check that rejection reason was logged
         log_output = log_capture.getvalue()
+
         # Accept any rejection reason as long as it's being logged
         assert "REJECTED" in log_output
         assert "AAPL" in log_output
-
-        print("SUCCESS: Rejection reasons are being logged correctly!")
-        print(f"Log output: {log_output}")
 
     finally:
         # Clean up

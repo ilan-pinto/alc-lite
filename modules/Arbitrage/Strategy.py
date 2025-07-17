@@ -1,8 +1,6 @@
 import asyncio
 import time
 from datetime import datetime, timedelta
-
-# from optparse import Option
 from typing import Dict, List, Optional, Tuple
 
 import logging
@@ -33,10 +31,94 @@ from .metrics import metrics_collector
 
 logger = get_logger()
 
+# Global contract qualification cache
+contract_cache = {}
+
+
+class ContractCache:
+    """Cache for qualified contracts with TTL to reduce IB API calls"""
+
+    def __init__(self, ttl_seconds: int = 300):  # 5 minute TTL
+        self.cache = {}
+        self.ttl = ttl_seconds
+
+    def _get_cache_key(
+        self, symbol: str, expiry: str, strike: float, right: str
+    ) -> str:
+        """Generate cache key for contract"""
+        return f"{symbol}_{expiry}_{strike}_{right}"
+
+    def get(
+        self, symbol: str, expiry: str, strike: float, right: str
+    ) -> Optional[Contract]:
+        """Get contract from cache if not expired"""
+        key = self._get_cache_key(symbol, expiry, strike, right)
+        if key in self.cache:
+            contract, timestamp = self.cache[key]
+            if time.time() - timestamp < self.ttl:
+                logger.debug(f"Cache hit for {key}")
+                return contract
+            else:
+                # Expired, remove from cache
+                del self.cache[key]
+                logger.debug(f"Cache expired for {key}")
+        return None
+
+    def put(
+        self, contract: Contract, symbol: str, expiry: str, strike: float, right: str
+    ) -> None:
+        """Store contract in cache with timestamp"""
+        key = self._get_cache_key(symbol, expiry, strike, right)
+        self.cache[key] = (contract, time.time())
+        logger.debug(f"Cached contract {key}")
+
+    def clear_expired(self) -> int:
+        """Remove expired entries and return count removed"""
+        current_time = time.time()
+        expired_keys = []
+
+        for key, (contract, timestamp) in self.cache.items():
+            if current_time - timestamp >= self.ttl:
+                expired_keys.append(key)
+
+        for key in expired_keys:
+            del self.cache[key]
+
+        if expired_keys:
+            logger.debug(f"Cleared {len(expired_keys)} expired cache entries")
+
+        return len(expired_keys)
+
+    def size(self) -> int:
+        """Return current cache size"""
+        return len(self.cache)
+
+
+# Global contract cache instance
+contract_cache = ContractCache()
+
 
 class OrderManagerClass:
     def __init__(self, ib: IB = None) -> None:
         self.ib = ib
+
+    def _is_market_hours(self) -> bool:
+        """Check if current time is during market hours (9:30 AM - 4:00 PM ET)"""
+        from datetime import datetime, timedelta, timezone
+
+        # Get current time in ET
+        et_tz = timezone(timedelta(hours=-5))  # EST
+        current_et = datetime.now(et_tz)
+
+        # Check if it's a weekday
+        if current_et.weekday() >= 5:  # Saturday=5, Sunday=6
+            return False
+
+        # Check if time is between 9:30 AM and 4:00 PM ET
+        market_open = current_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = current_et.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        return market_open <= current_et <= market_close
 
     def _check_any_trade_exists(self) -> int:
         # Fetch the current portfolio positions
@@ -74,12 +156,19 @@ class OrderManagerClass:
             logger.info(f"placed order:{ order.orderId} ")
             metrics_collector.record_order_placed()
 
-            await asyncio.sleep(50)
+            # Dynamic timeout based on market conditions and order type
+            base_timeout = 30  # Base 30 seconds
+            market_hours_bonus = (
+                20 if self._is_market_hours() else 0
+            )  # Extra time during market hours
+            dynamic_timeout = base_timeout + market_hours_bonus
+
+            await asyncio.sleep(dynamic_timeout)
 
             # Check if order was filled before cancelling
             if trade.orderStatus.status not in ["Filled", "PartiallyFilled"]:
                 logger.info(
-                    f"[{contract.symbol}] Order {order.orderId} not filled within timeout, cancelling"
+                    f"[{contract.symbol}] Order {order.orderId} not filled within {dynamic_timeout}s timeout, cancelling"
                 )
                 # Record rejection reason for unfilled order
                 from .metrics import RejectionReason
@@ -90,7 +179,7 @@ class OrderManagerClass:
                         "symbol": contract.symbol,
                         "order_id": order.orderId,
                         "order_status": trade.orderStatus.status,
-                        "timeout_seconds": 50,
+                        "timeout_seconds": dynamic_timeout,
                         "filled_quantity": trade.orderStatus.filled,
                         "total_quantity": order.totalQuantity,
                     },
@@ -345,6 +434,16 @@ class ArbitrageClass:
         self.semaphore = asyncio.Semaphore(1000)
         self.active_executors: Dict[str, BaseExecutor] = {}
 
+        # Persistent state management for optimization
+        self.symbol_chain_cache = {}  # Cache options chains per symbol
+        self.last_scan_time = {}  # Track last scan time per symbol
+        self.scan_cooldown = 30  # Minimum seconds between scans for same symbol
+
+        # Symbol scanning throttling
+        self.symbol_scan_semaphore = asyncio.Semaphore(
+            5
+        )  # Max 5 concurrent symbol scans
+
         # Configure file logging if specified
         if log_file:
             self._configure_file_logging(log_file)
@@ -382,9 +481,13 @@ class ArbitrageClass:
 
     async def master_executor(self, event: Event) -> None:
         """
-        Master executor that delegates to individual symbol executors.
+        Optimized master executor that delegates to individual symbol executors.
         This approach eliminates the need to constantly add/remove event handlers.
         """
+        # Quick check for active executors to avoid unnecessary processing
+        if not self.active_executors:
+            return
+
         active_executors = [
             executor
             for executor in self.active_executors.values()
@@ -392,14 +495,28 @@ class ArbitrageClass:
         ]
 
         if not active_executors:
+            # Clean up inactive executors immediately
+            self.cleanup_inactive_executors()
             return
 
-        # Process each active executor in parallel
+        # Process each active executor in parallel with improved error handling
         try:
+            # Use asyncio.gather with return_exceptions=True for better error isolation
             tasks = [executor.executor(event) for executor in active_executors]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Log any exceptions that occurred in individual executors
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    executor = active_executors[i]
+                    logger.warning(
+                        f"Executor for {executor.symbol} failed: {str(result)}"
+                    )
+                    # Deactivate failed executor
+                    executor.deactivate()
+
         except Exception as e:
-            logger.error(f"Error in master_executor parallel processing: {str(e)}")
+            logger.error(f"Critical error in master_executor: {str(e)}")
 
     def deactivate_all_executors(self):
         """Deactivate all executors to stop metric collection"""
@@ -422,6 +539,152 @@ class ArbitrageClass:
         if inactive_symbols:
             logger.info(f"Cleaned up {len(inactive_symbols)} inactive executors")
 
+        # Also clean up expired contract cache entries
+        expired_count = contract_cache.clear_expired()
+        if expired_count > 0:
+            logger.debug(
+                f"Contract cache: removed {expired_count} expired entries, size: {contract_cache.size()}"
+            )
+
+    async def qualify_contracts_cached(self, *contracts) -> List[Contract]:
+        """Qualify contracts using cache when possible"""
+        cached_contracts = []
+        uncached_contracts = []
+
+        for contract in contracts:
+            if hasattr(contract, "strike") and hasattr(contract, "right"):
+                # Option contract - check cache
+                cached_contract = contract_cache.get(
+                    contract.symbol,
+                    contract.lastTradeDateOrContractMonth,
+                    contract.strike,
+                    contract.right,
+                )
+                if cached_contract:
+                    cached_contracts.append(cached_contract)
+                else:
+                    uncached_contracts.append(contract)
+            else:
+                # Stock/Index contract - always qualify
+                uncached_contracts.append(contract)
+
+        # Qualify uncached contracts
+        qualified_contracts = cached_contracts.copy()
+        if uncached_contracts:
+            logger.debug(f"Qualifying {len(uncached_contracts)} uncached contracts")
+            new_qualified = await self.ib.qualifyContractsAsync(*uncached_contracts)
+            qualified_contracts.extend(new_qualified)
+
+            # Cache the newly qualified option contracts
+            for contract in new_qualified:
+                if hasattr(contract, "strike") and hasattr(contract, "right"):
+                    contract_cache.put(
+                        contract,
+                        contract.symbol,
+                        contract.lastTradeDateOrContractMonth,
+                        contract.strike,
+                        contract.right,
+                    )
+
+        logger.debug(
+            f"Contract qualification: {len(cached_contracts)} from cache, {len(uncached_contracts)} new"
+        )
+        return qualified_contracts
+
+    def should_scan_symbol(self, symbol: str) -> bool:
+        """Check if enough time has passed since last scan for this symbol"""
+        current_time = time.time()
+        last_scan = self.last_scan_time.get(symbol, 0)
+
+        if current_time - last_scan >= self.scan_cooldown:
+            self.last_scan_time[symbol] = current_time
+            return True
+        else:
+            time_remaining = self.scan_cooldown - (current_time - last_scan)
+            logger.debug(
+                f"Skipping {symbol} scan, cooldown: {time_remaining:.1f}s remaining"
+            )
+            return False
+
+    async def parallel_qualify_all_contracts(
+        self,
+        symbol: str,
+        valid_expiries: List[str],
+        valid_strike_pairs: List[Tuple[float, float]],
+    ) -> Dict:
+        """Qualify all option contracts for all expiries in parallel"""
+        all_options_to_qualify = []
+        expiry_contract_map = {}
+
+        for expiry in valid_expiries:
+            for call_strike, put_strike in valid_strike_pairs:
+                call = Option(symbol, expiry, call_strike, "C", "SMART")
+                put = Option(symbol, expiry, put_strike, "P", "SMART")
+
+                all_options_to_qualify.extend([call, put])
+                key = f"{expiry}_{call_strike}_{put_strike}"
+                expiry_contract_map[key] = {
+                    "call_original": call,
+                    "put_original": put,
+                    "expiry": expiry,
+                    "call_strike": call_strike,
+                    "put_strike": put_strike,
+                }
+
+        if not all_options_to_qualify:
+            return {}
+
+        # Single parallel qualification for ALL contracts
+        logger.debug(
+            f"[{symbol}] Qualifying {len(all_options_to_qualify)} contracts in parallel"
+        )
+        qualified_contracts = await self.qualify_contracts_cached(
+            *all_options_to_qualify
+        )
+
+        # Map qualified contracts back to their original contracts
+        qualified_map = {}
+        for qualified_contract in qualified_contracts:
+            # Find matching original contract by symbol, expiry, strike, right
+            for original_contract in all_options_to_qualify:
+                if (
+                    qualified_contract.symbol == original_contract.symbol
+                    and qualified_contract.lastTradeDateOrContractMonth
+                    == original_contract.lastTradeDateOrContractMonth
+                    and qualified_contract.strike == original_contract.strike
+                    and qualified_contract.right == original_contract.right
+                ):
+                    qualified_map[id(original_contract)] = qualified_contract
+                    break
+
+        # Build final result mapping
+        result = {}
+        for key, contract_info in expiry_contract_map.items():
+            call_qualified = qualified_map.get(id(contract_info["call_original"]))
+            put_qualified = qualified_map.get(id(contract_info["put_original"]))
+
+            if call_qualified and put_qualified:
+                result[key] = {
+                    "call_contract": call_qualified,
+                    "put_contract": put_qualified,
+                    "expiry": contract_info["expiry"],
+                    "call_strike": contract_info["call_strike"],
+                    "put_strike": contract_info["put_strike"],
+                }
+
+        logger.debug(
+            f"[{symbol}] Successfully qualified {len(result)} contract pairs from {len(expiry_contract_map)} attempted"
+        )
+        return result
+
+    async def scan_with_throttle(self, symbol: str, scan_func, *args):
+        """Scan symbol with semaphore-based throttling"""
+        async with self.symbol_scan_semaphore:
+            if self.should_scan_symbol(symbol):
+                return await scan_func(symbol, *args)
+            else:
+                return None
+
     def filter_expirations_within_range(
         self, expiration_dates, start_num_days=40, end_num_days=45
     ):
@@ -439,6 +702,19 @@ class ArbitrageClass:
         return filtered_dates
 
     async def _get_chain(self, stock: Contract, exchange="CBOE"):
+        """Get options chain with caching for performance"""
+        cache_key = f"{stock.symbol}_{exchange}_{stock.conId}"
+        current_time = time.time()
+
+        # Check if we have cached chain data (with 5 minute TTL)
+        if cache_key in self.symbol_chain_cache:
+            cached_chain, cache_time = self.symbol_chain_cache[cache_key]
+            if current_time - cache_time < 300:  # 5 minute cache TTL
+                logger.debug(f"Using cached options chain for {stock.symbol}")
+                return cached_chain
+
+        # Fetch fresh chain data
+        logger.debug(f"Fetching fresh options chain for {stock.symbol}")
         chains = await self.ib.reqSecDefOptParamsAsync(
             stock.symbol,
             "CME" if stock.secType == "IND" and not stock.symbol == "SPX" else "",
@@ -451,6 +727,9 @@ class ArbitrageClass:
             for c in chains
             if c.exchange == exchange and c.tradingClass == stock.symbol
         )
+
+        # Cache the result
+        self.symbol_chain_cache[cache_key] = (chain, current_time)
         return chain
 
     async def _get_chains(self, stock: Contract, exchange="CBOE"):
@@ -494,26 +773,89 @@ class ArbitrageClass:
             logger.error(f"Error in batch market data request: {str(e)}")
 
     async def request_market_data_batch(self, contracts: List[Contract]) -> None:
-        """Request market data for multiple contracts with timing optimization"""
+        """Request market data for multiple contracts with parallel processing and adaptive timeouts"""
         start_time = time.time()
 
-        # Use optimized synchronous batch request (IB reqMktData is not awaitable)
-        self.request_market_data_batch_optimized(contracts)
-
-        # Adaptive wait based on number of contracts
-        base_wait = 0.1  # Base 100ms
-        per_contract_wait = 0.01  # 10ms per contract
-        max_wait = 2.0  # Maximum 2 seconds
-
-        calculated_wait = min(
-            base_wait + (len(contracts) * per_contract_wait), max_wait
-        )
-
-        logger.debug(f"Waiting {calculated_wait:.3f}s for {len(contracts)} contracts")
-        await asyncio.sleep(calculated_wait)
+        # Use optimized parallel batch request
+        await self.request_market_data_parallel(contracts)
 
         total_time = time.time() - start_time
-        logger.debug(f"Market data batch request completed in {total_time:.3f}s")
+        logger.debug(
+            f"Parallel market data batch request completed in {total_time:.3f}s"
+        )
+
+    async def request_market_data_parallel(self, contracts: List[Contract]) -> None:
+        """Request market data for contracts with parallel processing and smart batching"""
+        try:
+            # Process contracts in optimal batches to avoid IB rate limits
+            batch_size = min(50, len(contracts))  # IB typically allows ~100 req/sec
+            batches = [
+                contracts[i : i + batch_size]
+                for i in range(0, len(contracts), batch_size)
+            ]
+
+            successful_requests = 0
+            failed_requests = 0
+
+            for batch_idx, batch in enumerate(batches):
+                logger.debug(
+                    f"Processing batch {batch_idx + 1}/{len(batches)} ({len(batch)} contracts)"
+                )
+
+                # Process batch contracts in parallel with semaphore control
+                batch_tasks = []
+                for contract in batch:
+                    task = asyncio.create_task(
+                        self._request_single_market_data(contract)
+                    )
+                    batch_tasks.append(task)
+
+                # Wait for batch to complete with timeout
+                batch_timeout = min(2.0 + (len(batch) * 0.02), 5.0)  # Adaptive timeout
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*batch_tasks, return_exceptions=True),
+                        timeout=batch_timeout,
+                    )
+
+                    # Count results
+                    for result in results:
+                        if isinstance(result, Exception):
+                            failed_requests += 1
+                        else:
+                            successful_requests += 1
+
+                except asyncio.TimeoutError:
+                    failed_requests += len(batch)
+                    logger.warning(
+                        f"Batch {batch_idx + 1} timed out after {batch_timeout}s"
+                    )
+
+                # Inter-batch delay to respect IB rate limits
+                if batch_idx < len(batches) - 1:
+                    await asyncio.sleep(0.1)
+
+            logger.debug(
+                f"Parallel request: {successful_requests} successful, {failed_requests} failed"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in parallel market data request: {str(e)}")
+
+    async def _request_single_market_data(self, contract: Contract) -> bool:
+        """Request market data for a single contract with error handling"""
+        try:
+            # Use semaphore to control concurrent requests
+            async with self.semaphore:
+                self.ib.reqMktData(contract, "", False, False)
+                # Small delay to prevent overwhelming IB
+                await asyncio.sleep(0.01)
+                return True
+        except Exception as e:
+            logger.debug(
+                f"Failed to request data for contract {contract.conId}: {str(e)}"
+            )
+            return False
 
     def _get_stock_contract(self, symbol: str):
         exchange = "SMART"

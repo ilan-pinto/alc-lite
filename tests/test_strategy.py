@@ -45,7 +45,7 @@ def make_executor():
             option_contracts=[call_contract, put_contract],
             symbol="TEST",
             cost_limit=10.0,
-            expiry="20240101",
+            expiry="20250830",
         ),
         call_contract,
         put_contract,

@@ -112,6 +112,39 @@ class SFRExecutor(BaseExecutor):
         self.data_timeout = data_timeout
         self.data_collection_start = time.time()
 
+    def quick_viability_check(
+        self, expiry_option: ExpiryOption, stock_price: float
+    ) -> Tuple[bool, Optional[str]]:
+        """Fast pre-filtering to eliminate non-viable opportunities early"""
+        # Quick strike spread check
+        strike_spread = expiry_option.call_strike - expiry_option.put_strike
+        if strike_spread < 1.0 or strike_spread > 50.0:
+            return False, "invalid_strike_spread"
+
+        # Quick time to expiry check
+        from datetime import datetime
+
+        try:
+            expiry_date = datetime.strptime(expiry_option.expiry, "%Y%m%d")
+            days_to_expiry = (expiry_date - datetime.now()).days
+            if days_to_expiry < 15 or days_to_expiry > 50:
+                return False, "expiry_out_of_range"
+        except ValueError:
+            return False, "invalid_expiry_format"
+
+        # Quick moneyness check
+        call_moneyness = expiry_option.call_strike / stock_price
+        put_moneyness = expiry_option.put_strike / stock_price
+        if (
+            call_moneyness < 0.95
+            or call_moneyness > 1.1
+            or put_moneyness < 0.85
+            or put_moneyness > 1.05
+        ):
+            return False, "poor_moneyness"
+
+        return True, None
+
     def check_conditions(
         self,
         symbol: str,
@@ -183,16 +216,19 @@ class SFRExecutor(BaseExecutor):
                 else:
                     logger.debug(f"Skipping contract {contract.conId}: no valid data")
 
-            # Check for timeout
+            # Check for timeout with adaptive timeout based on contract count
             elapsed_time = time.time() - self.data_collection_start
-            if elapsed_time > self.data_timeout:
+            adaptive_timeout = min(
+                self.data_timeout + (len(self.all_contracts) * 0.1), 60.0
+            )
+            if elapsed_time > adaptive_timeout:
                 missing_contracts = [
                     c
                     for c in self.all_contracts
                     if contract_ticker.get(c.conId) is None
                 ]
                 logger.warning(
-                    f"[{self.symbol}] Data collection timeout after {elapsed_time:.1f}s. "
+                    f"[{self.symbol}] Data collection timeout after {elapsed_time:.1f}s (adaptive limit: {adaptive_timeout:.1f}s). "
                     f"Missing data for {len(missing_contracts)} contracts out of {len(self.all_contracts)}"
                 )
                 # Log details of missing contracts
@@ -298,10 +334,12 @@ class SFRExecutor(BaseExecutor):
                     for c in self.all_contracts
                     if contract_ticker.get(c.conId) is None
                 ]
-                logger.debug(
-                    f"[{self.symbol}] Still waiting for data from {len(missing_contracts)} contracts "
-                    f"(elapsed: {elapsed_time:.1f}s)"
-                )
+                # Only log debug message every 5 seconds to reduce noise
+                if int(elapsed_time) % 5 == 0:
+                    logger.debug(
+                        f"[{self.symbol}] Still waiting for data from {len(missing_contracts)} contracts "
+                        f"(elapsed: {elapsed_time:.1f}s)"
+                    )
 
         except Exception as e:
             logger.error(f"Error in executor: {str(e)}")
@@ -317,18 +355,9 @@ class SFRExecutor(BaseExecutor):
         Returns tuple of (contract, order, min_profit, trade_details) or None if no opportunity.
         """
         try:
-            # Get stock data
+            # Fast pre-filtering to eliminate non-viable opportunities early
             stock_ticker = contract_ticker.get(self.stock_contract.conId)
             if not stock_ticker:
-                metrics_collector.add_rejection_reason(
-                    RejectionReason.MISSING_MARKET_DATA,
-                    {
-                        "symbol": self.symbol,
-                        "contract_type": "stock",
-                        "expiry": expiry_option.expiry,
-                        "reason": "no stock ticker data",
-                    },
-                )
                 return None
 
             stock_price = (
@@ -336,6 +365,13 @@ class SFRExecutor(BaseExecutor):
                 if not np.isnan(stock_ticker.ask)
                 else stock_ticker.close
             )
+
+            viable, reason = self.quick_viability_check(expiry_option, stock_price)
+            if not viable:
+                logger.debug(
+                    f"[{self.symbol}] Quick rejection for {expiry_option.expiry}: {reason}"
+                )
+                return None
 
             # Get option data
             call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
@@ -597,10 +633,14 @@ class SFR(ArbitrageClass):
 
             tasks = []
             for symbol in symbol_list:
-                task = asyncio.create_task(self.scan_sfr(symbol, self.quantity))
+                # Use throttled scanning instead of fixed delays
+                task = asyncio.create_task(
+                    self.scan_with_throttle(symbol, self.scan_sfr, self.quantity)
+                )
                 tasks.append(task)
-                await asyncio.sleep(2)
-            _ = await asyncio.gather(*tasks)
+                # Minimal delay for API rate limiting
+                await asyncio.sleep(0.1)
+            _ = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Clean up inactive executors
             self.cleanup_inactive_executors()
@@ -614,7 +654,7 @@ class SFR(ArbitrageClass):
 
             # Reset for next iteration
             contract_ticker = {}
-            await asyncio.sleep(30)  # Wait before next scan cycle
+            await asyncio.sleep(5)  # Reduced wait time for faster cycles
 
     async def scan_sfr(self, symbol, quantity):
         """
@@ -661,94 +701,81 @@ class SFR(ArbitrageClass):
                 )
                 return
 
-            # Collect all expiry options
+            # Prepare for parallel contract qualification
+            valid_expiries = self.filter_expirations_within_range(
+                chain.expirations, 19, 45
+            )
+
+            if len(valid_strikes) < 2:
+                logger.info(
+                    f"Not enough valid strikes for {symbol}, skipping parallel qualification"
+                )
+                return
+
+            call_strike = valid_strikes[-1]
+            put_strike = valid_strikes[-2]
+            valid_strike_pairs = [(call_strike, put_strike)]
+
+            # Add retry strike pair if available
+            if len(valid_strikes) >= 3:
+                retry_put_strike = valid_strikes[-3]
+                valid_strike_pairs.append((call_strike, retry_put_strike))
+
+            # Parallel qualification of all contracts
+            qualified_contracts_map = await self.parallel_qualify_all_contracts(
+                symbol, valid_expiries, valid_strike_pairs
+            )
+
+            # Build expiry options from qualified contracts
             expiry_options = []
             all_contracts = [stock]
 
-            for expiry in self.filter_expirations_within_range(
-                chain.expirations, 19, 45
-            ):
-                if len(valid_strikes) == 0:
-                    continue
-
-                await asyncio.sleep(0.05)
-
-                call_strike = valid_strikes[-1]
-                put_strike = valid_strikes[-2]
-
-                call = Option(stock.symbol, expiry, call_strike, "C", "SMART")
-                put = Option(stock.symbol, expiry, put_strike, "P", "SMART")
-
-                # Qualify the option contracts
-                valid_contracts = await self.ib.qualifyContractsAsync(call, put)
-
-                # Find call and put contracts
-                call_contract = None
-                put_contract = None
-
-                for contract in valid_contracts:
-                    if contract.right == "C":
-                        call_contract = contract
-                    elif contract.right == "P":
-                        put_contract = contract
-
-                # If call contract is invalid, continue to next iteration
-                if not call_contract:
-                    logger.info(
-                        f"Invalid call- [{call_strike}] contract for {symbol} expiry {expiry}, skipping"
+            for expiry in valid_expiries:
+                # Try primary strike combination first
+                key = f"{expiry}_{call_strike}_{put_strike}"
+                if key in qualified_contracts_map:
+                    contract_info = qualified_contracts_map[key]
+                    expiry_option = ExpiryOption(
+                        expiry=contract_info["expiry"],
+                        call_contract=contract_info["call_contract"],
+                        put_contract=contract_info["put_contract"],
+                        call_strike=contract_info["call_strike"],
+                        put_strike=contract_info["put_strike"],
+                    )
+                    expiry_options.append(expiry_option)
+                    all_contracts.extend(
+                        [contract_info["call_contract"], contract_info["put_contract"]]
                     )
                     continue
 
-                # If put contract is invalid, try shifting one strike below
-                if not put_contract:
-                    put_strike_index = valid_strikes.index(put_strike)
-                    if put_strike_index > 0:  # Can shift one strike below
-                        new_put_strike = valid_strikes[put_strike_index - 1]
+                # Try retry strike combination if available
+                if len(valid_strikes) >= 3:
+                    retry_put_strike = valid_strikes[-3]
+                    retry_key = f"{expiry}_{call_strike}_{retry_put_strike}"
+                    if retry_key in qualified_contracts_map:
+                        contract_info = qualified_contracts_map[retry_key]
                         logger.info(
-                            f"Retrying put contract for {symbol} with strike {new_put_strike}"
+                            f"Using retry put strike {retry_put_strike} for {symbol} expiry {expiry}"
                         )
-
-                        put_retry = Option(
-                            stock.symbol, expiry, new_put_strike, "P", "SMART"
+                        expiry_option = ExpiryOption(
+                            expiry=contract_info["expiry"],
+                            call_contract=contract_info["call_contract"],
+                            put_contract=contract_info["put_contract"],
+                            call_strike=contract_info["call_strike"],
+                            put_strike=contract_info["put_strike"],
                         )
-                        valid_contracts_retry = await self.ib.qualifyContractsAsync(
-                            put_retry
-                        )
-
-                        for contract in valid_contracts_retry:
-                            if contract.right == "P":
-                                put_contract = contract
-                                put_strike = (
-                                    new_put_strike  # Update the actual strike used
-                                )
-                                break
-
-                        if not put_contract:
-                            logger.warning(
-                                f"Still no valid put contract for {symbol} expiry {expiry} after retry, skipping"
-                            )
-                            continue
-                    else:
-                        logger.warning(
-                            f"Cannot shift put strike below for {symbol} expiry {expiry}, skipping"
+                        expiry_options.append(expiry_option)
+                        all_contracts.extend(
+                            [
+                                contract_info["call_contract"],
+                                contract_info["put_contract"],
+                            ]
                         )
                         continue
 
-                # Both contracts are valid at this point, create ExpiryOption
-                if call_contract and put_contract:
-                    expiry_option = ExpiryOption(
-                        expiry=expiry,
-                        call_contract=call_contract,
-                        put_contract=put_contract,
-                        call_strike=call_strike,
-                        put_strike=put_strike,
-                    )
-                    expiry_options.append(expiry_option)
-                    all_contracts.extend([call_contract, put_contract])
-                else:
-                    logger.warning(
-                        f"Could not find both call and put contracts for {symbol} expiry {expiry}"
-                    )
+                logger.debug(
+                    f"No valid contract pair found for {symbol} expiry {expiry}"
+                )
 
             if not expiry_options:
                 logger.info(f"No valid expiry options found for {symbol}")
