@@ -133,15 +133,15 @@ class SFRExecutor(BaseExecutor):
             return False, "invalid_expiry_format"
 
         # Quick moneyness check
-        call_moneyness = expiry_option.call_strike / stock_price
-        put_moneyness = expiry_option.put_strike / stock_price
-        if (
-            call_moneyness < 0.95
-            or call_moneyness > 1.1
-            or put_moneyness < 0.85
-            or put_moneyness > 1.05
-        ):
-            return False, "poor_moneyness"
+        # call_moneyness = expiry_option.call_strike / stock_price
+        # put_moneyness = expiry_option.put_strike / stock_price
+        # if (
+        #     call_moneyness < 0.95
+        #     or call_moneyness > 1.1
+        #     or put_moneyness < 0.85
+        #     or put_moneyness > 1.05
+        # ):
+        #     return False, "poor_moneyness"
 
         return True, None
 
