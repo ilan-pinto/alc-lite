@@ -54,6 +54,7 @@ class RejectionReason(Enum):
     # Strike/Option issues
     INVALID_STRIKE_COMBINATION = "invalid_strike_combination"
     INSUFFICIENT_VALID_STRIKES = "insufficient_valid_strikes"
+    NO_VALID_EXPIRIES = "no_valid_expiries"
 
     # Volume/Liquidity issues
     VOLUME_TOO_LOW = "volume_too_low"

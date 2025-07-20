@@ -112,6 +112,28 @@ class SFRExecutor(BaseExecutor):
         self.data_timeout = data_timeout
         self.data_collection_start = time.time()
 
+    def find_stock_position_in_strikes(
+        self, stock_price: float, valid_strikes: List[float]
+    ) -> int:
+        """
+        Find the position of stock price within valid strikes array.
+        Returns the index of the strike closest to or just below the stock price.
+        """
+        if not valid_strikes:
+            return 0
+
+        # Sort strikes to ensure proper positioning
+        sorted_strikes = sorted(valid_strikes)
+
+        # Find position - prefer strike at or just below stock price
+        for i, strike in enumerate(sorted_strikes):
+            if strike >= stock_price:
+                # If exact match or first strike above stock price
+                return max(0, i - 1) if strike > stock_price and i > 0 else i
+
+        # Stock price is above all strikes
+        return len(sorted_strikes) - 1
+
     def quick_viability_check(
         self, expiry_option: ExpiryOption, stock_price: float
     ) -> Tuple[bool, Optional[str]]:
@@ -132,16 +154,17 @@ class SFRExecutor(BaseExecutor):
         except ValueError:
             return False, "invalid_expiry_format"
 
-        # Quick moneyness check
-        # call_moneyness = expiry_option.call_strike / stock_price
-        # put_moneyness = expiry_option.put_strike / stock_price
-        # if (
-        #     call_moneyness < 0.95
-        #     or call_moneyness > 1.1
-        #     or put_moneyness < 0.85
-        #     or put_moneyness > 1.05
-        # ):
-        #     return False, "poor_moneyness"
+        # Quick moneyness check - re-enabled with optimized thresholds
+        call_moneyness = expiry_option.call_strike / stock_price
+        put_moneyness = expiry_option.put_strike / stock_price
+        # More flexible thresholds to capture more opportunities
+        if (
+            call_moneyness < 0.90  # Allow deeper ITM calls
+            or call_moneyness > 1.15  # Allow more OTM calls
+            or put_moneyness < 0.80  # Allow deeper ITM puts
+            or put_moneyness > 1.10  # Allow more OTM puts
+        ):
+            return False, "poor_moneyness"
 
         return True, None
 
@@ -160,10 +183,18 @@ class SFRExecutor(BaseExecutor):
 
         spread = stock_price - put_strike
 
-        if spread > net_credit:  # arbitrage condition
+        # For conversion arbitrage: min_profit = net_credit - spread
+        # We want min_profit > 0, so net_credit > spread
+        if (
+            spread >= net_credit
+        ):  # Reject if spread >= net_credit (no arbitrage opportunity)
             logger.info(
-                f"[{symbol}] spread[{spread}] > net_credit[{net_credit}] - doesn't meet conditions"
+                f"[{symbol}] spread[{spread}] >= net_credit[{net_credit}] - no arbitrage opportunity"
             )
+            return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
+
+        elif min_profit <= 0:  # Direct check for positive profit
+            logger.info(f"[{symbol}] min_profit[{min_profit}] <= 0 - not profitable")
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
         elif net_credit < 0:
@@ -200,21 +231,26 @@ class SFRExecutor(BaseExecutor):
                 ticker: Ticker = tick
                 contract = ticker.contract
 
-                # Update ticker data - be more lenient with volume requirements
-                # Accept any ticker with valid price data, log warning for low volume
-                if ticker.volume > 10:
+                # Update ticker data with volume-based filtering
+                # Accept high volume contracts without warnings
+                if ticker.volume > 50:  # High volume threshold
                     contract_ticker[contract.conId] = ticker
-                elif ticker.volume >= 0 and (
+                elif ticker.volume > 10:  # Medium volume threshold
+                    contract_ticker[contract.conId] = ticker
+                elif ticker.volume >= 1 and (
                     ticker.bid > 0 or ticker.ask > 0 or ticker.close > 0
                 ):
                     # Accept low volume contracts if they have valid price data
+                    # Only log warning for very low volume (< 5) to reduce noise
                     contract_ticker[contract.conId] = ticker
-                    logger.warning(
-                        f"[{self.symbol}] Low volume ({ticker.volume}) for contract {contract.conId}, "
-                        f"but accepting due to valid price data"
-                    )
+                    if ticker.volume < 5:
+                        logger.debug(  # Changed from warning to debug to reduce noise
+                            f"[{self.symbol}] Very low volume ({ticker.volume}) for contract {contract.conId}"
+                        )
                 else:
-                    logger.debug(f"Skipping contract {contract.conId}: no valid data")
+                    logger.debug(
+                        f"Skipping contract {contract.conId}: no valid data or volume"
+                    )
 
             # Check for timeout with adaptive timeout based on contract count
             elapsed_time = time.time() - self.data_collection_start
@@ -238,7 +274,7 @@ class SFRExecutor(BaseExecutor):
                     )
 
                 # Deactivate after timeout
-                self.is_active = False
+                self.deactivate()
                 # Finish scan with timeout error
                 metrics_collector.finish_scan(
                     success=False, error_message="Data collection timeout"
@@ -323,7 +359,7 @@ class SFRExecutor(BaseExecutor):
 
                 else:
                     logger.info(f"No suitable opportunities found for {self.symbol}")
-                    self.is_active = False
+                    self.deactivate()
                     # Finish scan successfully even if no opportunities found
                     metrics_collector.finish_scan(success=True)
 
@@ -343,7 +379,7 @@ class SFRExecutor(BaseExecutor):
 
         except Exception as e:
             logger.error(f"Error in executor: {str(e)}")
-            self.is_active = False
+            self.deactivate()
             # Finish scan with error
             metrics_collector.finish_scan(success=False, error_message=str(e))
 
@@ -579,6 +615,31 @@ class SFRExecutor(BaseExecutor):
             logger.error(f"Error in calc_price_and_build_order_for_expiry: {str(e)}")
             return None
 
+    def deactivate(self):
+        """Deactivate the executor and properly clean up market data subscriptions"""
+        if self.is_active:
+            logger.info(
+                f"[{self.symbol}] Deactivating executor and cleaning up market data subscriptions"
+            )
+
+            # Cancel market data for all contracts
+            for contract in self.all_contracts:
+                try:
+                    self.ib.cancelMktData(contract)
+                    # Clean up from global contract_ticker
+                    if contract.conId in contract_ticker:
+                        del contract_ticker[contract.conId]
+                except Exception as e:
+                    logger.debug(
+                        f"Error cancelling market data for contract {contract.conId}: {str(e)}"
+                    )
+
+            # Call parent deactivate method
+            super().deactivate()
+            logger.debug(
+                f"[{self.symbol}] Executor deactivated and cleaned up {len(self.all_contracts)} contracts"
+            )
+
 
 class SFR(ArbitrageClass):
     """
@@ -593,6 +654,29 @@ class SFR(ArbitrageClass):
         # Reconfigure logging with debug mode
         configure_logging(level=logging.INFO, debug=debug)
         super().__init__(log_file=log_file)
+
+    def cleanup_inactive_executors(self):
+        """Enhanced cleanup that properly cancels market data subscriptions"""
+        inactive_symbols = [
+            symbol
+            for symbol, executor in self.active_executors.items()
+            if not executor.is_active
+        ]
+
+        # Ensure inactive executors have been properly deactivated
+        for symbol in inactive_symbols:
+            executor = self.active_executors[symbol]
+            if hasattr(executor, "deactivate") and executor.is_active:
+                # Call deactivate to clean up market data subscriptions
+                executor.deactivate()
+
+        # Call parent cleanup method
+        super().cleanup_inactive_executors()
+
+        if inactive_symbols:
+            logger.info(
+                f"[SFR] Enhanced cleanup completed for {len(inactive_symbols)} inactive executors"
+            )
 
     async def scan(
         self,
@@ -656,13 +740,45 @@ class SFR(ArbitrageClass):
             contract_ticker = {}
             await asyncio.sleep(5)  # Reduced wait time for faster cycles
 
-    async def scan_sfr(self, symbol, quantity):
+    def find_stock_position_in_strikes(
+        self, stock_price: float, valid_strikes: List[float]
+    ) -> int:
+        """
+        Find the position of stock price within valid strikes array.
+        Returns the index of the strike closest to or just below the stock price.
+        """
+        if not valid_strikes:
+            return 0
+
+        # Sort strikes to ensure proper positioning
+        sorted_strikes = sorted(valid_strikes)
+
+        # Find position - prefer strike at or just below stock price
+        for i, strike in enumerate(sorted_strikes):
+            if strike >= stock_price:
+                # If exact match or first strike above stock price
+                return max(0, i - 1) if strike > stock_price and i > 0 else i
+
+        # Stock price is above all strikes
+        return len(sorted_strikes) - 1
+
+    async def scan_sfr(self, symbol, quantity, profit_target=0.50, cost_limit=120.0):
         """
         Scan for SFR opportunities for a specific symbol.
         Creates a single executor per symbol that handles all expiries.
+
+        Args:
+            symbol: Trading symbol to scan
+            quantity: Number of contracts to trade
+            profit_target: Minimum profit target (default: 0.50%)
+            cost_limit: Maximum cost limit (default: $120.0)
         """
         # Start metrics collection for this scan
         scan_metrics = metrics_collector.start_scan(symbol, "SFR")
+
+        # Set configuration for this scan
+        self.profit_target = profit_target
+        self.cost_limit = cost_limit
 
         try:
             exchange, option_type, stock = self._get_stock_contract(symbol)
@@ -683,7 +799,7 @@ class SFR(ArbitrageClass):
 
             # Define parameters for the options (expiry and strike price)
             valid_strikes = [
-                s for s in chain.strikes if s <= stock_price and s > stock_price - 10
+                s for s in chain.strikes if s <= stock_price and s > stock_price - 25
             ]  # Example strike price
 
             if len(valid_strikes) < 2:
@@ -706,20 +822,85 @@ class SFR(ArbitrageClass):
                 chain.expirations, 19, 45
             )
 
+            if len(valid_expiries) == 0:
+                logger.warning(
+                    f"No valid expiries found for {symbol} in range 19-45 days, skipping scan"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.NO_VALID_EXPIRIES,
+                    {
+                        "available_expiries": len(chain.expirations),
+                        "days_range": "19-45",
+                    },
+                )
+                return
+
             if len(valid_strikes) < 2:
                 logger.info(
                     f"Not enough valid strikes for {symbol}, skipping parallel qualification"
                 )
                 return
 
-            call_strike = valid_strikes[-1]
-            put_strike = valid_strikes[-2]
-            valid_strike_pairs = [(call_strike, put_strike)]
+            # Adaptive strike position logic for conversion arbitrage
+            valid_strike_pairs = []
 
-            # Add retry strike pair if available
-            if len(valid_strikes) >= 3:
-                retry_put_strike = valid_strikes[-3]
-                valid_strike_pairs.append((call_strike, retry_put_strike))
+            # Sort strikes for position-based selection
+            sorted_strikes = sorted(valid_strikes)
+
+            # Find stock price position within valid strikes
+            stock_position = self.find_stock_position_in_strikes(
+                stock_price, sorted_strikes
+            )
+
+            # Adaptive strike ranges based on position (not dollar amounts)
+            # Call candidates: stock position ± 1 (for high premium around ATM)
+            call_start = max(0, stock_position - 1)
+            call_end = min(len(sorted_strikes), stock_position + 2)
+            call_candidates = sorted_strikes[call_start:call_end]
+
+            # Put candidates: at/below stock position (for protective puts)
+            put_candidates = sorted_strikes[
+                : stock_position + 2
+            ]  # Include slightly above for flexibility
+
+            # Generate combinations prioritizing 1-strike differences
+            priority_combinations = []  # Strike difference = 1 (highest priority)
+            secondary_combinations = []  # Strike difference > 1
+
+            for call_strike in call_candidates:
+                for put_strike in put_candidates:
+                    # Enforce call_strike > put_strike for proper conversion arbitrage
+                    if call_strike > put_strike:
+                        # Calculate strike difference in position terms
+                        call_idx = sorted_strikes.index(call_strike)
+                        put_idx = sorted_strikes.index(put_strike)
+                        strike_diff = call_idx - put_idx
+
+                        combination = (call_strike, put_strike, strike_diff)
+
+                        if strike_diff == 1:
+                            # 1-strike difference: highest probability of trade
+                            priority_combinations.append(combination)
+                        elif strike_diff <= 3:
+                            # 2-3 strike difference: secondary options
+                            secondary_combinations.append(combination)
+
+            # Sort by strike difference (1 > 2 > 3) for optimal trade probability
+            priority_combinations.sort(key=lambda x: x[2])
+            secondary_combinations.sort(key=lambda x: x[2])
+
+            # Combine and limit to 4 best combinations
+            all_combinations = priority_combinations + secondary_combinations
+            valid_strike_pairs = [(call, put) for call, put, _ in all_combinations[:4]]
+
+            logger.info(
+                f"[{symbol}] Testing {len(valid_strike_pairs)} conversion-optimized strike combinations "
+                f"(stock position: {stock_position}, price: ${stock_price:.2f})"
+            )
+            if priority_combinations:
+                logger.info(
+                    f"[{symbol}] Found {len(priority_combinations)} high-probability 1-strike difference combinations"
+                )
 
             # Parallel qualification of all contracts
             qualified_contracts_map = await self.parallel_qualify_all_contracts(
@@ -730,33 +911,22 @@ class SFR(ArbitrageClass):
             expiry_options = []
             all_contracts = [stock]
 
-            for expiry in valid_expiries:
-                # Try primary strike combination first
-                key = f"{expiry}_{call_strike}_{put_strike}"
-                if key in qualified_contracts_map:
-                    contract_info = qualified_contracts_map[key]
-                    expiry_option = ExpiryOption(
-                        expiry=contract_info["expiry"],
-                        call_contract=contract_info["call_contract"],
-                        put_contract=contract_info["put_contract"],
-                        call_strike=contract_info["call_strike"],
-                        put_strike=contract_info["put_strike"],
-                    )
-                    expiry_options.append(expiry_option)
-                    all_contracts.extend(
-                        [contract_info["call_contract"], contract_info["put_contract"]]
-                    )
-                    continue
+            # Limit expiry options to avoid too many low volume contracts
+            max_expiry_options = 8  # Reasonable limit to balance opportunity vs noise
 
-                # Try retry strike combination if available
-                if len(valid_strikes) >= 3:
-                    retry_put_strike = valid_strikes[-3]
-                    retry_key = f"{expiry}_{call_strike}_{retry_put_strike}"
-                    if retry_key in qualified_contracts_map:
-                        contract_info = qualified_contracts_map[retry_key]
-                        logger.info(
-                            f"Using retry put strike {retry_put_strike} for {symbol} expiry {expiry}"
-                        )
+            for expiry in valid_expiries:
+                if len(expiry_options) >= max_expiry_options:
+                    logger.debug(
+                        f"[{symbol}] Reached maximum expiry options limit ({max_expiry_options})"
+                    )
+                    break
+
+                # Try all strike combinations for this expiry (prioritized by volume)
+                found_valid_combination = False
+                for call_strike, put_strike in valid_strike_pairs:
+                    key = f"{expiry}_{call_strike}_{put_strike}"
+                    if key in qualified_contracts_map:
+                        contract_info = qualified_contracts_map[key]
                         expiry_option = ExpiryOption(
                             expiry=contract_info["expiry"],
                             call_contract=contract_info["call_contract"],
@@ -771,11 +941,16 @@ class SFR(ArbitrageClass):
                                 contract_info["put_contract"],
                             ]
                         )
-                        continue
+                        found_valid_combination = True
+                        logger.debug(
+                            f"Using strike combination C{call_strike}/P{put_strike} for {symbol} expiry {expiry}"
+                        )
+                        break  # Found valid combination, move to next expiry
 
-                logger.debug(
-                    f"No valid contract pair found for {symbol} expiry {expiry}"
-                )
+                if not found_valid_combination:
+                    logger.debug(
+                        f"No valid contract pair found for {symbol} expiry {expiry}"
+                    )
 
             if not expiry_options:
                 logger.info(f"No valid expiry options found for {symbol}")
@@ -798,6 +973,15 @@ class SFR(ArbitrageClass):
                 f"[{symbol}] Scanning {len(expiry_options)} strike combinations across "
                 f"{len(set(opt.expiry for opt in expiry_options))} expiries"
             )
+
+            # Clean up any existing executor for this symbol before creating new one
+            if symbol in self.active_executors:
+                old_executor = self.active_executors[symbol]
+                logger.info(
+                    f"[{symbol}] Cleaning up existing executor before creating new one"
+                )
+                old_executor.deactivate()
+                del self.active_executors[symbol]
 
             # Create single executor for this symbol
             srf_executor = SFRExecutor(
