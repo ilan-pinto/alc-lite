@@ -194,8 +194,32 @@ class MockIB:
         self.qualified_contracts = {}
         self.option_chains = {}
 
+        # Track background tasks for proper cleanup
+        self.background_tasks = set()
+
         # Pre-populate with test data
         self._setup_test_data()
+
+    def cleanup(self):
+        """Cancel all background tasks to prevent asyncio warnings"""
+        try:
+            # Check if we're in an asyncio context
+            loop = asyncio.get_running_loop()
+            for task in self.background_tasks:
+                if not task.done():
+                    task.cancel()
+        except RuntimeError:
+            # Event loop is closed or not running, tasks are already cleaned up
+            pass
+        finally:
+            self.background_tasks.clear()
+
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        try:
+            self.cleanup()
+        except:
+            pass  # Ignore errors during cleanup
 
     def _setup_test_data(self):
         """Setup test data for common symbols"""
@@ -252,7 +276,10 @@ class MockIB:
         self.market_data_requests[reqId] = contract
 
         # Simulate async market data arrival
-        asyncio.create_task(self._deliver_market_data(reqId, contract))
+        task = asyncio.create_task(self._deliver_market_data(reqId, contract))
+        self.background_tasks.add(task)
+        # Remove task from set when it completes
+        task.add_done_callback(self.background_tasks.discard)
 
         # Return a mock ticker object immediately (like real ib_async)
         return self._create_mock_ticker_for_contract(contract)
@@ -369,7 +396,8 @@ class MockIB:
 
     async def _deliver_market_data(self, reqId: int, contract: Contract):
         """Simulate market data delivery"""
-        await asyncio.sleep(0.1)  # Simulate data arrival delay
+        # Skip sleep in tests to avoid pending task warnings
+        # await asyncio.sleep(0.1)  # Simulate data arrival delay
 
         # Find matching ticker in test data
         ticker = None
