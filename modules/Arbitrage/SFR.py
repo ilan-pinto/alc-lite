@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 import numpy as np
 from eventkit import Event
-from ib_async import IB, ComboLeg, Contract, Option, Order, Stock, Ticker
+from ib_async import IB, Contract, Order, Ticker
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
@@ -347,7 +347,7 @@ class SFRExecutor(BaseExecutor):
                         self.is_active = (
                             False  # Deactivate to prevent multiple executions
                         )
-                        trade = await self.order_manager.place_order(
+                        _ = await self.order_manager.place_order(
                             conversion_contract, order
                         )
                         logger.info(f"Executed best opportunity for {self.symbol}")
@@ -713,13 +713,19 @@ class SFR(ArbitrageClass):
 
         while True:
             # Start cycle tracking
-            cycle_metrics = metrics_collector.start_cycle(len(symbol_list))
+            _ = metrics_collector.start_cycle(len(symbol_list))
 
             tasks = []
             for symbol in symbol_list:
                 # Use throttled scanning instead of fixed delays
                 task = asyncio.create_task(
-                    self.scan_with_throttle(symbol, self.scan_sfr, self.quantity)
+                    self.scan_with_throttle(
+                        symbol,
+                        self.scan_sfr,
+                        self.quantity,
+                        self.profit_target,
+                        self.cost_limit,
+                    )
                 )
                 tasks.append(task)
                 # Minimal delay for API rate limiting
@@ -762,7 +768,7 @@ class SFR(ArbitrageClass):
         # Stock price is above all strikes
         return len(sorted_strikes) - 1
 
-    async def scan_sfr(self, symbol, quantity, profit_target=0.50, cost_limit=120.0):
+    async def scan_sfr(self, symbol, quantity=1, profit_target=0.50, cost_limit=120.0):
         """
         Scan for SFR opportunities for a specific symbol.
         Creates a single executor per symbol that handles all expiries.
@@ -774,14 +780,14 @@ class SFR(ArbitrageClass):
             cost_limit: Maximum cost limit (default: $120.0)
         """
         # Start metrics collection for this scan
-        scan_metrics = metrics_collector.start_scan(symbol, "SFR")
+        _ = metrics_collector.start_scan(symbol, "SFR")
 
         # Set configuration for this scan
         self.profit_target = profit_target
         self.cost_limit = cost_limit
 
         try:
-            exchange, option_type, stock = self._get_stock_contract(symbol)
+            _, _, stock = self._get_stock_contract(symbol)
 
             # Request market data for the stock
             market_data = await self._get_market_data_async(stock)

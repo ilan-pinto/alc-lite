@@ -6,27 +6,9 @@ from typing import Dict, List, Optional, Tuple
 import logging
 import numpy as np
 from eventkit import Event
-from ib_async import (
-    IB,
-    ComboLeg,
-    Contract,
-    FuturesOption,
-    Index,
-    Option,
-    Order,
-    OrderStatus,
-    Stock,
-    Ticker,
-    Trade,
-)
-from rich.console import Console
+from ib_async import IB, ComboLeg, Contract, FuturesOption, Index, Option, Order, Stock
 
-from .common import (
-    FILLED_ORDERS_FILENAME,
-    get_logger,
-    log_filled_order,
-    log_order_details,
-)
+from .common import get_logger, log_filled_order, log_order_details
 from .metrics import metrics_collector
 
 logger = get_logger()
@@ -77,7 +59,7 @@ class ContractCache:
         current_time = time.time()
         expired_keys = []
 
-        for key, (contract, timestamp) in self.cache.items():
+        for key, (_, timestamp) in self.cache.items():
             if current_time - timestamp >= self.ttl:
                 expired_keys.append(key)
 
@@ -416,9 +398,7 @@ class BaseExecutor:
     async def executor(self, event: Event) -> None:
         """Base executor method - should be overridden by subclasses."""
         try:
-            for tick in event:
-                ticker: Ticker = tick
-                contract = ticker.contract
+            for _ in event:
                 # This would be implemented by subclasses
                 # with their specific logic
                 pass
@@ -732,7 +712,7 @@ class ArbitrageClass:
         self.symbol_chain_cache[cache_key] = (chain, current_time)
         return chain
 
-    async def _get_chains(self, stock: Contract, exchange="CBOE"):
+    async def _get_chains(self, stock: Contract):
         chains = await self.ib.reqSecDefOptParamsAsync(
             stock.symbol,
             "CME" if stock.secType == "IND" and not stock.symbol == "SPX" else "",
