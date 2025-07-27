@@ -456,6 +456,15 @@ class TestCLIFinvizIntegration:
             log_file=None,
             debug=False,
             finviz_url="https://finviz.com/screener.ashx?v=111&f=cap_largeover",
+            scoring_strategy="balanced",
+            risk_reward_weight=None,
+            liquidity_weight=None,
+            time_decay_weight=None,
+            market_quality_weight=None,
+            min_risk_reward=None,
+            min_liquidity=None,
+            max_bid_ask_spread=None,
+            optimal_days_expiry=None,
         )
 
     @pytest.mark.integration
@@ -522,6 +531,15 @@ class TestCLIFinvizIntegration:
             log_file=None,
             debug=True,
             finviz_url="https://finviz.com/screener.ashx?v=111",
+            scoring_strategy="balanced",
+            risk_reward_weight=None,
+            liquidity_weight=None,
+            time_decay_weight=None,
+            market_quality_weight=None,
+            min_risk_reward=None,
+            min_liquidity=None,
+            max_bid_ask_spread=None,
+            optimal_days_expiry=None,
         )
 
     @pytest.mark.integration
@@ -574,4 +592,13 @@ class TestCLIFinvizIntegration:
             log_file=None,
             debug=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
+            scoring_strategy="balanced",
+            risk_reward_weight=None,
+            liquidity_weight=None,
+            time_decay_weight=None,
+            market_quality_weight=None,
+            min_risk_reward=None,
+            min_liquidity=None,
+            max_bid_ask_spread=None,
+            optimal_days_expiry=None,
         )

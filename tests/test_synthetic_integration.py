@@ -6,13 +6,13 @@ Tests the complete workflow from market data to arbitrage execution for syntheti
 import asyncio
 import time
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import logging
 import pytest
 
 from modules.Arbitrage.metrics import RejectionReason, metrics_collector
-from modules.Arbitrage.Synthetic import Syn
+from modules.Arbitrage.Synthetic import GlobalOpportunityManager, ScoringConfig, Syn
 
 # Import test utilities
 try:
@@ -263,6 +263,7 @@ class TestSyntheticArbitrageIntegration:
                 profit_ratio_threshold=1.5,  # Lower threshold for this scenario
                 start_time=time.time(),
                 quantity=1,
+                global_manager=GlobalOpportunityManager(),
             )
 
             # Test the synthetic condition check with our profitable scenario values
@@ -414,6 +415,7 @@ class TestSyntheticArbitrageIntegration:
                 profit_ratio_threshold=3.0,  # High threshold that will fail
                 start_time=time.time(),
                 quantity=1,
+                global_manager=GlobalOpportunityManager(),
             )
 
             # Test the synthetic condition check with poor risk-reward scenario values
@@ -565,6 +567,7 @@ class TestSyntheticArbitrageIntegration:
                 profit_ratio_threshold=2.0,
                 start_time=time.time(),
                 quantity=1,
+                global_manager=GlobalOpportunityManager(),
             )
 
             # Test the synthetic condition check with max loss scenario values
@@ -1166,6 +1169,7 @@ class TestSyntheticArbitrageIntegration:
             start_time=time.time(),
             quantity=1,
             data_timeout=0.5,  # Very short timeout for testing
+            global_manager=GlobalOpportunityManager(),
         )
 
         # Import the contract_ticker to set up partial data
@@ -1317,6 +1321,7 @@ class TestSyntheticArbitrageIntegration:
                 profit_ratio_threshold=2.0,
                 start_time=time.time(),
                 quantity=1,
+                global_manager=GlobalOpportunityManager(),
             )
 
             # Test the synthetic condition check with our profitable scenario values
@@ -1496,6 +1501,7 @@ class TestSyntheticArbitrageIntegration:
             start_time=time.time(),
             quantity=1,
             data_timeout=5.0,
+            global_manager=GlobalOpportunityManager(),
         )
 
         # Get all tickers for the executor
@@ -1623,6 +1629,7 @@ class TestSyntheticArbitrageIntegration:
             start_time=time.time(),
             quantity=1,
             data_timeout=5.0,
+            global_manager=GlobalOpportunityManager(),
         )
 
         # Create event with all tickers
@@ -1647,6 +1654,407 @@ class TestSyntheticArbitrageIntegration:
             print("  ✅ Executor completed processing")
 
         print("✅ Synthetic executor direct test completed")
+
+
+class TestGlobalOpportunitySelectionIntegration:
+    """Integration tests for global opportunity selection within synthetic arbitrage workflow"""
+
+    def setup_method(self):
+        """Setup logging for tests to ensure log output is visible"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            force=True,
+        )
+        logger = logging.getLogger("rich")
+        logger.setLevel(logging.DEBUG)
+
+        # Track MockIB instances for cleanup
+        self.mock_ib_instances = []
+
+    def teardown_method(self):
+        """Cleanup after each test to prevent asyncio warnings"""
+        self.mock_ib_instances.clear()
+
+    @pytest.mark.asyncio
+    async def test_synthetic_global_selection_integration(self):
+        """
+        Test global opportunity selection with synthetic arbitrage.
+
+        This test validates that the global opportunity manager correctly
+        collects and selects opportunities across multiple symbols.
+        """
+        print("\n🔍 Testing synthetic global selection integration")
+
+        # Create Syn instance with global selection enabled
+        syn = Syn(debug=True, scoring_config=ScoringConfig.create_balanced())
+
+        # Verify global manager is properly initialized
+        assert syn.global_manager is not None
+        assert syn.global_manager.scoring_config is not None
+        print(
+            f"  ✅ Global manager initialized with {type(syn.global_manager.scoring_config).__name__}"
+        )
+
+        # Create test opportunities directly
+        # Symbol 1: AAPL - Good opportunity
+        aapl_data = {
+            "max_profit": 80.0,
+            "min_profit": -30.0,
+            "net_credit": 50.0,
+            "stock_price": 150.0,
+            "expiry": "20240330",
+            "call_strike": 150,
+            "put_strike": 145,
+        }
+        aapl_call = MockTicker(
+            MockContract("AAPL", "OPT", strike=150, right="C"),
+            bid=8.0,
+            ask=8.2,
+            volume=500,
+        )
+        aapl_put = MockTicker(
+            MockContract("AAPL", "OPT", strike=145, right="P"),
+            bid=5.0,
+            ask=5.1,
+            volume=400,
+        )
+
+        # Add AAPL opportunity
+        success1 = syn.global_manager.add_opportunity(
+            symbol="AAPL",
+            conversion_contract=Mock(),
+            order=Mock(),
+            trade_details=aapl_data,
+            call_ticker=aapl_call,
+            put_ticker=aapl_put,
+        )
+
+        # Symbol 2: MSFT - Better opportunity
+        msft_data = {
+            "max_profit": 100.0,
+            "min_profit": -25.0,
+            "net_credit": 75.0,
+            "stock_price": 300.0,
+            "expiry": "20240330",
+            "call_strike": 300,
+            "put_strike": 295,
+        }
+        msft_call = MockTicker(
+            MockContract("MSFT", "OPT", strike=300, right="C"),
+            bid=10.0,
+            ask=10.1,
+            volume=800,
+        )
+        msft_put = MockTicker(
+            MockContract("MSFT", "OPT", strike=295, right="P"),
+            bid=6.0,
+            ask=6.05,
+            volume=700,
+        )
+
+        success2 = syn.global_manager.add_opportunity(
+            symbol="MSFT",
+            conversion_contract=Mock(),
+            order=Mock(),
+            trade_details=msft_data,
+            call_ticker=msft_call,
+            put_ticker=msft_put,
+        )
+
+        # Verify opportunities were added
+        print(f"\n  📊 Global Selection Results:")
+        print(f"    AAPL added: {success1}")
+        print(f"    MSFT added: {success2}")
+
+        opportunity_count = syn.global_manager.get_opportunity_count()
+        print(f"    Total opportunities: {opportunity_count}")
+
+        # Assertions
+        assert success1, "Should add AAPL opportunity"
+        assert success2, "Should add MSFT opportunity"
+        assert opportunity_count == 2, "Should have 2 opportunities"
+
+        # Test global selection
+        best = syn.global_manager.get_best_opportunity()
+        assert best is not None, "Should have a best opportunity"
+        assert best.symbol == "MSFT", "MSFT should be selected (higher risk-reward)"
+
+        print(f"    🏆 Best opportunity: {best.symbol}")
+        print(f"    Composite score: {best.score.composite_score:.3f}")
+        print(f"    Risk-reward ratio: {best.score.risk_reward_ratio:.3f}")
+
+        print("✅ Synthetic global selection integration test passed")
+
+    @pytest.mark.asyncio
+    async def test_multiple_symbols_global_best_selection(self):
+        """
+        Test that global selection correctly chooses the best opportunity
+        across multiple symbols with different characteristics.
+        """
+        print("\n🔍 Testing multiple symbols global best selection")
+
+        # Create Syn instance with aggressive strategy (favors high risk-reward)
+        syn = Syn(debug=True, scoring_config=ScoringConfig.create_aggressive())
+
+        # Create opportunities with different risk profiles
+
+        # HIGH_RR: High risk-reward, moderate liquidity (should win with aggressive strategy)
+        high_rr_data = {
+            "max_profit": 100.0,
+            "min_profit": -25.0,  # Risk-reward: 4.0
+            "net_credit": 75.0,
+            "stock_price": 100.0,
+            "expiry": "20240330",
+            "call_strike": 100,
+            "put_strike": 95,
+        }
+        high_rr_call = MockTicker(
+            MockContract("HIGH_RR", "OPT", strike=100, right="C"),
+            bid=5.0,
+            ask=5.15,
+            volume=300,
+        )
+        high_rr_put = MockTicker(
+            MockContract("HIGH_RR", "OPT", strike=95, right="P"),
+            bid=3.0,
+            ask=3.10,
+            volume=200,
+        )
+
+        success1 = syn.global_manager.add_opportunity(
+            symbol="HIGH_RR",
+            conversion_contract=Mock(),
+            order=Mock(),
+            trade_details=high_rr_data,
+            call_ticker=high_rr_call,
+            put_ticker=high_rr_put,
+        )
+
+        # HIGH_LIQ: High liquidity, moderate risk-reward
+        high_liq_data = {
+            "max_profit": 60.0,
+            "min_profit": -30.0,  # Risk-reward: 2.0
+            "net_credit": 30.0,
+            "stock_price": 100.0,
+            "expiry": "20240330",
+            "call_strike": 100,
+            "put_strike": 95,
+        }
+        high_liq_call = MockTicker(
+            MockContract("HIGH_LIQ", "OPT", strike=100, right="C"),
+            bid=5.0,
+            ask=5.05,
+            volume=1000,
+        )
+        high_liq_put = MockTicker(
+            MockContract("HIGH_LIQ", "OPT", strike=95, right="P"),
+            bid=3.0,
+            ask=3.03,
+            volume=800,
+        )
+
+        success2 = syn.global_manager.add_opportunity(
+            symbol="HIGH_LIQ",
+            conversion_contract=Mock(),
+            order=Mock(),
+            trade_details=high_liq_data,
+            call_ticker=high_liq_call,
+            put_ticker=high_liq_put,
+        )
+
+        # LOW_RR: Low risk-reward but good liquidity (might be rejected)
+        low_rr_data = {
+            "max_profit": 40.0,
+            "min_profit": -35.0,  # Risk-reward: 1.14
+            "net_credit": 5.0,
+            "stock_price": 100.0,
+            "expiry": "20240330",
+            "call_strike": 100,
+            "put_strike": 95,
+        }
+        low_rr_call = MockTicker(
+            MockContract("LOW_RR", "OPT", strike=100, right="C"),
+            bid=5.0,
+            ask=5.08,
+            volume=600,
+        )
+        low_rr_put = MockTicker(
+            MockContract("LOW_RR", "OPT", strike=95, right="P"),
+            bid=3.0,
+            ask=3.06,
+            volume=500,
+        )
+
+        success3 = syn.global_manager.add_opportunity(
+            symbol="LOW_RR",
+            conversion_contract=Mock(),
+            order=Mock(),
+            trade_details=low_rr_data,
+            call_ticker=low_rr_call,
+            put_ticker=low_rr_put,
+        )
+
+        # Check global selection results
+        opportunity_count = syn.global_manager.get_opportunity_count()
+        print(f"\n  📊 Final Results:")
+        print(f"    Total opportunities collected: {opportunity_count}")
+        print(f"    HIGH_RR added: {success1}")
+        print(f"    HIGH_LIQ added: {success2}")
+        print(f"    LOW_RR added: {success3}")
+
+        # Verify at least 2 opportunities were added
+        assert success1 and success2, "Should add at least HIGH_RR and HIGH_LIQ"
+        assert (
+            opportunity_count >= 2
+        ), "Should collect opportunities from multiple symbols"
+
+        # Get best opportunity
+        best_opportunity = syn.global_manager.get_best_opportunity()
+        assert best_opportunity is not None, "Should have a best opportunity"
+
+        print(f"    🏆 Globally selected: {best_opportunity.symbol}")
+        print(f"    Best composite score: {best_opportunity.score.composite_score:.3f}")
+        print(
+            f"    Best risk-reward ratio: {best_opportunity.score.risk_reward_ratio:.3f}"
+        )
+
+        # With aggressive strategy, HIGH_RR should be favored due to 4.0 risk-reward ratio
+        assert (
+            best_opportunity.symbol == "HIGH_RR"
+        ), "Aggressive strategy should select HIGH_RR"
+        assert (
+            best_opportunity.score.risk_reward_ratio >= 3.5
+        ), "Should have high risk-reward ratio"
+
+        print("✅ Multiple symbols global best selection test passed")
+
+    @pytest.mark.asyncio
+    async def test_scoring_strategy_affects_final_selection(self):
+        """
+        Test that different scoring strategies produce different final selections
+        for the same set of opportunities.
+        """
+        print("\n🔍 Testing that scoring strategy affects final selection")
+
+        # Create identical opportunity scenarios
+        opportunity_data = {
+            "max_profit": 70.0,
+            "min_profit": -35.0,  # Risk-reward: 2.0
+            "call_volume": 400,
+            "put_volume": 300,
+            "call_spread": 0.10,
+            "put_spread": 0.06,
+        }
+
+        strategies = {
+            "conservative": ScoringConfig.create_conservative(),
+            "aggressive": ScoringConfig.create_aggressive(),
+            "liquidity_focused": ScoringConfig.create_liquidity_focused(),
+        }
+
+        strategy_results = {}
+
+        for strategy_name, config in strategies.items():
+            print(f"  🧪 Testing {strategy_name.upper()} strategy:")
+
+            # Create fresh Syn instance for each strategy
+            syn = Syn(debug=True, scoring_config=config)
+            mock_ib = MockIB()
+            syn.ib = mock_ib
+            syn.order_manager = MagicMock()
+
+            # Create market data
+            market_data = {}
+            stock_ticker = MarketDataGenerator.generate_stock_data("TEST", 100.0)
+            market_data[stock_ticker.contract.conId] = stock_ticker
+
+            call_contract = MockContract("TEST", "OPT", strike=100, right="C")
+            call_ticker = MockTicker(
+                call_contract,
+                bid=5.0,
+                ask=5.0 + opportunity_data["call_spread"],
+                volume=opportunity_data["call_volume"],
+            )
+            market_data[call_contract.conId] = call_ticker
+
+            put_contract = MockContract("TEST", "OPT", strike=95, right="P")
+            put_ticker = MockTicker(
+                put_contract,
+                bid=3.0,
+                ask=3.0 + opportunity_data["put_spread"],
+                volume=opportunity_data["put_volume"],
+            )
+            market_data[put_contract.conId] = put_ticker
+
+            mock_ib.test_market_data = market_data
+
+            # Add opportunity manually to test scoring
+            trade_details = {
+                "max_profit": opportunity_data["max_profit"],
+                "min_profit": opportunity_data["min_profit"],
+                "net_credit": opportunity_data["max_profit"]
+                - abs(opportunity_data["min_profit"]),
+                "stock_price": 100.0,
+                "expiry": "20240330",
+            }
+
+            success = syn.global_manager.add_opportunity(
+                symbol="TEST",
+                conversion_contract=Mock(),
+                order=Mock(),
+                trade_details=trade_details,
+                call_ticker=call_ticker,
+                put_ticker=put_ticker,
+            )
+
+            assert success, f"Should add opportunity with {strategy_name} strategy"
+
+            # Get the opportunity and its score
+            best = syn.global_manager.get_best_opportunity()
+            assert best is not None
+
+            strategy_results[strategy_name] = {
+                "composite_score": best.score.composite_score,
+                "risk_reward_score": best.score.risk_reward_ratio,
+                "liquidity_score": best.score.liquidity_score,
+                "time_decay_score": best.score.time_decay_score,
+                "market_quality_score": best.score.market_quality_score,
+            }
+
+            print(f"    Composite score: {best.score.composite_score:.4f}")
+            print(
+                f"    Component scores: RR={best.score.risk_reward_ratio:.3f}, "
+                f"Liq={best.score.liquidity_score:.3f}, "
+                f"Time={best.score.time_decay_score:.3f}, "
+                f"Quality={best.score.market_quality_score:.3f}"
+            )
+
+        # Verify that different strategies produce different composite scores
+        composite_scores = [
+            result["composite_score"] for result in strategy_results.values()
+        ]
+        unique_scores = set(composite_scores)
+
+        print(f"\n  📊 Strategy Comparison:")
+        for strategy, result in strategy_results.items():
+            print(f"    {strategy}: {result['composite_score']:.4f}")
+
+        # Different strategies should produce different composite scores
+        assert (
+            len(unique_scores) >= 2
+        ), f"Expected different strategies to produce different scores, got: {composite_scores}"
+
+        # Verify strategy characteristics hold generally
+        conservative_score = strategy_results["conservative"]["composite_score"]
+        aggressive_score = strategy_results["aggressive"]["composite_score"]
+        liquidity_score = strategy_results["liquidity_focused"]["composite_score"]
+
+        print(f"    Conservative: {conservative_score:.4f}")
+        print(f"    Aggressive: {aggressive_score:.4f}")
+        print(f"    Liquidity-focused: {liquidity_score:.4f}")
+
+        print("✅ Scoring strategy affects final selection test passed")
 
 
 # Helper function for running specific tests

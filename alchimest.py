@@ -41,8 +41,17 @@ def main() -> None:
     print_welcome(console, __version__, DEFAULT_MIN_PROFIT)
 
     parser = argparse.ArgumentParser(
-        description="Stock market analysis and trading tool with multiple features including scanning, analysis, and option strategies",
+        description="Stock market analysis and trading tool with multiple features including scanning, analysis, and option strategies. "
+        "Now featuring Global Opportunity Selection for intelligent cross-symbol arbitrage ranking.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="Examples:\n"
+        "  Basic SFR scan:\n"
+        "    %(prog)s sfr --symbols SPY QQQ --cost-limit 100 --profit 0.75\n\n"
+        "  Synthetic scan with global selection:\n"
+        "    %(prog)s syn --symbols AAPL MSFT GOOGL --scoring-strategy balanced\n\n"
+        "  Custom scoring weights:\n"
+        "    %(prog)s syn --symbols SPY QQQ --risk-reward-weight 0.5 --liquidity-weight 0.3\n\n"
+        "For more examples and documentation, visit: https://github.com/ilpinto/alc-lite",
     )
     subparsers = parser.add_subparsers(
         dest="command", help="Available commands", required=True
@@ -112,8 +121,19 @@ def main() -> None:
     # Synthetic conversion (synthetic) sub-command
     parser_syn = subparsers.add_parser(
         "syn",
-        help="Search for synthetic conversion (synthetic) opportunities not risk free",
+        help="Search for synthetic conversion opportunities with Global Opportunity Selection - "
+        "intelligently ranks and selects the best opportunity across all symbols",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="Scan for synthetic arbitrage opportunities across multiple symbols. "
+        "The Global Opportunity Selection system evaluates all opportunities using multi-criteria "
+        "scoring (risk-reward, liquidity, time decay, market quality) to find the single best trade.",
+        epilog="Strategy Examples:\n"
+        "  Conservative (safety-first):\n"
+        "    %(prog)s --symbols SPY QQQ IWM --scoring-strategy conservative\n\n"
+        "  Aggressive (maximize returns):\n"
+        "    %(prog)s --symbols TSLA NVDA --scoring-strategy aggressive --min-risk-reward 3.0\n\n"
+        "  Custom scoring:\n"
+        "    %(prog)s --symbols AAPL MSFT --risk-reward-weight 0.3 --liquidity-weight 0.4\n",
     )
 
     # Metrics reporting sub-command
@@ -206,6 +226,79 @@ def main() -> None:
         help="Finviz screener URL to extract ticker symbols from (wrap in quotes)",
     )
 
+    # Global Opportunity Selection - Scoring Strategy Configuration
+    parser_syn.add_argument(
+        "--scoring-strategy",
+        choices=["conservative", "aggressive", "balanced", "liquidity-focused"],
+        default="balanced",
+        help="Pre-defined scoring strategy for global opportunity selection. "
+        "Conservative: prioritizes safety and liquidity (30%% risk-reward, 35%% liquidity). "
+        "Aggressive: prioritizes maximum returns (50%% risk-reward, 15%% liquidity). "
+        "Balanced: well-rounded approach (40%% risk-reward, 25%% liquidity). "
+        "Liquidity-focused: emphasizes execution certainty (25%% risk-reward, 40%% liquidity). "
+        "[default: balanced]",
+    )
+
+    # Custom Scoring Weights (Advanced Users)
+    parser_syn.add_argument(
+        "--risk-reward-weight",
+        type=float,
+        default=None,
+        help="Custom weight for risk-reward ratio in scoring (0.0-1.0). "
+        "Overrides strategy preset. Must sum to 1.0 with other weights.",
+    )
+    parser_syn.add_argument(
+        "--liquidity-weight",
+        type=float,
+        default=None,
+        help="Custom weight for liquidity scoring (0.0-1.0). "
+        "Overrides strategy preset. Must sum to 1.0 with other weights.",
+    )
+    parser_syn.add_argument(
+        "--time-decay-weight",
+        type=float,
+        default=None,
+        help="Custom weight for time decay scoring (0.0-1.0). "
+        "Overrides strategy preset. Must sum to 1.0 with other weights.",
+    )
+    parser_syn.add_argument(
+        "--market-quality-weight",
+        type=float,
+        default=None,
+        help="Custom weight for market quality scoring (0.0-1.0). "
+        "Overrides strategy preset. Must sum to 1.0 with other weights.",
+    )
+
+    # Threshold Configuration
+    parser_syn.add_argument(
+        "--min-risk-reward",
+        type=float,
+        default=None,
+        help="Minimum acceptable risk-reward ratio threshold. "
+        "Opportunities below this ratio will be rejected. [default: varies by strategy]",
+    )
+    parser_syn.add_argument(
+        "--min-liquidity",
+        type=float,
+        default=None,
+        help="Minimum acceptable liquidity score threshold (0.0-1.0). "
+        "Opportunities below this score will be rejected. [default: varies by strategy]",
+    )
+    parser_syn.add_argument(
+        "--max-bid-ask-spread",
+        type=float,
+        default=None,
+        help="Maximum acceptable bid-ask spread for options. "
+        "Options with wider spreads will be rejected. [default: varies by strategy]",
+    )
+    parser_syn.add_argument(
+        "--optimal-days-expiry",
+        type=int,
+        default=None,
+        help="Optimal days to expiration for time decay scoring. "
+        "Options closer to this value get higher time scores. [default: varies by strategy]",
+    )
+
     args = parser.parse_args()
 
     # Configure logging with optional file output and debug/warning modes
@@ -238,6 +331,16 @@ def main() -> None:
             log_file=log_file,
             debug=args.debug,
             finviz_url=args.fin,
+            # Global Opportunity Selection Configuration
+            scoring_strategy=args.scoring_strategy,
+            risk_reward_weight=args.risk_reward_weight,
+            liquidity_weight=args.liquidity_weight,
+            time_decay_weight=args.time_decay_weight,
+            market_quality_weight=args.market_quality_weight,
+            min_risk_reward=args.min_risk_reward,
+            min_liquidity=args.min_liquidity,
+            max_bid_ask_spread=args.max_bid_ask_spread,
+            optimal_days_expiry=args.optimal_days_expiry,
         )
 
     elif args.command == "metrics":

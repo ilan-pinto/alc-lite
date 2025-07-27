@@ -7,7 +7,12 @@ import pytest
 from ib_async import Option, Stock
 
 from modules.Arbitrage.metrics import RejectionReason, metrics_collector
-from modules.Arbitrage.Synthetic import ExpiryOption, SynExecutor, contract_ticker
+from modules.Arbitrage.Synthetic import (
+    ExpiryOption,
+    GlobalOpportunityManager,
+    SynExecutor,
+    contract_ticker,
+)
 
 
 @pytest.mark.unit
@@ -34,6 +39,7 @@ def test_syn_executor_check_conditions_all_false_branches():
         profit_ratio_threshold=2.0,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     # 1. max_loss_threshold >= min_profit
     result, reason = syn_executor.check_conditions(
@@ -144,6 +150,7 @@ def test_syn_executor_check_conditions_true_branch():
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     assert syn_executor.check_conditions(
         symbol="TEST",
@@ -180,6 +187,7 @@ def test_calc_price_and_build_order_no_stock_ticker():
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     global contract_ticker
     contract_ticker = {}  # No ticker for stock
@@ -211,6 +219,7 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -247,6 +256,7 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -284,6 +294,7 @@ def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     global contract_ticker
     contract_ticker = {1: MagicMock(ask=100.0, close=99.0)}
@@ -325,6 +336,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=1,
+        global_manager=GlobalOpportunityManager(),
     )
     # Patch contract_ticker in the Synthetic module with stock and option data
     monkeypatch.setattr(
@@ -371,6 +383,7 @@ def test_syn_executor_build_order_quantity():
         profit_ratio_threshold=None,
         start_time=0.0,
         quantity=4,
+        global_manager=GlobalOpportunityManager(),
     )
     # Patch contracts to have required attributes
     stock = MagicMock(conId=1)
@@ -418,6 +431,7 @@ async def test_rejection_reasons_are_logged_during_scan():
         start_time=time.time(),
         quantity=1,
         data_timeout=30.0,
+        global_manager=GlobalOpportunityManager(),
     )
 
     # Clear any existing metrics first, then start a scan

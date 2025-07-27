@@ -7,6 +7,7 @@ The project is built with a focus on modularity and extensibility, allowing for 
 ## 🚀 Features
 
 - **Arbitrage Strategy Scanning**: Scan for SFR and Synthetic arbitrage opportunities.
+- **Global Opportunity Selection**: Intelligently ranks and selects the best opportunities across all symbols and expirations using advanced scoring algorithms.
 - **Interactive Brokers Integration**: Connects to IBKR for real-time market data.
 - **Extensible Architecture**: Easily add new strategies by inheriting from the `ArbitrageClass`.
 - **Command-Line Interface**: Simple and intuitive CLI for running scans.
@@ -99,6 +100,112 @@ python alchimest.py syn --symbols SPY QQQ IWM --quantity 5 --log synthetic_trade
 python alchimest.py syn --fin "https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o2000" --max-loss 40
 ```
 
+### 🎯 Global Opportunity Selection (New Feature)
+
+The synthetic scanner now features an advanced **Global Opportunity Selection** system that intelligently ranks and selects the best opportunities across all symbols and expirations. Instead of per-symbol optimization, it performs portfolio-level optimization.
+
+#### Pre-defined Scoring Strategies
+
+Choose from four pre-configured strategies optimized for different trading styles:
+
+```bash
+# Conservative Strategy - Prioritizes safety and liquidity
+python alchimest.py syn --symbols AAPL MSFT GOOGL --scoring-strategy conservative
+
+# Aggressive Strategy - Maximizes risk-reward ratio
+python alchimest.py syn --symbols TSLA NVDA AMD --scoring-strategy aggressive
+
+# Balanced Strategy (Default) - Well-rounded approach
+python alchimest.py syn --symbols SPY QQQ IWM --scoring-strategy balanced
+
+# Liquidity-Focused Strategy - Emphasizes execution certainty
+python alchimest.py syn --symbols AAPL META AMZN --scoring-strategy liquidity-focused
+```
+
+**Strategy Characteristics:**
+- **Conservative**: 30% risk-reward, 35% liquidity, 20% time decay, 15% market quality
+- **Aggressive**: 50% risk-reward, 15% liquidity, 20% time decay, 15% market quality
+- **Balanced**: 40% risk-reward, 25% liquidity, 20% time decay, 15% market quality
+- **Liquidity-Focused**: 25% risk-reward, 40% liquidity, 20% time decay, 15% market quality
+
+#### Custom Scoring Configuration (Advanced)
+
+For experienced traders who want fine-grained control over the scoring algorithm:
+
+```bash
+# Custom weights (must sum to 1.0)
+python alchimest.py syn --symbols SPY QQQ \
+  --risk-reward-weight 0.35 \
+  --liquidity-weight 0.30 \
+  --time-decay-weight 0.20 \
+  --market-quality-weight 0.15
+
+# Custom thresholds for opportunity filtering
+python alchimest.py syn --symbols AAPL MSFT \
+  --min-risk-reward 2.5 \
+  --min-liquidity 0.6 \
+  --max-bid-ask-spread 15.0 \
+  --optimal-days-expiry 30
+```
+
+#### How Global Selection Works
+
+1. **Collection Phase**: Scans all symbols and collects potential opportunities
+2. **Scoring Phase**: Each opportunity is scored on four dimensions:
+   - **Risk-Reward Ratio**: Max profit vs max loss potential
+   - **Liquidity Score**: Based on volume and bid-ask spreads
+   - **Time Decay Score**: Optimal around 30 days to expiration
+   - **Market Quality**: Spread tightness and credit quality
+3. **Selection Phase**: Ranks all opportunities by composite score
+4. **Execution Phase**: Executes only the highest-scoring opportunity
+
+#### Examples with Global Selection
+
+```bash
+# Scan multiple symbols with conservative approach
+python alchimest.py syn --symbols SPY QQQ IWM TLT GLD \
+  --scoring-strategy conservative \
+  --cost-limit 150 \
+  --quantity 2
+
+# Aggressive strategy with custom thresholds
+python alchimest.py syn --symbols TSLA NVDA AMD MRVL \
+  --scoring-strategy aggressive \
+  --min-risk-reward 3.0 \
+  --cost-limit 200
+
+# Custom balanced approach for liquid options
+python alchimest.py syn --symbols AAPL MSFT GOOGL META AMZN \
+  --risk-reward-weight 0.30 \
+  --liquidity-weight 0.40 \
+  --time-decay-weight 0.20 \
+  --market-quality-weight 0.10 \
+  --min-liquidity 0.7
+
+# Debug mode to see scoring details
+python alchimest.py syn --debug --symbols SPY QQQ \
+  --scoring-strategy balanced \
+  --log scoring_details.log
+```
+
+#### Understanding the Scoring Output
+
+When running with `--debug`, you'll see detailed scoring information:
+
+```
+[INFO] Global Opportunity Added: AAPL
+  Composite Score: 0.7845
+  Risk-Reward: 2.50 (weight: 40%)
+  Liquidity: 0.8532 (weight: 25%)
+  Time Decay: 0.9667 (weight: 20%)
+  Market Quality: 0.9125 (weight: 15%)
+
+[INFO] Best Global Opportunity Selected: MSFT
+  Symbol: MSFT, Expiry: 20240315
+  Max Profit: $85.00, Max Loss: $-25.00
+  Composite Score: 0.8234
+```
+
 ### Performance Metrics and Monitoring
 The application includes comprehensive metrics collection to track scanning performance:
 
@@ -167,12 +274,35 @@ python alchimest.py sfr --fin "https://finviz.com/screener.ashx?v=111&f=sec_tech
 
 ## 🧪 Testing
 
-To run the test suite, use `pytest`:
+### Main Test Suite (pytest-compatible)
+
+Run the comprehensive integration and unit tests:
 ```bash
 python -m pytest tests/ -v
 ```
 
-For more detailed testing information, see [TESTING_GUIDE.md](TESTING_GUIDE.md).
+### Performance Testing & Analysis
+
+Run standalone performance scripts (located in `scripts/`):
+```bash
+# Comprehensive performance testing
+python scripts/performance/test_global_selection_performance.py
+python scripts/performance/test_syn_executor_performance.py
+
+# Performance comparison between strategies
+python scripts/performance/performance_comparison_test.py
+
+# Performance dashboard generation
+python scripts/performance/performance_dashboard.py
+
+# CPU and memory profiling
+python scripts/profiling/profile_global_selection.py
+
+# Offline testing (when markets are closed)
+python scripts/test_arbitrage_offline.py
+```
+
+For more detailed testing information, see [TESTING_GUIDE.md](TESTING_GUIDE.md) and [scripts/README.md](scripts/README.md).
 
 ## 🔧 Troubleshooting
 

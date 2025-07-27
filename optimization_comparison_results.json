@@ -1,0 +1,108 @@
+{
+  "old_approach": {
+    "approach": "Per-Symbol Optimization",
+    "opportunities_evaluated": 7,
+    "profitable_symbols": 2,
+    "total_time": 6.818771362304688e-05,
+    "best_opportunity": {
+      "symbol": "TSLA",
+      "max_profit": 10.0,
+      "min_profit": 8.199999999999989,
+      "opportunity": {
+        "call_strike": 246,
+        "put_strike": 245,
+        "call_bid": 12.0,
+        "call_ask": 12.5,
+        "put_bid": 2.5,
+        "put_ask": 3.0,
+        "call_volume": 50,
+        "put_volume": 40,
+        "days_to_expiry": 40,
+        "stock_price": 245.8
+      }
+    },
+    "all_opportunities": {
+      "MSFT": {
+        "symbol": "MSFT",
+        "max_profit": 6.0,
+        "min_profit": 4.25,
+        "opportunity": {
+          "call_strike": 416,
+          "put_strike": 415,
+          "call_bid": 8.5,
+          "call_ask": 8.55,
+          "put_bid": 3.45,
+          "put_ask": 3.5,
+          "call_volume": 800,
+          "put_volume": 750,
+          "days_to_expiry": 30,
+          "stock_price": 415.75
+        }
+      },
+      "TSLA": {
+        "symbol": "TSLA",
+        "max_profit": 10.0,
+        "min_profit": 8.199999999999989,
+        "opportunity": {
+          "call_strike": 246,
+          "put_strike": 245,
+          "call_bid": 12.0,
+          "call_ask": 12.5,
+          "put_bid": 2.5,
+          "put_ask": 3.0,
+          "call_volume": 50,
+          "put_volume": 40,
+          "days_to_expiry": 40,
+          "stock_price": 245.8
+        }
+      }
+    }
+  },
+  "new_approach": {
+    "approach": "Global Opportunity Selection",
+    "opportunities_evaluated": 7,
+    "opportunities_collected": 2,
+    "total_time": 0.0014922618865966797,
+    "best_opportunity": {
+      "symbol": "META",
+      "max_profit": 2.0,
+      "min_profit": -0.25,
+      "composite_score": 3.6973836320040387,
+      "scoring_components": {
+        "risk_reward_ratio": 8.0,
+        "liquidity_score": 0.848,
+        "time_decay_score": 0.9,
+        "market_quality_score": 0.702557546693589
+      }
+    },
+    "statistics": {
+      "total_opportunities": 2,
+      "unique_symbols": 2,
+      "score_stats": {
+        "min": 1.742961666666667,
+        "max": 3.6973836320040387,
+        "avg": 2.720172649335353
+      },
+      "risk_reward_stats": {
+        "min": 3.0,
+        "max": 8.0,
+        "avg": 5.5
+      },
+      "liquidity_stats": {
+        "min": 0.848,
+        "max": 0.9996,
+        "avg": 0.9238
+      },
+      "opportunities_per_symbol": {
+        "GOOGL": 1,
+        "META": 1
+      }
+    }
+  },
+  "comparison": {
+    "performance_gain": 0.0014240741729736328,
+    "old_selected_symbol": "TSLA",
+    "new_selected_symbol": "META",
+    "quality_improvement": "New approach uses comprehensive scoring vs simple profit comparison"
+  }
+}

@@ -1,6 +1,9 @@
 import asyncio
+import threading
 import time
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import logging
@@ -34,6 +37,511 @@ class ExpiryOption:
     put_strike: float
 
 
+@dataclass
+class OpportunityScore:
+    """Data class to hold scoring components for an opportunity"""
+
+    risk_reward_ratio: float
+    liquidity_score: float
+    time_decay_score: float
+    market_quality_score: float
+    composite_score: float
+
+
+@dataclass
+class GlobalOpportunity:
+    """Data class to hold a complete arbitrage opportunity with scoring"""
+
+    symbol: str
+    conversion_contract: Contract
+    order: Order
+    trade_details: Dict
+    score: OpportunityScore
+    timestamp: float
+
+    # Additional metadata for decision making
+    call_volume: float
+    put_volume: float
+    call_bid_ask_spread: float
+    put_bid_ask_spread: float
+    days_to_expiry: int
+
+
+@dataclass
+class ScoringConfig:
+    """Configuration for opportunity scoring weights"""
+
+    risk_reward_weight: float = 0.40
+    liquidity_weight: float = 0.25
+    time_decay_weight: float = 0.20
+    market_quality_weight: float = 0.15
+
+    # Thresholds
+    min_liquidity_score: float = 0.3
+    min_risk_reward_ratio: float = 1.5
+    max_bid_ask_spread: float = 20.0
+    optimal_days_to_expiry: int = 30
+
+    @classmethod
+    def create_conservative(cls) -> "ScoringConfig":
+        """Create conservative scoring configuration - prioritizes safety"""
+        return cls(
+            risk_reward_weight=0.30,
+            liquidity_weight=0.35,
+            time_decay_weight=0.25,
+            market_quality_weight=0.10,
+            min_liquidity_score=0.5,
+            min_risk_reward_ratio=2.0,
+            max_bid_ask_spread=15.0,
+            optimal_days_to_expiry=25,
+        )
+
+    @classmethod
+    def create_aggressive(cls) -> "ScoringConfig":
+        """Create aggressive scoring configuration - prioritizes returns"""
+        return cls(
+            risk_reward_weight=0.50,
+            liquidity_weight=0.15,
+            time_decay_weight=0.20,
+            market_quality_weight=0.15,
+            min_liquidity_score=0.2,
+            min_risk_reward_ratio=1.2,
+            max_bid_ask_spread=25.0,
+            optimal_days_to_expiry=35,
+        )
+
+    @classmethod
+    def create_balanced(cls) -> "ScoringConfig":
+        """Create balanced scoring configuration - default settings"""
+        return cls()
+
+    @classmethod
+    def create_liquidity_focused(cls) -> "ScoringConfig":
+        """Create liquidity-focused configuration - prioritizes execution certainty"""
+        return cls(
+            risk_reward_weight=0.25,
+            liquidity_weight=0.40,
+            time_decay_weight=0.15,
+            market_quality_weight=0.20,
+            min_liquidity_score=0.6,
+            min_risk_reward_ratio=1.3,
+            max_bid_ask_spread=12.0,
+            optimal_days_to_expiry=28,
+        )
+
+    def validate(self) -> bool:
+        """Validate that weights sum to approximately 1.0"""
+        total_weight = (
+            self.risk_reward_weight
+            + self.liquidity_weight
+            + self.time_decay_weight
+            + self.market_quality_weight
+        )
+        return abs(total_weight - 1.0) < 0.01
+
+    def normalize_weights(self):
+        """Normalize weights to sum to 1.0"""
+        total = (
+            self.risk_reward_weight
+            + self.liquidity_weight
+            + self.time_decay_weight
+            + self.market_quality_weight
+        )
+        if total > 0:
+            self.risk_reward_weight /= total
+            self.liquidity_weight /= total
+            self.time_decay_weight /= total
+            self.market_quality_weight /= total
+
+
+class GlobalOpportunityManager:
+    """
+    Manages collection, scoring, and selection of arbitrage opportunities across all symbols.
+    Thread-safe implementation to handle concurrent opportunity submissions.
+    """
+
+    def __init__(self, scoring_config: ScoringConfig = None):
+        self.scoring_config = scoring_config or ScoringConfig()
+        self.opportunities: List[GlobalOpportunity] = []
+        self.lock = threading.Lock()
+        self.logger = get_logger()
+
+        # Validate and normalize configuration
+        if not self.scoring_config.validate():
+            self.logger.warning(
+                "Scoring configuration weights don't sum to 1.0, normalizing..."
+            )
+            self.scoring_config.normalize_weights()
+
+        # Log the configuration being used
+        self.logger.info(f"Initialized GlobalOpportunityManager with scoring config:")
+        self.logger.info(f"  Risk-Reward: {self.scoring_config.risk_reward_weight:.2f}")
+        self.logger.info(f"  Liquidity: {self.scoring_config.liquidity_weight:.2f}")
+        self.logger.info(f"  Time Decay: {self.scoring_config.time_decay_weight:.2f}")
+        self.logger.info(
+            f"  Market Quality: {self.scoring_config.market_quality_weight:.2f}"
+        )
+        self.logger.info(
+            f"  Min Risk-Reward Ratio: {self.scoring_config.min_risk_reward_ratio:.2f}"
+        )
+        self.logger.info(
+            f"  Min Liquidity Score: {self.scoring_config.min_liquidity_score:.2f}"
+        )
+
+    def clear_opportunities(self):
+        """Clear all collected opportunities for new cycle"""
+        with self.lock:
+            self.opportunities.clear()
+            self.logger.debug("Cleared all opportunities for new cycle")
+
+    def calculate_liquidity_score(
+        self,
+        call_volume: float,
+        put_volume: float,
+        call_spread: float,
+        put_spread: float,
+    ) -> float:
+        """Calculate liquidity score based on volume and bid-ask spreads"""
+        # Volume component (normalized to 0-1 scale)
+        volume_score = min(1.0, (call_volume + put_volume) / 1000.0)
+
+        # Spread component (inverted - tighter spreads are better)
+        avg_spread = (call_spread + put_spread) / 2.0
+        spread_score = max(
+            0.0, 1.0 - (avg_spread / self.scoring_config.max_bid_ask_spread)
+        )
+
+        # Combined liquidity score
+        return (volume_score * 0.6) + (spread_score * 0.4)
+
+    def calculate_time_decay_score(self, days_to_expiry: int) -> float:
+        """Calculate time decay score - favor optimal time to expiration"""
+        optimal_days = self.scoring_config.optimal_days_to_expiry
+
+        if days_to_expiry <= 0:
+            return 0.0
+
+        # Score peaks at optimal days, decreases as we move away
+        if days_to_expiry <= optimal_days:
+            return days_to_expiry / optimal_days
+        else:
+            # Penalty for being too far out
+            excess_days = days_to_expiry - optimal_days
+            return max(0.1, 1.0 - (excess_days / (optimal_days * 2)))
+
+    def calculate_market_quality_score(
+        self, trade_details: Dict, call_spread: float, put_spread: float
+    ) -> float:
+        """Calculate market quality score based on spreads and pricing"""
+        net_credit = trade_details.get("net_credit", 0)
+        stock_price = trade_details.get("stock_price", 1)
+
+        # Spread quality (tighter is better)
+        avg_spread = (call_spread + put_spread) / 2.0
+        spread_quality = max(
+            0.0, 1.0 - (avg_spread / self.scoring_config.max_bid_ask_spread)
+        )
+
+        # Credit quality (positive credit is better)
+        credit_quality = min(1.0, max(0.0, net_credit / (stock_price * 0.1)))
+
+        return (spread_quality * 0.7) + (credit_quality * 0.3)
+
+    def calculate_opportunity_score(
+        self,
+        trade_details: Dict,
+        call_volume: float,
+        put_volume: float,
+        call_spread: float,
+        put_spread: float,
+        days_to_expiry: int,
+    ) -> OpportunityScore:
+        """Calculate comprehensive opportunity score"""
+
+        # Risk-reward ratio
+        max_profit = trade_details.get("max_profit", 0)
+        min_profit = trade_details.get("min_profit", -1)
+        risk_reward_ratio = max_profit / abs(min_profit) if min_profit != 0 else 0
+
+        # Component scores
+        liquidity_score = self.calculate_liquidity_score(
+            call_volume, put_volume, call_spread, put_spread
+        )
+        time_decay_score = self.calculate_time_decay_score(days_to_expiry)
+        market_quality_score = self.calculate_market_quality_score(
+            trade_details, call_spread, put_spread
+        )
+
+        # Weighted composite score
+        composite_score = (
+            risk_reward_ratio * self.scoring_config.risk_reward_weight
+            + liquidity_score * self.scoring_config.liquidity_weight
+            + time_decay_score * self.scoring_config.time_decay_weight
+            + market_quality_score * self.scoring_config.market_quality_weight
+        )
+
+        return OpportunityScore(
+            risk_reward_ratio=risk_reward_ratio,
+            liquidity_score=liquidity_score,
+            time_decay_score=time_decay_score,
+            market_quality_score=market_quality_score,
+            composite_score=composite_score,
+        )
+
+    def add_opportunity(
+        self,
+        symbol: str,
+        conversion_contract: Contract,
+        order: Order,
+        trade_details: Dict,
+        call_ticker: Ticker,
+        put_ticker: Ticker,
+    ) -> bool:
+        """Add an opportunity to the global collection"""
+
+        # Calculate additional metadata
+        call_volume = getattr(call_ticker, "volume", 0)
+        put_volume = getattr(put_ticker, "volume", 0)
+        call_spread = (
+            abs(call_ticker.ask - call_ticker.bid)
+            if (not np.isnan(call_ticker.ask) and not np.isnan(call_ticker.bid))
+            else float("inf")
+        )
+        put_spread = (
+            abs(put_ticker.ask - put_ticker.bid)
+            if (not np.isnan(put_ticker.ask) and not np.isnan(put_ticker.bid))
+            else float("inf")
+        )
+
+        # Calculate days to expiry
+        try:
+            expiry_str = trade_details.get("expiry", "")
+            expiry_date = datetime.strptime(expiry_str, "%Y%m%d")
+            days_to_expiry = (expiry_date - datetime.now()).days
+        except (ValueError, TypeError):
+            days_to_expiry = 0
+
+        # Calculate opportunity score
+        score = self.calculate_opportunity_score(
+            trade_details,
+            call_volume,
+            put_volume,
+            call_spread,
+            put_spread,
+            days_to_expiry,
+        )
+
+        # Apply minimum thresholds
+        if (
+            score.liquidity_score < self.scoring_config.min_liquidity_score
+            or score.risk_reward_ratio < self.scoring_config.min_risk_reward_ratio
+        ):
+            self.logger.debug(
+                f"[{symbol}] Opportunity rejected due to minimum thresholds: "
+                f"liquidity={score.liquidity_score:.3f}, risk_reward={score.risk_reward_ratio:.3f}"
+            )
+            return False
+
+        # Create global opportunity
+        global_opportunity = GlobalOpportunity(
+            symbol=symbol,
+            conversion_contract=conversion_contract,
+            order=order,
+            trade_details=trade_details,
+            score=score,
+            timestamp=time.time(),
+            call_volume=call_volume,
+            put_volume=put_volume,
+            call_bid_ask_spread=call_spread,
+            put_bid_ask_spread=put_spread,
+            days_to_expiry=days_to_expiry,
+        )
+
+        # Thread-safe addition
+        with self.lock:
+            self.opportunities.append(global_opportunity)
+            self.logger.info(
+                f"[{symbol}] Added opportunity with composite score: {score.composite_score:.3f} "
+                f"(risk_reward: {score.risk_reward_ratio:.3f}, liquidity: {score.liquidity_score:.3f}, "
+                f"time: {score.time_decay_score:.3f}, quality: {score.market_quality_score:.3f})"
+            )
+
+        return True
+
+    def get_best_opportunity(self) -> Optional[GlobalOpportunity]:
+        """Get the best opportunity based on composite score"""
+        with self.lock:
+            if not self.opportunities:
+                return None
+
+            # Sort by composite score (highest first)
+            sorted_opportunities = sorted(
+                self.opportunities,
+                key=lambda opp: opp.score.composite_score,
+                reverse=True,
+            )
+
+            best = sorted_opportunities[0]
+
+            # Log comparison details
+            self.logger.info(
+                f"Global opportunity selection from {len(self.opportunities)} opportunities:"
+            )
+            for i, opp in enumerate(sorted_opportunities[:5]):  # Show top 5
+                self.logger.info(
+                    f"  #{i+1}: [{opp.symbol}] Score: {opp.score.composite_score:.3f} "
+                    f"Expiry: {opp.trade_details.get('expiry', 'N/A')} "
+                    f"Profit: ${opp.trade_details.get('max_profit', 0):.2f}"
+                )
+
+            return best
+
+    def get_opportunity_count(self) -> int:
+        """Get current number of collected opportunities"""
+        with self.lock:
+            return len(self.opportunities)
+
+    def log_cycle_summary(self):
+        """Log detailed summary of all opportunities in current cycle"""
+        with self.lock:
+            if not self.opportunities:
+                self.logger.info("No opportunities collected in this cycle")
+                return
+
+            # Group opportunities by symbol
+            by_symbol = defaultdict(list)
+            for opp in self.opportunities:
+                by_symbol[opp.symbol].append(opp)
+
+            self.logger.info(
+                f"=== CYCLE SUMMARY: {len(self.opportunities)} opportunities across {len(by_symbol)} symbols ==="
+            )
+
+            # Summary statistics
+            scores = [opp.score.composite_score for opp in self.opportunities]
+            risk_rewards = [opp.score.risk_reward_ratio for opp in self.opportunities]
+
+            self.logger.info(
+                f"Score Range: {min(scores):.3f} - {max(scores):.3f} (avg: {sum(scores)/len(scores):.3f})"
+            )
+            self.logger.info(
+                f"Risk-Reward Range: {min(risk_rewards):.3f} - {max(risk_rewards):.3f} (avg: {sum(risk_rewards)/len(risk_rewards):.3f})"
+            )
+
+            # Per-symbol breakdown
+            for symbol, symbol_opps in by_symbol.items():
+                best_symbol_opp = max(
+                    symbol_opps, key=lambda x: x.score.composite_score
+                )
+                self.logger.info(
+                    f"  [{symbol}]: {len(symbol_opps)} opportunities, "
+                    f"best score: {best_symbol_opp.score.composite_score:.3f} "
+                    f"(expiry: {best_symbol_opp.trade_details.get('expiry', 'N/A')})"
+                )
+
+    def get_statistics(self) -> Dict:
+        """Get statistical summary of current opportunities"""
+        with self.lock:
+            if not self.opportunities:
+                return {}
+
+            scores = [opp.score.composite_score for opp in self.opportunities]
+            risk_rewards = [opp.score.risk_reward_ratio for opp in self.opportunities]
+            liquidity_scores = [opp.score.liquidity_score for opp in self.opportunities]
+
+            by_symbol = defaultdict(int)
+            for opp in self.opportunities:
+                by_symbol[opp.symbol] += 1
+
+            return {
+                "total_opportunities": len(self.opportunities),
+                "unique_symbols": len(by_symbol),
+                "score_stats": {
+                    "min": min(scores),
+                    "max": max(scores),
+                    "avg": sum(scores) / len(scores),
+                },
+                "risk_reward_stats": {
+                    "min": min(risk_rewards),
+                    "max": max(risk_rewards),
+                    "avg": sum(risk_rewards) / len(risk_rewards),
+                },
+                "liquidity_stats": {
+                    "min": min(liquidity_scores),
+                    "max": max(liquidity_scores),
+                    "avg": sum(liquidity_scores) / len(liquidity_scores),
+                },
+                "opportunities_per_symbol": dict(by_symbol),
+            }
+
+
+def test_global_opportunity_scoring():
+    """Test function to verify global opportunity scoring works correctly"""
+    logger = get_logger()
+
+    # Test different scoring configurations
+    configs = {
+        "conservative": ScoringConfig.create_conservative(),
+        "aggressive": ScoringConfig.create_aggressive(),
+        "balanced": ScoringConfig.create_balanced(),
+        "liquidity_focused": ScoringConfig.create_liquidity_focused(),
+    }
+
+    logger.info("=== Testing Global Opportunity Scoring Configurations ===")
+
+    for config_name, config in configs.items():
+        logger.info(f"\n{config_name.upper()} Configuration:")
+        logger.info(f"  Risk-Reward Weight: {config.risk_reward_weight:.2f}")
+        logger.info(f"  Liquidity Weight: {config.liquidity_weight:.2f}")
+        logger.info(f"  Time Decay Weight: {config.time_decay_weight:.2f}")
+        logger.info(f"  Market Quality Weight: {config.market_quality_weight:.2f}")
+        logger.info(f"  Min Risk-Reward Ratio: {config.min_risk_reward_ratio:.2f}")
+        logger.info(f"  Weights Valid: {config.validate()}")
+
+        # Test scoring calculation
+        manager = GlobalOpportunityManager(config)
+
+        # Create test trade details
+        test_trade_details = {
+            "max_profit": 100.0,
+            "min_profit": -50.0,
+            "net_credit": 25.0,
+            "stock_price": 150.0,
+            "expiry": "20240315",
+        }
+
+        # Test scoring with sample data
+        score = manager.calculate_opportunity_score(
+            test_trade_details,
+            call_volume=500,
+            put_volume=300,
+            call_spread=2.5,
+            put_spread=1.8,
+            days_to_expiry=25,
+        )
+
+        logger.info(f"  Sample Score - Composite: {score.composite_score:.3f}")
+        logger.info(f"    Risk-Reward: {score.risk_reward_ratio:.3f}")
+        logger.info(f"    Liquidity: {score.liquidity_score:.3f}")
+        logger.info(f"    Time Decay: {score.time_decay_score:.3f}")
+        logger.info(f"    Market Quality: {score.market_quality_score:.3f}")
+
+    logger.info("\n=== Global Opportunity Scoring Test Complete ===")
+
+
+def create_syn_with_config(config_type: str = "balanced", **kwargs):
+    """Helper function to create Syn instance with specific configuration"""
+    config_map = {
+        "conservative": ScoringConfig.create_conservative(),
+        "aggressive": ScoringConfig.create_aggressive(),
+        "balanced": ScoringConfig.create_balanced(),
+        "liquidity_focused": ScoringConfig.create_liquidity_focused(),
+    }
+
+    scoring_config = config_map.get(config_type, ScoringConfig.create_balanced())
+    return Syn(scoring_config=scoring_config, **kwargs)
+
+
 class SynExecutor(BaseExecutor):
     """
     Synthetic not free risk (Syn) Executor class that handles the execution of Syn Synthetic option strategies.
@@ -41,7 +549,7 @@ class SynExecutor(BaseExecutor):
     This class is responsible for:
     1. Monitoring market data for stock and options across multiple expiries
     2. Calculating potential arbitrage opportunities
-    3. Executing trades when conditions are met
+    3. Reporting opportunities to the global manager (no longer executes directly)
     4. Logging trade details and results
 
     Attributes:
@@ -59,6 +567,7 @@ class SynExecutor(BaseExecutor):
         all_contracts (List[Contract]): All contracts (stock + all options)
         is_active (bool): Whether the executor is currently active
         data_timeout (float): Maximum time to wait for all contract data (seconds)
+        global_manager (GlobalOpportunityManager): Manager for global opportunity collection
     """
 
     def __init__(
@@ -73,6 +582,7 @@ class SynExecutor(BaseExecutor):
         max_profit_threshold: float,
         profit_ratio_threshold: float,
         start_time: float,
+        global_manager: GlobalOpportunityManager,
         quantity: int = 1,
         data_timeout: float = 30.0,  # 30 seconds timeout for data collection
     ) -> None:
@@ -90,6 +600,7 @@ class SynExecutor(BaseExecutor):
             max_profit_threshold: Maximum profit for execution
             profit_ratio_threshold: Maximum profit to loss ratio for execution
             start_time: Start time of the execution
+            global_manager: Manager for global opportunity collection
             quantity: Quantity of contracts to execute
             data_timeout: Maximum time to wait for all contract data (seconds)
         """
@@ -119,6 +630,7 @@ class SynExecutor(BaseExecutor):
         self.is_active = True
         self.data_timeout = data_timeout
         self.data_collection_start = time.time()
+        self.global_manager = global_manager
 
     def quick_viability_check(
         self, expiry_option: ExpiryOption, stock_price: float
@@ -285,80 +797,63 @@ class SynExecutor(BaseExecutor):
                 logger.info(f"time to execution: {execution_time} sec")
                 metrics_collector.record_execution_time(execution_time)
 
-                # Process all expiries
-                best_opportunity = None
-                best_risk_reward_ratio = float(
-                    "-inf"
-                )  # Start with negative infinity for synthetic
-
-                # TODO: Implement additional selection criteria
-                # - Time decay: favor closer expirations
-                # - Liquidity: favor higher volume options
-                # - Market spread: favor tighter bid-ask spreads
-                # Example: score = risk_reward_ratio * 0.6 + volume_score * 0.2 + spread_score * 0.2
+                # Process all expiries and report opportunities to global manager
+                opportunities_found = 0
 
                 for expiry_option in self.expiry_options:
                     opportunity = self.calc_price_and_build_order_for_expiry(
                         expiry_option
                     )
                     if opportunity:
-                        trade_details = opportunity[
-                            3
-                        ]  # opportunity[3] is trade_details dict
-                        max_profit = trade_details["max_profit"]
-                        min_profit = trade_details["min_profit"]
+                        conversion_contract, order, _, trade_details = opportunity
 
-                        # Calculate risk-reward ratio: max_profit / abs(min_profit)
-                        if min_profit != 0:
-                            risk_reward_ratio = max_profit / abs(min_profit)
-                            logger.info(
-                                f"[{self.symbol}] Expiry: {trade_details['expiry']} - "
-                                f"Risk-Reward Ratio: {risk_reward_ratio:.3f} "
-                                f"(max_profit: {max_profit:.2f}, min_profit: {min_profit:.2f})"
+                        # Get ticker data for scoring
+                        call_ticker = contract_ticker.get(
+                            expiry_option.call_contract.conId
+                        )
+                        put_ticker = contract_ticker.get(
+                            expiry_option.put_contract.conId
+                        )
+
+                        if call_ticker and put_ticker:
+                            # Report opportunity to global manager instead of executing
+                            success = self.global_manager.add_opportunity(
+                                symbol=self.symbol,
+                                conversion_contract=conversion_contract,
+                                order=order,
+                                trade_details=trade_details,
+                                call_ticker=call_ticker,
+                                put_ticker=put_ticker,
                             )
 
-                            if risk_reward_ratio > best_risk_reward_ratio:
-                                best_opportunity = opportunity
-                                best_risk_reward_ratio = risk_reward_ratio
+                            if success:
+                                opportunities_found += 1
+                                max_profit = trade_details["max_profit"]
+                                min_profit = trade_details["min_profit"]
+                                risk_reward_ratio = (
+                                    max_profit / abs(min_profit)
+                                    if min_profit != 0
+                                    else 0
+                                )
 
-                # Execute the best opportunity
-                if best_opportunity:
-                    conversion_contract, order, _, trade_details = best_opportunity
-                    if conversion_contract and order:
-                        # Log trade details right before placing the order
-                        logger.info(
-                            f"[{self.symbol}] About to place trade for expiry: {trade_details['expiry']}"
-                        )
-                        self._log_trade_details(
-                            trade_details["call_strike"],
-                            trade_details["call_price"],
-                            trade_details["put_strike"],
-                            trade_details["put_price"],
-                            trade_details["stock_price"],
-                            trade_details["net_credit"],
-                            trade_details["min_profit"],
-                            trade_details["max_profit"],
-                            trade_details["min_roi"],
-                        )
+                                logger.info(
+                                    f"[{self.symbol}] Reported opportunity for expiry: {trade_details['expiry']} - "
+                                    f"Risk-Reward Ratio: {risk_reward_ratio:.3f} "
+                                    f"(max_profit: {max_profit:.2f}, min_profit: {min_profit:.2f})"
+                                )
 
-                        self.is_active = (
-                            False  # Deactivate to prevent multiple executions
-                        )
-                        trade = await self.order_manager.place_order(
-                            conversion_contract, order
-                        )
-                        logger.info(f"Executed best opportunity for {self.symbol}")
-                        metrics_collector.record_opportunity_found()
-                        # Finish scan successfully when an order is placed
-                        metrics_collector.finish_scan(success=True)
-                        # Deactivate immediately after order placement
-                        self.deactivate()
-
+                # Log summary for this symbol
+                if opportunities_found > 0:
+                    logger.info(
+                        f"[{self.symbol}] Reported {opportunities_found} opportunities to global manager"
+                    )
+                    metrics_collector.record_opportunity_found()
                 else:
-                    logger.info(f"No suitable opportunities found for {self.symbol}")
-                    self.is_active = False
-                    # Finish scan successfully even if no opportunities found
-                    metrics_collector.finish_scan(success=True)
+                    logger.info(f"[{self.symbol}] No suitable opportunities found")
+
+                # Always finish scan successfully - global manager will handle execution
+                self.is_active = False
+                metrics_collector.finish_scan(success=True)
 
             else:
                 # Still waiting for data from some contracts
@@ -620,17 +1115,23 @@ class SynExecutor(BaseExecutor):
 class Syn(ArbitrageClass):
     """
     Synthetic arbitrage strategy class.
-    This class uses a more efficient approach by creating one executor per symbol
-    that handles all expiries, eliminating the need to constantly add/remove event handlers.
+    This class uses a global opportunity manager to find the best opportunities
+    across all symbols and expiries, then executes only the globally optimal trade.
     """
 
-    def __init__(self, log_file: str = None, debug: bool = False):
+    def __init__(
+        self,
+        log_file: str = None,
+        debug: bool = False,
+        scoring_config: ScoringConfig = None,
+    ):
         global _debug_mode
         _debug_mode = debug
         # Reconfigure logging with debug mode
         configure_logging(level=logging.INFO, debug=debug)
         super().__init__(log_file=log_file)
         self.active_executors: Dict[str, SynExecutor] = {}
+        self.global_manager = GlobalOpportunityManager(scoring_config)
 
     async def scan(
         self,
@@ -668,8 +1169,15 @@ class Syn(ArbitrageClass):
 
         while True:
             # Start cycle tracking
-            cycle_metrics = metrics_collector.start_cycle(len(symbol_list))
+            metrics_collector.start_cycle(len(symbol_list))
 
+            # Clear opportunities from previous cycle
+            self.global_manager.clear_opportunities()
+            logger.info(
+                f"Starting new cycle: scanning {len(symbol_list)} symbols for global best opportunity"
+            )
+
+            # Phase 1: Collect opportunities from all symbols
             tasks = []
             for symbol in symbol_list:
                 # Use throttled scanning instead of fixed delays
@@ -679,7 +1187,82 @@ class Syn(ArbitrageClass):
                 tasks.append(task)
                 # Minimal delay for API rate limiting
                 await asyncio.sleep(0.1)
-            _ = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Wait for all symbols to complete their opportunity scanning
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Log any exceptions from scanning
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error scanning {symbol_list[i]}: {str(result)}")
+
+            # Phase 2: Global opportunity selection and execution
+            opportunity_count = self.global_manager.get_opportunity_count()
+            logger.info(
+                f"Collected {opportunity_count} opportunities across all symbols"
+            )
+
+            # Log detailed cycle summary
+            self.global_manager.log_cycle_summary()
+
+            if opportunity_count > 0:
+                # Get the globally best opportunity
+                best_opportunity = self.global_manager.get_best_opportunity()
+
+                if best_opportunity:
+                    # Execute the globally best opportunity
+                    logger.info(
+                        f"Executing globally best opportunity: [{best_opportunity.symbol}] "
+                        f"with composite score: {best_opportunity.score.composite_score:.3f}"
+                    )
+
+                    # Log detailed trade information
+                    trade_details = best_opportunity.trade_details
+                    logger.info(
+                        f"[{best_opportunity.symbol}] Global best trade details:"
+                    )
+                    logger.info(f"  Expiry: {trade_details.get('expiry', 'N/A')}")
+                    logger.info(
+                        f"  Max Profit: ${trade_details.get('max_profit', 0):.2f}"
+                    )
+                    logger.info(
+                        f"  Min Profit: ${trade_details.get('min_profit', 0):.2f}"
+                    )
+                    logger.info(
+                        f"  Risk-Reward Ratio: {best_opportunity.score.risk_reward_ratio:.3f}"
+                    )
+                    logger.info(
+                        f"  Liquidity Score: {best_opportunity.score.liquidity_score:.3f}"
+                    )
+                    logger.info(
+                        f"  Time Decay Score: {best_opportunity.score.time_decay_score:.3f}"
+                    )
+                    logger.info(
+                        f"  Market Quality: {best_opportunity.score.market_quality_score:.3f}"
+                    )
+
+                    try:
+                        # Execute the trade
+                        await self.order_manager.place_order(
+                            best_opportunity.conversion_contract, best_opportunity.order
+                        )
+                        logger.info(
+                            f"Successfully executed global best opportunity for {best_opportunity.symbol}"
+                        )
+
+                        # Log the trade details
+                        self._log_trade_details_from_opportunity(best_opportunity)
+
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to execute global best opportunity: {str(e)}"
+                        )
+                else:
+                    logger.warning(
+                        "No best opportunity returned despite having opportunities"
+                    )
+            else:
+                logger.info("No opportunities found across all symbols in this cycle")
 
             # Clean up inactive executors
             self.cleanup_inactive_executors()
@@ -695,16 +1278,32 @@ class Syn(ArbitrageClass):
             contract_ticker = {}
             await asyncio.sleep(5)  # Reduced wait time for faster cycles
 
+    def _log_trade_details_from_opportunity(self, opportunity: GlobalOpportunity):
+        """Helper method to log trade details from a global opportunity"""
+        trade_details = opportunity.trade_details
+        logger.info(f"[{opportunity.symbol}] Trade Details:")
+        logger.info(
+            f"  Call Strike: {trade_details.get('call_strike', 'N/A')}, "
+            f"Call Price: ${trade_details.get('call_price', 0):.2f}"
+        )
+        logger.info(
+            f"  Put Strike: {trade_details.get('put_strike', 'N/A')}, "
+            f"Put Price: ${trade_details.get('put_price', 0):.2f}"
+        )
+        logger.info(f"  Stock Price: ${trade_details.get('stock_price', 0):.2f}")
+        logger.info(f"  Net Credit: ${trade_details.get('net_credit', 0):.2f}")
+        logger.info(f"  Min ROI: {trade_details.get('min_roi', 0):.2f}%")
+
     async def scan_syn(self, symbol: str, quantity: int) -> None:
         """
         Scan for Syn opportunities for a specific symbol.
         Creates a single executor per symbol that handles all expiries.
         """
         # Start metrics collection for this scan
-        scan_metrics = metrics_collector.start_scan(symbol, "Synthetic")
+        metrics_collector.start_scan(symbol, "Synthetic")
 
         try:
-            exchange, option_type, stock = self._get_stock_contract(symbol)
+            _, _, stock = self._get_stock_contract(symbol)
 
             # Request market data for the stock
             market_data = await self._get_market_data_async(stock)
@@ -850,6 +1449,7 @@ class Syn(ArbitrageClass):
                 max_profit_threshold=self.max_profit_threshold,
                 profit_ratio_threshold=self.profit_ratio_threshold,
                 start_time=time.time(),
+                global_manager=self.global_manager,
                 quantity=quantity,
                 data_timeout=45.0,  # Give more time for data collection
             )

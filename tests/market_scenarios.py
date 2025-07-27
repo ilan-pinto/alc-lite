@@ -602,6 +602,352 @@ class MarketScenarios:
         return scenarios
 
     @staticmethod
+    def global_selection_test_scenarios() -> Dict[str, Dict[int, MockTicker]]:
+        """
+        Multi-symbol scenarios specifically designed for global opportunity selection testing.
+
+        Creates 5 symbols with varying quality opportunities to test:
+        - Cross-symbol ranking and selection
+        - Scoring algorithm effectiveness
+        - Global optimization vs per-symbol optimization
+
+        Returns:
+            Dict mapping symbols to their market data with known ranking characteristics
+        """
+        scenarios = {}
+        expiry_date = datetime.now() + timedelta(days=30)
+        expiry = expiry_date.strftime("%Y%m%d")
+
+        # RANK 1: GOOGL - Excellent all-around opportunity
+        # High risk-reward (3.0), excellent liquidity (800+600 volume), tight spreads (0.05+0.03)
+        googl_price = 150.00
+        googl_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "GOOGL", googl_price, volume=8000000
+        )
+        googl_tickers[stock.contract.conId] = stock
+
+        # Profitable synthetic: Sell Call 150, Buy Put 149
+        # Net credit = 6.50 - 3.50 = 3.00
+        # Spread = 150.00 - 149 = 1.00
+        # Min profit = 3.00 - 1.00 = 2.00 (max loss)
+        # Max profit = (150 - 149) + 2.00 = 3.00
+        # Risk-reward = 3.00 / 2.00 = 1.5 (but we'll adjust for better score)
+
+        call_150 = MarketDataGenerator.generate_option_data(
+            "GOOGL", expiry, 150.0, "C", googl_price, 30
+        )
+        call_150.bid = 7.50  # High bid for selling
+        call_150.ask = 7.55
+        call_150.volume = 800
+        googl_tickers[call_150.contract.conId] = call_150
+
+        put_149 = MarketDataGenerator.generate_option_data(
+            "GOOGL", expiry, 149.0, "P", googl_price, 30
+        )
+        put_149.bid = 4.45
+        put_149.ask = 4.50  # Low ask for buying
+        put_149.volume = 600
+        googl_tickers[put_149.contract.conId] = put_149
+
+        # Net credit = 7.50 - 4.50 = 3.00
+        # Min profit = 3.00 - 1.00 = 2.00, Max profit = 1.00 + 2.00 = 3.00
+        # Risk-reward = 3.00 / 2.00 = 1.5 (will be enhanced by excellent liquidity score)
+
+        scenarios["GOOGL"] = googl_tickers
+
+        # RANK 2: TSLA - High risk-reward but moderate liquidity
+        # Very high risk-reward (4.0), moderate liquidity (300+200), moderate spreads (0.15+0.10)
+        tsla_price = 200.00
+        tsla_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "TSLA", tsla_price, volume=12000000
+        )
+        tsla_tickers[stock.contract.conId] = stock
+
+        # High risk-reward synthetic: Sell Call 200, Buy Put 198
+        # Wider spread but better risk-reward ratio
+        call_200 = MarketDataGenerator.generate_option_data(
+            "TSLA", expiry, 200.0, "C", tsla_price, 28
+        )
+        call_200.bid = 9.50
+        call_200.ask = 9.65  # Wider spread
+        call_200.volume = 300
+        tsla_tickers[call_200.contract.conId] = call_200
+
+        put_198 = MarketDataGenerator.generate_option_data(
+            "TSLA", expiry, 198.0, "P", tsla_price, 28
+        )
+        put_198.bid = 4.85
+        put_198.ask = 4.95
+        put_198.volume = 200
+        tsla_tickers[put_198.contract.conId] = put_198
+
+        # Net credit = 9.50 - 4.95 = 4.55
+        # Spread = 200.00 - 198 = 2.00
+        # Min profit = 4.55 - 2.00 = 2.55, Max profit = 2.00 + 2.55 = 4.55
+        # Risk-reward = 4.55 / 2.55 = 1.78 (good, but liquidity score will be lower)
+
+        scenarios["TSLA"] = tsla_tickers
+
+        # RANK 3: AAPL - Good balance but sub-optimal timing
+        # Decent risk-reward (2.0), good liquidity (500+400), good spreads (0.08+0.06), sub-optimal time (32 days)
+        aapl_price = 175.00
+        aapl_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "AAPL", aapl_price, volume=10000000
+        )
+        aapl_tickers[stock.contract.conId] = stock
+
+        call_175 = MarketDataGenerator.generate_option_data(
+            "AAPL", expiry, 175.0, "C", aapl_price, 32
+        )
+        call_175.bid = 8.00
+        call_175.ask = 8.08
+        call_175.volume = 500
+        aapl_tickers[call_175.contract.conId] = call_175
+
+        put_174 = MarketDataGenerator.generate_option_data(
+            "AAPL", expiry, 174.0, "P", aapl_price, 32
+        )
+        put_174.bid = 5.94
+        put_174.ask = 6.00
+        put_174.volume = 400
+        aapl_tickers[put_174.contract.conId] = put_174
+
+        # Net credit = 8.00 - 6.00 = 2.00
+        # Spread = 175.00 - 174 = 1.00
+        # Min profit = 2.00 - 1.00 = 1.00, Max profit = 1.00 + 1.00 = 2.00
+        # Risk-reward = 2.00 / 1.00 = 2.0 (decent but time decay score will be lower)
+
+        scenarios["AAPL"] = aapl_tickers
+
+        # RANK 4: MSFT - Lower profits but optimal timing
+        # Lower risk-reward (2.0), good liquidity (600+450), tight spreads (0.06+0.04), optimal time (25 days)
+        msft_price = 400.00
+        msft_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "MSFT", msft_price, volume=6000000
+        )
+        msft_tickers[stock.contract.conId] = stock
+
+        call_400 = MarketDataGenerator.generate_option_data(
+            "MSFT", expiry, 400.0, "C", msft_price, 25
+        )
+        call_400.bid = 6.50
+        call_400.ask = 6.56
+        call_400.volume = 600
+        msft_tickers[call_400.contract.conId] = call_400
+
+        put_399 = MarketDataGenerator.generate_option_data(
+            "MSFT", expiry, 399.0, "P", msft_price, 25
+        )
+        put_399.bid = 4.46
+        put_399.ask = 4.50
+        put_399.volume = 450
+        msft_tickers[put_399.contract.conId] = put_399
+
+        # Net credit = 6.50 - 4.50 = 2.00
+        # Spread = 400.00 - 399 = 1.00
+        # Min profit = 2.00 - 1.00 = 1.00, Max profit = 1.00 + 1.00 = 2.00
+        # Risk-reward = 2.00 / 1.00 = 2.0 (same as AAPL but better timing, tighter spreads)
+
+        scenarios["MSFT"] = msft_tickers
+
+        # RANK 5: AMZN - Poor risk-reward but excellent liquidity
+        # Poor risk-reward (1.0), excellent liquidity (700+500), tight spreads (0.04+0.03), sub-optimal time (35 days)
+        amzn_price = 125.00
+        amzn_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "AMZN", amzn_price, volume=8500000
+        )
+        amzn_tickers[stock.contract.conId] = stock
+
+        call_125 = MarketDataGenerator.generate_option_data(
+            "AMZN", expiry, 125.0, "C", amzn_price, 35
+        )
+        call_125.bid = 5.50
+        call_125.ask = 5.54
+        call_125.volume = 700
+        amzn_tickers[call_125.contract.conId] = call_125
+
+        put_124 = MarketDataGenerator.generate_option_data(
+            "AMZN", expiry, 124.0, "P", amzn_price, 35
+        )
+        put_124.bid = 4.47
+        put_124.ask = 4.50
+        put_124.volume = 500
+        amzn_tickers[put_124.contract.conId] = put_124
+
+        # Net credit = 5.50 - 4.50 = 1.00
+        # Spread = 125.00 - 124 = 1.00
+        # Min profit = 1.00 - 1.00 = 0.00, Max profit = 1.00 + 0.00 = 1.00
+        # Risk-reward = 1.00 / 1.00 = 1.0 (poor, but excellent liquidity)
+
+        scenarios["AMZN"] = amzn_tickers
+
+        return scenarios
+
+    @staticmethod
+    def global_selection_scoring_strategy_scenarios() -> (
+        Dict[str, Dict[int, MockTicker]]
+    ):
+        """
+        Scenarios designed to test different scoring strategy preferences.
+
+        Creates opportunities that will rank differently under different scoring strategies:
+        - AGGRESSIVE: High risk-reward, low liquidity
+        - LIQUIDITY_FOCUSED: Moderate risk-reward, high liquidity
+        - BALANCED: Good all-around
+        - CONSERVATIVE: Lower risk-reward, excellent spreads
+
+        Returns:
+            Dict mapping symbols to market data optimized for strategy testing
+        """
+        scenarios = {}
+        expiry_date = datetime.now() + timedelta(days=30)
+        expiry = expiry_date.strftime("%Y%m%d")
+
+        # AGGRESSIVE strategy favorite: High risk-reward, poor liquidity
+        aggressive_price = 300.00
+        aggressive_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "AGGRESSIVE", aggressive_price, volume=2000000
+        )
+        aggressive_tickers[stock.contract.conId] = stock
+
+        # High risk-reward but poor liquidity and wide spreads
+        call_300 = MarketDataGenerator.generate_option_data(
+            "AGGRESSIVE", expiry, 300.0, "C", aggressive_price, 35
+        )
+        call_300.bid = 12.00
+        call_300.ask = 12.40  # 0.40 spread
+        call_300.volume = 50  # Very low volume
+        aggressive_tickers[call_300.contract.conId] = call_300
+
+        put_298 = MarketDataGenerator.generate_option_data(
+            "AGGRESSIVE", expiry, 298.0, "P", aggressive_price, 35
+        )
+        put_298.bid = 2.70
+        put_298.ask = 3.00  # 0.30 spread
+        put_298.volume = 30  # Very low volume
+        aggressive_tickers[put_298.contract.conId] = put_298
+
+        # Net credit = 12.00 - 3.00 = 9.00
+        # Spread = 300.00 - 298 = 2.00
+        # Min profit = 9.00 - 2.00 = 7.00, Max profit = 2.00 + 7.00 = 9.00
+        # Risk-reward = 9.00 / 7.00 = 1.29 (will be boosted by aggressive weighting)
+
+        scenarios["AGGRESSIVE"] = aggressive_tickers
+
+        # LIQUIDITY_FOCUSED strategy favorite: Moderate risk-reward, excellent liquidity
+        liquidity_price = 250.00
+        liquidity_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "LIQUIDITY", liquidity_price, volume=15000000
+        )
+        liquidity_tickers[stock.contract.conId] = stock
+
+        # Moderate returns but excellent liquidity and tight spreads
+        call_250 = MarketDataGenerator.generate_option_data(
+            "LIQUIDITY", expiry, 250.0, "C", liquidity_price, 25
+        )
+        call_250.bid = 5.98
+        call_250.ask = 6.00  # 0.02 spread (very tight)
+        call_250.volume = 1000  # High volume
+        liquidity_tickers[call_250.contract.conId] = call_250
+
+        put_249 = MarketDataGenerator.generate_option_data(
+            "LIQUIDITY", expiry, 249.0, "P", liquidity_price, 25
+        )
+        put_249.bid = 4.49
+        put_249.ask = 4.50  # 0.01 spread (very tight)
+        put_249.volume = 800  # High volume
+        liquidity_tickers[put_249.contract.conId] = put_249
+
+        # Net credit = 5.98 - 4.50 = 1.48
+        # Spread = 250.00 - 249 = 1.00
+        # Min profit = 1.48 - 1.00 = 0.48, Max profit = 1.00 + 0.48 = 1.48
+        # Risk-reward = 1.48 / 0.48 = 3.08 (moderate but will score high on liquidity)
+
+        scenarios["LIQUIDITY"] = liquidity_tickers
+
+        # BALANCED strategy favorite: Good all-around metrics
+        balanced_price = 100.00
+        balanced_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "BALANCED", balanced_price, volume=5000000
+        )
+        balanced_tickers[stock.contract.conId] = stock
+
+        # Well-balanced opportunity with optimal timing
+        call_100 = MarketDataGenerator.generate_option_data(
+            "BALANCED", expiry, 100.0, "C", balanced_price, 30
+        )
+        call_100.bid = 4.90
+        call_100.ask = 5.00  # 0.10 spread
+        call_100.volume = 400  # Good volume
+        balanced_tickers[call_100.contract.conId] = call_100
+
+        put_99 = MarketDataGenerator.generate_option_data(
+            "BALANCED", expiry, 99.0, "P", balanced_price, 30
+        )
+        put_99.bid = 2.92
+        put_99.ask = 3.00  # 0.08 spread
+        put_99.volume = 300  # Good volume
+        balanced_tickers[put_99.contract.conId] = put_99
+
+        # Net credit = 4.90 - 3.00 = 1.90
+        # Spread = 100.00 - 99 = 1.00
+        # Min profit = 1.90 - 1.00 = 0.90, Max profit = 1.00 + 0.90 = 1.90
+        # Risk-reward = 1.90 / 0.90 = 2.11 (balanced across all metrics)
+
+        scenarios["BALANCED"] = balanced_tickers
+
+        # CONSERVATIVE strategy favorite: Lower risk-reward, excellent spreads
+        conservative_price = 500.00
+        conservative_tickers = {}
+
+        stock = MarketDataGenerator.generate_stock_data(
+            "CONSERVATIVE", conservative_price, volume=4000000
+        )
+        conservative_tickers[stock.contract.conId] = stock
+
+        # Lower profit but very safe with tight spreads
+        call_500 = MarketDataGenerator.generate_option_data(
+            "CONSERVATIVE", expiry, 500.0, "C", conservative_price, 20
+        )
+        call_500.bid = 3.49
+        call_500.ask = 3.50  # 0.01 spread (extremely tight)
+        call_500.volume = 600  # Good volume
+        conservative_tickers[call_500.contract.conId] = call_500
+
+        put_499 = MarketDataGenerator.generate_option_data(
+            "CONSERVATIVE", expiry, 499.0, "P", conservative_price, 20
+        )
+        put_499.bid = 2.49
+        put_499.ask = 2.50  # 0.01 spread (extremely tight)
+        put_499.volume = 500  # Good volume
+        conservative_tickers[put_499.contract.conId] = put_499
+
+        # Net credit = 3.49 - 2.50 = 0.99
+        # Spread = 500.00 - 499 = 1.00
+        # Min profit = 0.99 - 1.00 = -0.01, Max profit = 1.00 + (-0.01) = 0.99
+        # Risk-reward = 0.99 / 0.01 = 99.0 (very conservative, excellent spreads)
+
+        scenarios["CONSERVATIVE"] = conservative_tickers
+
+        return scenarios
+
+    @staticmethod
     def get_scenario(scenario_name: str, **kwargs) -> Dict[int, MockTicker]:
         """Get a specific market scenario by name"""
         scenarios = {

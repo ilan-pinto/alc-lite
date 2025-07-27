@@ -6,13 +6,15 @@ sequential vs optimized batch market data requests.
 """
 
 import asyncio
+
+# Add project to path
+import os
 import sys
 import time
 from typing import List
 from unittest.mock import MagicMock, Mock
 
-# Add project to path
-sys.path.append("/Users/ilpinto/dev/AlchimistProject/alc-lite")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from ib_async import Contract, Option, Stock
 

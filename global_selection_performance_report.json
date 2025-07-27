@@ -1,0 +1,121 @@
+{
+  "test_date": "2025-07-27T12:01:43.815349",
+  "results": [
+    {
+      "test_name": "large_scale_10x5",
+      "opportunities_count": 40,
+      "symbols_count": 10,
+      "collection_time_ms": 3.476858139038086,
+      "selection_time_ms": 0.007867813110351562,
+      "memory_used_mb": 0.109375,
+      "scoring_strategy": "balanced",
+      "avg_score_time_ms": 0.0030219554901123047,
+      "statistics_time_ms": 0.015974044799804688,
+      "ops_per_second": 11504.63964890626
+    },
+    {
+      "test_name": "large_scale_20x10",
+      "opportunities_count": 160,
+      "symbols_count": 20,
+      "collection_time_ms": 8.746862411499023,
+      "selection_time_ms": 0.042510032653808594,
+      "memory_used_mb": 0.1875,
+      "scoring_strategy": "balanced",
+      "avg_score_time_ms": 0.005946159362792969,
+      "statistics_time_ms": 0.12683868408203125,
+      "ops_per_second": 18292.2735573909
+    },
+    {
+      "test_name": "large_scale_50x10",
+      "opportunities_count": 400,
+      "symbols_count": 50,
+      "collection_time_ms": 7.231950759887695,
+      "selection_time_ms": 0.04048347473144531,
+      "memory_used_mb": 0.40625,
+      "scoring_strategy": "balanced",
+      "avg_score_time_ms": 0.00148773193359375,
+      "statistics_time_ms": 0.11420249938964844,
+      "ops_per_second": 55310.111100121976
+    },
+    {
+      "test_name": "large_scale_100x10",
+      "opportunities_count": 800,
+      "symbols_count": 100,
+      "collection_time_ms": 14.614105224609375,
+      "selection_time_ms": 0.08730888366699219,
+      "memory_used_mb": 0.703125,
+      "scoring_strategy": "balanced",
+      "avg_score_time_ms": 0.0014734268188476562,
+      "statistics_time_ms": 0.24390220642089844,
+      "ops_per_second": 54741.634038110155
+    },
+    {
+      "test_name": "concurrent_access_20_threads",
+      "opportunities_count": 320,
+      "symbols_count": 320,
+      "collection_time_ms": 8.603811264038086,
+      "selection_time_ms": 0,
+      "memory_used_mb": 0,
+      "scoring_strategy": "balanced",
+      "avg_score_time_ms": 0,
+      "statistics_time_ms": 0,
+      "ops_per_second": 37192.819574916175
+    },
+    {
+      "test_name": "large_scale_30x5",
+      "opportunities_count": 90,
+      "symbols_count": 30,
+      "collection_time_ms": 2.4871826171875,
+      "selection_time_ms": 0.009179115295410156,
+      "memory_used_mb": 0.0,
+      "scoring_strategy": "conservative",
+      "avg_score_time_ms": 0.0013780593872070312,
+      "statistics_time_ms": 0.0324249267578125,
+      "ops_per_second": 36185.52147239264
+    },
+    {
+      "test_name": "large_scale_30x5",
+      "opportunities_count": 120,
+      "symbols_count": 30,
+      "collection_time_ms": 1.985788345336914,
+      "selection_time_ms": 0.012731552124023438,
+      "memory_used_mb": 0.0,
+      "scoring_strategy": "aggressive",
+      "avg_score_time_ms": 0.001316070556640625,
+      "statistics_time_ms": 0.04100799560546875,
+      "ops_per_second": 60429.400888462
+    },
+    {
+      "test_name": "large_scale_30x5",
+      "opportunities_count": 120,
+      "symbols_count": 30,
+      "collection_time_ms": 2.0017623901367188,
+      "selection_time_ms": 0.012707710266113281,
+      "memory_used_mb": 0.0,
+      "scoring_strategy": "balanced",
+      "avg_score_time_ms": 0.0013113021850585938,
+      "statistics_time_ms": 0.0362396240234375,
+      "ops_per_second": 59947.174845164365
+    },
+    {
+      "test_name": "large_scale_30x5",
+      "opportunities_count": 120,
+      "symbols_count": 30,
+      "collection_time_ms": 1.9888877868652344,
+      "selection_time_ms": 0.012302398681640625,
+      "memory_used_mb": 0.0,
+      "scoring_strategy": "liquidity-focused",
+      "avg_score_time_ms": 0.0014972686767578125,
+      "statistics_time_ms": 0.03695487976074219,
+      "ops_per_second": 60335.22896187964
+    }
+  ],
+  "summary": {
+    "total_tests": 9,
+    "avg_collection_time_ms": 5.681912104288737,
+    "avg_selection_time_ms": 0.028136372566223145,
+    "avg_memory_usage_mb": 0.3515625,
+    "max_opportunities_tested": 800,
+    "performance_grade": "A+ (Excellent)"
+  }
+}
