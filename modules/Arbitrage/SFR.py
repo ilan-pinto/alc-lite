@@ -711,40 +711,64 @@ class SFR(ArbitrageClass):
         # Set up single event handler for all symbols
         self.ib.pendingTickersEvent += self.master_executor
 
-        while True:
-            # Start cycle tracking
-            _ = metrics_collector.start_cycle(len(symbol_list))
+        try:
+            while not self.order_filled:
+                # Start cycle tracking
+                _ = metrics_collector.start_cycle(len(symbol_list))
 
-            tasks = []
-            for symbol in symbol_list:
-                # Use throttled scanning instead of fixed delays
-                task = asyncio.create_task(
-                    self.scan_with_throttle(
-                        symbol,
-                        self.scan_sfr,
-                        self.quantity,
-                        self.profit_target,
-                        self.cost_limit,
+                tasks = []
+                for symbol in symbol_list:
+                    # Check if order was filled during symbol processing
+                    if self.order_filled:
+                        break
+
+                    # Use throttled scanning instead of fixed delays
+                    task = asyncio.create_task(
+                        self.scan_with_throttle(
+                            symbol,
+                            self.scan_sfr,
+                            self.quantity,
+                            self.profit_target,
+                            self.cost_limit,
+                        )
                     )
-                )
-                tasks.append(task)
-                # Minimal delay for API rate limiting
-                await asyncio.sleep(0.1)
-            _ = await asyncio.gather(*tasks, return_exceptions=True)
+                    tasks.append(task)
+                    # Minimal delay for API rate limiting
+                    await asyncio.sleep(0.1)
 
-            # Clean up inactive executors
-            self.cleanup_inactive_executors()
+                # Wait for all tasks to complete
+                _ = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Finish cycle tracking
-            metrics_collector.finish_cycle()
+                # Clean up inactive executors
+                self.cleanup_inactive_executors()
 
-            # Print metrics summary periodically
+                # Finish cycle tracking
+                metrics_collector.finish_cycle()
+
+                # Print metrics summary periodically
+                if len(metrics_collector.scan_metrics) > 0:
+                    metrics_collector.print_summary()
+
+                # Check if order was filled before continuing
+                if self.order_filled:
+                    logger.info("Order filled - exiting scan loop")
+                    break
+
+                # Reset for next iteration
+                contract_ticker = {}
+                await asyncio.sleep(5)  # Reduced wait time for faster cycles
+        except Exception as e:
+            logger.error(f"Error in scan loop: {str(e)}")
+        finally:
+            # Always print final metrics summary before exiting
+            logger.info("Scanning complete - printing final metrics summary")
             if len(metrics_collector.scan_metrics) > 0:
                 metrics_collector.print_summary()
 
-            # Reset for next iteration
-            contract_ticker = {}
-            await asyncio.sleep(5)  # Reduced wait time for faster cycles
+            # Deactivate all executors and disconnect from IB
+            logger.info("Deactivating all executors and disconnecting from IB")
+            self.deactivate_all_executors()
+            self.ib.disconnect()
 
     def find_stock_position_in_strikes(
         self, stock_price: float, valid_strikes: List[float]

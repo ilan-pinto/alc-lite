@@ -1167,116 +1167,141 @@ class Syn(ArbitrageClass):
         # Set up single event handler for all symbols
         self.ib.pendingTickersEvent += self.master_executor
 
-        while True:
-            # Start cycle tracking
-            metrics_collector.start_cycle(len(symbol_list))
+        try:
+            while not self.order_filled:
+                # Start cycle tracking
+                metrics_collector.start_cycle(len(symbol_list))
 
-            # Clear opportunities from previous cycle
-            self.global_manager.clear_opportunities()
-            logger.info(
-                f"Starting new cycle: scanning {len(symbol_list)} symbols for global best opportunity"
-            )
-
-            # Phase 1: Collect opportunities from all symbols
-            tasks = []
-            for symbol in symbol_list:
-                # Use throttled scanning instead of fixed delays
-                task = asyncio.create_task(
-                    self.scan_with_throttle(symbol, self.scan_syn, self.quantity)
+                # Clear opportunities from previous cycle
+                self.global_manager.clear_opportunities()
+                logger.info(
+                    f"Starting new cycle: scanning {len(symbol_list)} symbols for global best opportunity"
                 )
-                tasks.append(task)
-                # Minimal delay for API rate limiting
-                await asyncio.sleep(0.1)
 
-            # Wait for all symbols to complete their opportunity scanning
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Phase 1: Collect opportunities from all symbols
+                tasks = []
+                for symbol in symbol_list:
+                    # Check if order was filled during symbol processing
+                    if self.order_filled:
+                        break
 
-            # Log any exceptions from scanning
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.error(f"Error scanning {symbol_list[i]}: {str(result)}")
+                    # Use throttled scanning instead of fixed delays
+                    task = asyncio.create_task(
+                        self.scan_with_throttle(symbol, self.scan_syn, self.quantity)
+                    )
+                    tasks.append(task)
+                    # Minimal delay for API rate limiting
+                    await asyncio.sleep(0.1)
 
-            # Phase 2: Global opportunity selection and execution
-            opportunity_count = self.global_manager.get_opportunity_count()
-            logger.info(
-                f"Collected {opportunity_count} opportunities across all symbols"
-            )
+                # Wait for all symbols to complete their opportunity scanning
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Log detailed cycle summary
-            self.global_manager.log_cycle_summary()
+                # Log any exceptions from scanning
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Error scanning {symbol_list[i]}: {str(result)}")
 
-            if opportunity_count > 0:
-                # Get the globally best opportunity
-                best_opportunity = self.global_manager.get_best_opportunity()
+                # Phase 2: Global opportunity selection and execution
+                opportunity_count = self.global_manager.get_opportunity_count()
+                logger.info(
+                    f"Collected {opportunity_count} opportunities across all symbols"
+                )
 
-                if best_opportunity:
-                    # Execute the globally best opportunity
-                    logger.info(
-                        f"Executing globally best opportunity: [{best_opportunity.symbol}] "
-                        f"with composite score: {best_opportunity.score.composite_score:.3f}"
-                    )
+                # Log detailed cycle summary
+                self.global_manager.log_cycle_summary()
 
-                    # Log detailed trade information
-                    trade_details = best_opportunity.trade_details
-                    logger.info(
-                        f"[{best_opportunity.symbol}] Global best trade details:"
-                    )
-                    logger.info(f"  Expiry: {trade_details.get('expiry', 'N/A')}")
-                    logger.info(
-                        f"  Max Profit: ${trade_details.get('max_profit', 0):.2f}"
-                    )
-                    logger.info(
-                        f"  Min Profit: ${trade_details.get('min_profit', 0):.2f}"
-                    )
-                    logger.info(
-                        f"  Risk-Reward Ratio: {best_opportunity.score.risk_reward_ratio:.3f}"
-                    )
-                    logger.info(
-                        f"  Liquidity Score: {best_opportunity.score.liquidity_score:.3f}"
-                    )
-                    logger.info(
-                        f"  Time Decay Score: {best_opportunity.score.time_decay_score:.3f}"
-                    )
-                    logger.info(
-                        f"  Market Quality: {best_opportunity.score.market_quality_score:.3f}"
-                    )
+                if opportunity_count > 0:
+                    # Get the globally best opportunity
+                    best_opportunity = self.global_manager.get_best_opportunity()
 
-                    try:
-                        # Execute the trade
-                        await self.order_manager.place_order(
-                            best_opportunity.conversion_contract, best_opportunity.order
+                    if best_opportunity:
+                        # Execute the globally best opportunity
+                        logger.info(
+                            f"Executing globally best opportunity: [{best_opportunity.symbol}] "
+                            f"with composite score: {best_opportunity.score.composite_score:.3f}"
+                        )
+
+                        # Log detailed trade information
+                        trade_details = best_opportunity.trade_details
+                        logger.info(
+                            f"[{best_opportunity.symbol}] Global best trade details:"
+                        )
+                        logger.info(f"  Expiry: {trade_details.get('expiry', 'N/A')}")
+                        logger.info(
+                            f"  Max Profit: ${trade_details.get('max_profit', 0):.2f}"
                         )
                         logger.info(
-                            f"Successfully executed global best opportunity for {best_opportunity.symbol}"
+                            f"  Min Profit: ${trade_details.get('min_profit', 0):.2f}"
+                        )
+                        logger.info(
+                            f"  Risk-Reward Ratio: {best_opportunity.score.risk_reward_ratio:.3f}"
+                        )
+                        logger.info(
+                            f"  Liquidity Score: {best_opportunity.score.liquidity_score:.3f}"
+                        )
+                        logger.info(
+                            f"  Time Decay Score: {best_opportunity.score.time_decay_score:.3f}"
+                        )
+                        logger.info(
+                            f"  Market Quality: {best_opportunity.score.market_quality_score:.3f}"
                         )
 
-                        # Log the trade details
-                        self._log_trade_details_from_opportunity(best_opportunity)
+                        try:
+                            # Execute the trade
+                            await self.order_manager.place_order(
+                                best_opportunity.conversion_contract,
+                                best_opportunity.order,
+                            )
+                            logger.info(
+                                f"Successfully executed global best opportunity for {best_opportunity.symbol}"
+                            )
 
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to execute global best opportunity: {str(e)}"
+                            # Log the trade details
+                            self._log_trade_details_from_opportunity(best_opportunity)
+
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to execute global best opportunity: {str(e)}"
+                            )
+                    else:
+                        logger.warning(
+                            "No best opportunity returned despite having opportunities"
                         )
                 else:
-                    logger.warning(
-                        "No best opportunity returned despite having opportunities"
+                    logger.info(
+                        "No opportunities found across all symbols in this cycle"
                     )
-            else:
-                logger.info("No opportunities found across all symbols in this cycle")
 
-            # Clean up inactive executors
-            self.cleanup_inactive_executors()
+                # Clean up inactive executors
+                self.cleanup_inactive_executors()
 
-            # Finish cycle tracking
-            metrics_collector.finish_cycle()
+                # Finish cycle tracking
+                metrics_collector.finish_cycle()
 
-            # Print metrics summary periodically
+                # Print metrics summary periodically
+                if len(metrics_collector.scan_metrics) > 0:
+                    metrics_collector.print_summary()
+
+                # Check if order was filled before continuing
+                if self.order_filled:
+                    logger.info("Order filled - exiting scan loop")
+                    break
+
+                # Reset for next iteration
+                contract_ticker = {}
+                await asyncio.sleep(5)  # Reduced wait time for faster cycles
+        except Exception as e:
+            logger.error(f"Error in scan loop: {str(e)}")
+        finally:
+            # Always print final metrics summary before exiting
+            logger.info("Scanning complete - printing final metrics summary")
             if len(metrics_collector.scan_metrics) > 0:
                 metrics_collector.print_summary()
 
-            # Reset for next iteration
-            contract_ticker = {}
-            await asyncio.sleep(5)  # Reduced wait time for faster cycles
+            # Deactivate all executors and disconnect from IB
+            logger.info("Deactivating all executors and disconnecting from IB")
+            self.deactivate_all_executors()
+            self.ib.disconnect()
 
     def _log_trade_details_from_opportunity(self, opportunity: GlobalOpportunity):
         """Helper method to log trade details from a global opportunity"""

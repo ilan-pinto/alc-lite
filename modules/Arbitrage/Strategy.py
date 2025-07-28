@@ -413,6 +413,7 @@ class ArbitrageClass:
         self.order_manager = OrderManagerClass(ib=self.ib)
         self.semaphore = asyncio.Semaphore(1000)
         self.active_executors: Dict[str, BaseExecutor] = {}
+        self.order_filled = False  # Flag to track when an order is filled
 
         # Persistent state management for optimization
         self.symbol_chain_cache = {}  # Cache options chains per symbol
@@ -455,9 +456,9 @@ class ArbitrageClass:
         """Called whenever any order gets filled (partially or fully)."""
         if log_filled_order(trade):
             metrics_collector.record_order_filled()
-            # Deactivate all executors to stop metric collection
-            self.deactivate_all_executors()
-            self.ib.disconnect()
+            # Set flag to signal that an order was filled
+            self.order_filled = True
+            logger.info("Order filled - will exit after printing metrics")
 
     async def master_executor(self, event: Event) -> None:
         """
