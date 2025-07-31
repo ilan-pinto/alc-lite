@@ -116,6 +116,11 @@ def main() -> None:
         help="Enable warning logging (shows INFO and WARNING levels)",
     )
     parser_sfr.add_argument(
+        "--error",
+        action="store_true",
+        help="Enable error logging (shows INFO, WARNING, ERROR and CRITICAL levels)",
+    )
+    parser_sfr.add_argument(
         "-f",
         "--fin",
         type=str,
@@ -244,6 +249,11 @@ def main() -> None:
         help="Enable warning logging (shows INFO and WARNING levels)",
     )
     parser_calendar.add_argument(
+        "--error",
+        action="store_true",
+        help="Enable error logging (shows INFO, WARNING, ERROR and CRITICAL levels)",
+    )
+    parser_calendar.add_argument(
         "-f",
         "--fin",
         type=str,
@@ -331,6 +341,11 @@ def main() -> None:
         "--warning",
         action="store_true",
         help="Enable warning logging (shows INFO and WARNING levels)",
+    )
+    parser_syn.add_argument(
+        "--error",
+        action="store_true",
+        help="Enable error logging (shows INFO, WARNING, ERROR and CRITICAL levels)",
     )
     parser_syn.add_argument(
         "-f",
@@ -431,6 +446,8 @@ def main() -> None:
             quantity=args.quantity,
             log_file=log_file,
             debug=args.debug,
+            warning=args.warning,
+            error=args.error,
             finviz_url=args.fin,
         )
 
@@ -445,6 +462,8 @@ def main() -> None:
             quantity=args.quantity,
             log_file=log_file,
             debug=args.debug,
+            warning=args.warning,
+            error=args.error,
             finviz_url=args.fin,
             # Global Opportunity Selection Configuration
             scoring_strategy=args.scoring_strategy,
@@ -474,6 +493,8 @@ def main() -> None:
             quantity=args.quantity,
             log_file=log_file,
             debug=args.debug,
+            warning=args.warning,
+            error=args.error,
             finviz_url=args.fin,
         )
 

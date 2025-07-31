@@ -13,6 +13,31 @@ from modules.finviz_scraper import scrape_tickers_from_finviz
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging_level(debug=False, warning=False, error=False):
+    """Configure logging level based on CLI flags"""
+    from modules.Arbitrage.common import configure_logging
+
+    if debug:
+        # Debug mode: show all levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        configure_logging(debug=True, use_info_filter=False)
+        logger.debug("Debug logging enabled - all levels shown")
+    elif error:
+        # Error mode: show INFO, WARNING, ERROR, CRITICAL (but not DEBUG)
+        configure_logging(
+            level=logging.INFO, use_info_filter=False, debug=False, warning=False
+        )
+        logger.info(
+            "Error logging enabled - INFO, WARNING, ERROR and CRITICAL messages will be shown"
+        )
+    elif warning:
+        # Warning mode: show INFO and WARNING (original behavior)
+        configure_logging(warning=True)
+        logger.info("Warning logging enabled - INFO and WARNING messages will be shown")
+    else:
+        # Default: INFO only (original behavior)
+        configure_logging(use_info_filter=True)
+
+
 class OptionScan:
 
     def _create_scoring_config(
@@ -134,8 +159,13 @@ class OptionScan:
         volume_limit=200,
         log_file=None,
         debug=False,
+        warning=False,
+        error=False,
         finviz_url=None,
     ):
+        # Configure logging level based on CLI flags
+        _configure_logging_level(debug=debug, warning=warning, error=error)
+
         sfr = SFR(log_file=log_file, debug=debug)
         default_list = [
             "SPY",
@@ -201,6 +231,8 @@ class OptionScan:
         quantity=1,
         log_file=None,
         debug=False,
+        warning=False,
+        error=False,
         finviz_url=None,
         # Global Opportunity Selection Configuration
         scoring_strategy="balanced",
@@ -225,6 +257,9 @@ class OptionScan:
             max_bid_ask_spread=max_bid_ask_spread,
             optimal_days_expiry=optimal_days_expiry,
         )
+
+        # Configure logging level based on CLI flags
+        _configure_logging_level(debug=debug, warning=warning, error=error)
 
         # Create Syn instance with scoring configuration
         syn = Syn(log_file=log_file, debug=debug, scoring_config=scoring_config)
@@ -296,6 +331,8 @@ class OptionScan:
         quantity=1,
         log_file=None,
         debug=False,
+        warning=False,
+        error=False,
         finviz_url=None,
     ):
         """
@@ -331,6 +368,9 @@ class OptionScan:
                 quantity=2
             )
         """
+        # Configure logging level based on CLI flags
+        _configure_logging_level(debug=debug, warning=warning, error=error)
+
         # Create CalendarSpread instance with configuration
         from modules.Arbitrage.CalendarSpread import CalendarSpreadConfig
 
@@ -402,8 +442,8 @@ class OptionScan:
 
         try:
             asyncio.run(
-                calendar.process(
-                    symbols=symbol_list,
+                calendar.scan(
+                    symbol_list=symbol_list,
                     cost_limit=cost_limit,
                     profit_target=profit_target,
                     quantity=quantity,

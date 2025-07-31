@@ -528,10 +528,11 @@ class ArbitrageClass:
             )
 
     async def qualify_contracts_cached(self, *contracts) -> List[Contract]:
-        """Qualify contracts using cache when possible"""
+        """Qualify contracts using intelligent batching and cache"""
         cached_contracts = []
         uncached_contracts = []
 
+        # Check cache first
         for contract in contracts:
             if hasattr(contract, "strike") and hasattr(contract, "right"):
                 # Option contract - check cache
@@ -546,18 +547,19 @@ class ArbitrageClass:
                 else:
                     uncached_contracts.append(contract)
             else:
-                # Stock/Index contract - always qualify
+                # Stock/Index contract - always qualify (typically not cached)
                 uncached_contracts.append(contract)
 
-        # Qualify uncached contracts
+        # Qualify uncached contracts using intelligent batching
         qualified_contracts = cached_contracts.copy()
         if uncached_contracts:
-            logger.debug(f"Qualifying {len(uncached_contracts)} uncached contracts")
-            new_qualified = await self.ib.qualifyContractsAsync(*uncached_contracts)
-            qualified_contracts.extend(new_qualified)
+            qualified_uncached = await self._qualify_contracts_in_batches(
+                uncached_contracts
+            )
+            qualified_contracts.extend(qualified_uncached)
 
             # Cache the newly qualified option contracts
-            for contract in new_qualified:
+            for contract in qualified_uncached:
                 if hasattr(contract, "strike") and hasattr(contract, "right"):
                     contract_cache.put(
                         contract,
@@ -571,6 +573,72 @@ class ArbitrageClass:
             f"Contract qualification: {len(cached_contracts)} from cache, {len(uncached_contracts)} new"
         )
         return qualified_contracts
+
+    def _get_contract_cache_key(self, contract) -> str:
+        """Generate cache key for contract"""
+        if hasattr(contract, "strike") and hasattr(contract, "right"):
+            return f"{contract.symbol}_{contract.lastTradeDateOrContractMonth}_{contract.strike}_{contract.right}"
+        else:
+            return f"{contract.symbol}_{getattr(contract, 'exchange', 'SMART')}"
+
+    async def _qualify_contracts_in_batches(
+        self, contracts: List[Contract]
+    ) -> List[Contract]:
+        """Qualify contracts in optimized batches with fallback handling"""
+        BATCH_SIZE = 100  # IB API handles large qualification batches efficiently
+        qualified = []
+
+        logger.debug(
+            f"Qualifying {len(contracts)} contracts in batches of {BATCH_SIZE}"
+        )
+
+        for i in range(0, len(contracts), BATCH_SIZE):
+            batch = contracts[i : i + BATCH_SIZE]
+            try:
+                # Try batch qualification first with circuit breaker protection
+                if hasattr(self, "circuit_breaker"):
+                    batch_qualified = await self.circuit_breaker.call_with_protection(
+                        self.ib.qualifyContractsAsync, *batch
+                    )
+                else:
+                    batch_qualified = await self.ib.qualifyContractsAsync(*batch)
+                qualified.extend(batch_qualified)
+                logger.debug(
+                    f"Batch {i//BATCH_SIZE + 1}: qualified {len(batch_qualified)}/{len(batch)} contracts"
+                )
+
+            except Exception as e:
+                logger.warning(
+                    f"Batch qualification failed for batch {i//BATCH_SIZE + 1}: {e}"
+                )
+                # Fallback to individual qualification for this batch
+                individual_qualified = await self._qualify_contracts_individually(batch)
+                qualified.extend(individual_qualified)
+
+            # Brief pause between large batches to respect API limits
+            if len(batch) == BATCH_SIZE and i + BATCH_SIZE < len(contracts):
+                await asyncio.sleep(0.05)
+
+        return qualified
+
+    async def _qualify_contracts_individually(
+        self, contracts: List[Contract]
+    ) -> List[Contract]:
+        """Fallback method to qualify contracts individually"""
+        qualified = []
+        logger.debug(
+            f"Falling back to individual qualification for {len(contracts)} contracts"
+        )
+
+        for contract in contracts:
+            try:
+                individual = await self.ib.qualifyContractsAsync(contract)
+                qualified.extend(individual)
+            except Exception as e:
+                logger.warning(f"Failed to qualify contract {contract}: {e}")
+                continue
+
+        return qualified
 
     def should_scan_symbol(self, symbol: str) -> bool:
         """Check if enough time has passed since last scan for this symbol"""

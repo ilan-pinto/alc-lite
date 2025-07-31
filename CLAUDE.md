@@ -63,7 +63,7 @@ flake8 .
 
 ## Logging Options
 
-The application supports three logging levels to control output verbosity:
+The application supports four logging levels to control output verbosity:
 
 ### Default Logging (INFO only)
 ```bash
@@ -75,18 +75,24 @@ python alchimest.py sfr --symbols SPY  # Shows only INFO messages
 python alchimest.py sfr --warning --symbols SPY  # Shows INFO and WARNING messages
 ```
 
-### Debug Logging (All levels)
+### Error Logging (INFO + WARNING + ERROR + CRITICAL)
 ```bash
-python alchimest.py sfr --debug --symbols SPY  # Shows DEBUG, INFO, WARNING, ERROR messages
+python alchimest.py sfr --error --symbols SPY  # Shows INFO, WARNING, ERROR and CRITICAL messages
+```
+
+### Debug Logging (All levels including DEBUG)
+```bash
+python alchimest.py sfr --debug --symbols SPY  # Shows DEBUG, INFO, WARNING, ERROR, CRITICAL messages
 ```
 
 ### File Logging
 ```bash
 python alchimest.py sfr --log trading.log --symbols SPY  # Log to file (same filter as console)
 python alchimest.py sfr --debug --log debug.log --symbols SPY  # Debug mode logs all levels to file
+python alchimest.py sfr --error --log error.log --symbols SPY  # Error mode logs INFO, WARNING, ERROR, CRITICAL to file
 ```
 
-**Note**: Debug mode takes precedence over warning mode when both flags are used.
+**Note**: Debug mode takes precedence over error and warning modes when multiple flags are used.
 
 ## Architecture Overview
 

@@ -57,10 +57,10 @@ class TestCalendarCLIArguments:
             symbol_list=["SPY", "QQQ"],
             cost_limit=300.0,  # Default
             profit_target=0.25,  # Default
-            iv_spread_threshold=0.015,  # Default
+            iv_spread_threshold=0.01,  # Default
             theta_ratio_threshold=1.5,  # Default
             front_expiry_max_days=45,  # Default
-            back_expiry_min_days=60,  # Default
+            back_expiry_min_days=50,  # Default
             back_expiry_max_days=120,  # Default
             min_volume=10,  # Default
             max_bid_ask_spread=0.15,  # Default
@@ -150,10 +150,10 @@ class TestCalendarCLIArguments:
             symbol_list=None,  # Should trigger default list in calendar_finder
             cost_limit=400.0,
             profit_target=0.30,
-            iv_spread_threshold=0.015,
+            iv_spread_threshold=0.01,
             theta_ratio_threshold=1.5,
             front_expiry_max_days=45,
-            back_expiry_min_days=60,
+            back_expiry_min_days=50,
             back_expiry_max_days=120,
             min_volume=10,
             max_bid_ask_spread=0.15,
@@ -184,10 +184,10 @@ class TestCalendarCLIArguments:
             symbol_list=["SPY"],
             cost_limit=250.0,
             profit_target=0.25,
-            iv_spread_threshold=0.015,
+            iv_spread_threshold=0.01,
             theta_ratio_threshold=1.5,
             front_expiry_max_days=45,
-            back_expiry_min_days=60,
+            back_expiry_min_days=50,
             back_expiry_max_days=120,
             min_volume=10,
             max_bid_ask_spread=0.15,
@@ -220,10 +220,10 @@ class TestCalendarCLIArguments:
             symbol_list=["!MES", "@SPX", "SPY.B"],
             cost_limit=600.0,
             profit_target=0.25,
-            iv_spread_threshold=0.015,
+            iv_spread_threshold=0.01,
             theta_ratio_threshold=1.5,
             front_expiry_max_days=45,
-            back_expiry_min_days=60,
+            back_expiry_min_days=50,
             back_expiry_max_days=120,
             min_volume=10,
             max_bid_ask_spread=0.15,
@@ -620,7 +620,7 @@ class TestCalendarCLIArguments:
             iv_spread_threshold=0.012345,
             theta_ratio_threshold=1.234567,
             front_expiry_max_days=45,
-            back_expiry_min_days=60,
+            back_expiry_min_days=50,
             back_expiry_max_days=120,
             min_volume=10,
             max_bid_ask_spread=0.098765,
@@ -658,10 +658,10 @@ class TestCalendarCLIArguments:
             symbol_list=["SPY", "QQQ"],
             cost_limit=400.0,
             profit_target=0.30,
-            iv_spread_threshold=0.015,
+            iv_spread_threshold=0.01,
             theta_ratio_threshold=1.5,
             front_expiry_max_days=45,
-            back_expiry_min_days=60,
+            back_expiry_min_days=50,
             back_expiry_max_days=120,
             min_volume=10,
             max_bid_ask_spread=0.15,
@@ -699,10 +699,10 @@ class TestCalendarCLIArguments:
             symbol_list=["AAPL", "MSFT"],
             cost_limit=750.0,
             profit_target=0.40,
-            iv_spread_threshold=0.015,
+            iv_spread_threshold=0.01,
             theta_ratio_threshold=1.5,
             front_expiry_max_days=45,
-            back_expiry_min_days=60,
+            back_expiry_min_days=50,
             back_expiry_max_days=120,
             min_volume=10,
             max_bid_ask_spread=0.15,
@@ -924,10 +924,10 @@ class TestCalendarCLIIntegration:
             "symbol_list": ["SPY"],
             "cost_limit": 300.0,
             "profit_target": 0.25,
-            "iv_spread_threshold": 0.03,
+            "iv_spread_threshold": 0.01,
             "theta_ratio_threshold": 1.5,
             "front_expiry_max_days": 45,
-            "back_expiry_min_days": 60,
+            "back_expiry_min_days": 50,
             "back_expiry_max_days": 120,
             "min_volume": 10,
             "max_bid_ask_spread": 0.15,
