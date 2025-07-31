@@ -78,6 +78,43 @@ def print_welcome(console, version, default_min_profit):
         "    [dim]All SFR options above are also available for syn command[/dim]\n"
     )
 
+    console.print(
+        "[bold magenta]calendar[/bold magenta] - Search for calendar spread arbitrage opportunities"
+    )
+    console.print(
+        "    [cyan]-s[/cyan], [cyan]--symbols[/cyan] [white](list)[/white]: List of symbols to scan for calendar spreads"
+    )
+    console.print(
+        "    [cyan]-l[/cyan], [cyan]--cost-limit[/cyan] [white](float)[/white]: Maximum net debit to pay for calendar spread [default: 300]"
+    )
+    console.print(
+        "    [cyan]-p[/cyan], [cyan]--profit-target[/cyan] [white](float)[/white]: Target profit as percentage of max profit [default: 0.25 = 25%]"
+    )
+    console.print(
+        "    [cyan]--iv-spread-threshold[/cyan] [white](float)[/white]: Minimum IV spread (back - front) required [default: 0.03 = 3%]"
+    )
+    console.print(
+        "    [cyan]--theta-ratio-threshold[/cyan] [white](float)[/white]: Minimum theta ratio (front/back) required [default: 1.5]"
+    )
+    console.print(
+        "    [cyan]--front-expiry-max-days[/cyan] [white](int)[/white]: Maximum days to expiry for front month [default: 45]"
+    )
+    console.print(
+        "    [cyan]--back-expiry-min-days[/cyan] [white](int)[/white]: Minimum days to expiry for back month [default: 50]"
+    )
+    console.print(
+        "    [cyan]--back-expiry-max-days[/cyan] [white](int)[/white]: Maximum days to expiry for back month [default: 120]"
+    )
+    console.print(
+        "    [cyan]--min-volume[/cyan] [white](int)[/white]: Minimum daily volume per option leg [default: 10]"
+    )
+    console.print(
+        "    [cyan]--max-bid-ask-spread[/cyan] [white](float)[/white]: Maximum bid-ask spread as percent of mid price [default: 0.15 = 15%]"
+    )
+    console.print(
+        "    [dim]Calendar spreads profit from time decay differential between front and back month options[/dim]\n"
+    )
+
     console.print("[bold underline yellow]Examples:[/bold underline yellow]\n")
     console.print(
         "[green]$ alc-lite sfr --symbols SPY QQQ --cost-limit 100 --profit 0.75[/green]  [white]# Basic SFR scan with cost limit $100 and min profit 0.75%[/white]"
@@ -98,5 +135,14 @@ def print_welcome(console, version, default_min_profit):
         "[green]$ alc-lite syn --symbols TSLA NVDA --scoring-strategy aggressive[/green]  [white]# Aggressive strategy: maximizes returns with higher risk[/white]"
     )
     console.print(
-        "[green]$ alc-lite syn --symbols SPY QQQ --risk-reward-weight 0.5 --liquidity-weight 0.3[/green]  [white]# Custom scoring weights for fine-tuned selection[/white]\n"
+        "[green]$ alc-lite syn --symbols SPY QQQ --risk-reward-weight 0.5 --liquidity-weight 0.3[/green]  [white]# Custom scoring weights for fine-tuned selection[/white]"
+    )
+    console.print(
+        "[green]$ alc-lite calendar --symbols SPY QQQ AAPL --cost-limit 300 --profit-target 0.25[/green]  [white]# Basic calendar spread scan with $300 cost limit and 25% profit target[/white]"
+    )
+    console.print(
+        "[green]$ alc-lite calendar --symbols AAPL TSLA --iv-spread-threshold 0.04 --theta-ratio-threshold 2.0[/green]  [white]# High IV environment calendar spreads[/white]"
+    )
+    console.print(
+        "[green]$ alc-lite calendar --symbols SPY IWM --front-expiry-max-days 30 --min-volume 50[/green]  [white]# Conservative calendar parameters with higher volume requirement[/white]\n"
     )

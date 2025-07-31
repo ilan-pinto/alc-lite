@@ -49,8 +49,14 @@ def main() -> None:
         "    %(prog)s sfr --symbols SPY QQQ --cost-limit 100 --profit 0.75\n\n"
         "  Synthetic scan with global selection:\n"
         "    %(prog)s syn --symbols AAPL MSFT GOOGL --scoring-strategy balanced\n\n"
+        "  Calendar spread scan - profit from time decay differential:\n"
+        "    %(prog)s calendar --symbols SPY QQQ AAPL --cost-limit 300 --profit-target 0.25\n"
+        "    %(prog)s calendar --symbols AAPL TSLA --iv-spread-threshold 0.04 --theta-ratio-threshold 2.0\n"
+        "    %(prog)s calendar --symbols SPY IWM --front-expiry-max-days 30 --min-volume 50\n\n"
         "  Custom scoring weights:\n"
         "    %(prog)s syn --symbols SPY QQQ --risk-reward-weight 0.5 --liquidity-weight 0.3\n\n"
+        "Calendar spreads are market-neutral strategies that profit when front month options\n"
+        "decay faster than back month options, benefiting from time decay differential.\n\n"
         "For more examples and documentation, visit: https://github.com/ilpinto/alc-lite",
     )
     subparsers = parser.add_subparsers(
@@ -134,6 +140,115 @@ def main() -> None:
         "    %(prog)s --symbols TSLA NVDA --scoring-strategy aggressive --min-risk-reward 3.0\n\n"
         "  Custom scoring:\n"
         "    %(prog)s --symbols AAPL MSFT --risk-reward-weight 0.3 --liquidity-weight 0.4\n",
+    )
+
+    # Calendar spread sub-command
+    parser_calendar = subparsers.add_parser(
+        "calendar",
+        help="Search for calendar spread arbitrage opportunities - profit from time decay differential",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="Scan for calendar spread opportunities that profit from the time decay differential "
+        "between front and back month options. Calendar spreads are market-neutral strategies that "
+        "benefit when the front month option decays faster than the back month option.",
+        epilog="Calendar Spread Examples:\n"
+        "  Basic calendar scan:\n"
+        "    alchimest.py calendar --symbols SPY QQQ --cost-limit 300 --profit-target 0.25\n\n"
+        "  High IV environment:\n"
+        "    alchimest.py calendar --symbols AAPL TSLA --iv-spread-threshold 0.04 --theta-ratio-threshold 2.0\n\n"
+        "  Conservative parameters:\n"
+        "    alchimest.py calendar --symbols SPY IWM --front-expiry-max-days 30 --min-volume 50\n",
+    )
+    parser_calendar.add_argument(
+        "-s",
+        "--symbols",
+        nargs="+",
+        help="List of symbols to scan for calendar spreads",
+    )
+    parser_calendar.add_argument(
+        "-l",
+        "--cost-limit",
+        type=float,
+        default=300.0,
+        help="Maximum net debit to pay for calendar spread (default: $300)",
+    )
+    parser_calendar.add_argument(
+        "-p",
+        "--profit-target",
+        type=float,
+        default=0.25,
+        help="Target profit as percentage of max profit (default: 0.25 = 25 percent)",
+    )
+    parser_calendar.add_argument(
+        "--iv-spread-threshold",
+        type=float,
+        default=0.01,
+        help="Minimum IV spread (back - front) required (default: 0.03 = 3 percent)",
+    )
+    parser_calendar.add_argument(
+        "--theta-ratio-threshold",
+        type=float,
+        default=1.5,
+        help="Minimum theta ratio (front/back) required (default: 1.5)",
+    )
+    parser_calendar.add_argument(
+        "--front-expiry-max-days",
+        type=int,
+        default=45,
+        help="Maximum days to expiry for front month (default: 45)",
+    )
+    parser_calendar.add_argument(
+        "--back-expiry-min-days",
+        type=int,
+        default=50,
+        help="Minimum days to expiry for back month (default: 50)",
+    )
+    parser_calendar.add_argument(
+        "--back-expiry-max-days",
+        type=int,
+        default=120,
+        help="Maximum days to expiry for back month (default: 120)",
+    )
+    parser_calendar.add_argument(
+        "--min-volume",
+        type=int,
+        default=10,
+        help="Minimum daily volume per option leg (default: 10)",
+    )
+    parser_calendar.add_argument(
+        "--max-bid-ask-spread",
+        type=float,
+        default=0.15,
+        help="Maximum bid-ask spread as percent of mid price (default: 0.15 = 15 percent)",
+    )
+    parser_calendar.add_argument(
+        "-q",
+        "--quantity",
+        type=int,
+        default=1,
+        help="Maximum number of calendar spreads to execute (default: 1)",
+    )
+    parser_calendar.add_argument(
+        "--log",
+        type=str,
+        default=None,
+        help="Log file path to write all logs to a text file",
+    )
+    parser_calendar.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows all log levels)",
+    )
+    parser_calendar.add_argument(
+        "--warning",
+        action="store_true",
+        help="Enable warning logging (shows INFO and WARNING levels)",
+    )
+    parser_calendar.add_argument(
+        "-f",
+        "--fin",
+        type=str,
+        default=None,
+        help="Finviz screener URL to extract ticker symbols from (wrap in quotes)",
     )
 
     # Metrics reporting sub-command
@@ -341,6 +456,25 @@ def main() -> None:
             min_liquidity=args.min_liquidity,
             max_bid_ask_spread=args.max_bid_ask_spread,
             optimal_days_expiry=args.optimal_days_expiry,
+        )
+
+    elif args.command == "calendar":
+        op = OptionScan()
+        op.calendar_finder(
+            symbol_list=args.symbols,
+            cost_limit=args.cost_limit,
+            profit_target=args.profit_target,
+            iv_spread_threshold=args.iv_spread_threshold,
+            theta_ratio_threshold=args.theta_ratio_threshold,
+            front_expiry_max_days=args.front_expiry_max_days,
+            back_expiry_min_days=args.back_expiry_min_days,
+            back_expiry_max_days=args.back_expiry_max_days,
+            min_volume=args.min_volume,
+            max_bid_ask_spread=args.max_bid_ask_spread,
+            quantity=args.quantity,
+            log_file=log_file,
+            debug=args.debug,
+            finviz_url=args.fin,
         )
 
     elif args.command == "metrics":

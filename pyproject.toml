@@ -75,4 +75,6 @@ markers = [
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
     "slow: marks tests as slow running",
+    "performance: marks tests as performance benchmarks",
+    "edge_case: marks tests as edge case scenarios",
 ]

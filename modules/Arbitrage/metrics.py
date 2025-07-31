@@ -59,6 +59,17 @@ class RejectionReason(Enum):
     # Volume/Liquidity issues
     VOLUME_TOO_LOW = "volume_too_low"
     LIQUIDITY_INSUFFICIENT = "liquidity_insufficient"
+    INSUFFICIENT_LIQUIDITY = "insufficient_liquidity"
+
+    # Calendar spread specific issues
+    INSUFFICIENT_IV_SPREAD = "insufficient_iv_spread"
+    INSUFFICIENT_THETA_RATIO = "insufficient_theta_ratio"
+    COST_LIMIT_EXCEEDED = "cost_limit_exceeded"
+    WIDE_BID_ASK_SPREAD = "wide_bid_ask_spread"
+    DATA_TIMEOUT = "data_timeout"
+    NO_OPTIONS_CHAIN = "no_options_chain"
+    INSUFFICIENT_EXPIRY_OPTIONS = "insufficient_expiry_options"
+    INSUFFICIENT_VOLUME = "insufficient_volume"
 
 
 @dataclass

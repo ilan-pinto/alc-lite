@@ -5,6 +5,7 @@ import logging
 import pandas as pd
 from ib_async import *
 
+from modules.Arbitrage.CalendarSpread import CalendarSpread
 from modules.Arbitrage.SFR import SFR
 from modules.Arbitrage.Synthetic import ScoringConfig, Syn
 from modules.finviz_scraper import scrape_tickers_from_finviz
@@ -279,3 +280,144 @@ class OptionScan:
             )
         except KeyboardInterrupt:
             syn.ib.disconnect()
+
+    def calendar_finder(
+        self,
+        symbol_list,
+        cost_limit=300.0,
+        profit_target=0.25,
+        iv_spread_threshold=0.015,
+        theta_ratio_threshold=1.5,
+        front_expiry_max_days=30,
+        back_expiry_min_days=50,
+        back_expiry_max_days=120,
+        min_volume=10,
+        max_bid_ask_spread=0.15,
+        quantity=1,
+        log_file=None,
+        debug=False,
+        finviz_url=None,
+    ):
+        """
+        Search for calendar spread arbitrage opportunities.
+
+        Calendar spreads profit from time decay differential between front and back month options.
+        This method scans for opportunities where the front month decays faster than the back month
+        and there's a favorable implied volatility spread.
+
+        Args:
+            symbol_list (List[str]): List of symbols to scan
+            cost_limit (float): Maximum net debit to pay for calendar spread (default: $300)
+            profit_target (float): Target profit as percentage of max profit (default: 0.25 = 25%)
+            iv_spread_threshold (float): Minimum IV spread (back - front) required (default: 0.015 = 1.5%)
+            theta_ratio_threshold (float): Minimum theta ratio (front/back) required (default: 1.5)
+            front_expiry_max_days (int): Maximum days to expiry for front month (default: 45)
+            back_expiry_min_days (int): Minimum days to expiry for back month (default: 60)
+            back_expiry_max_days (int): Maximum days to expiry for back month (default: 120)
+            min_volume (int): Minimum daily volume per option leg (default: 10)
+            max_bid_ask_spread (float): Maximum bid-ask spread as % of mid price (default: 0.15 = 15%)
+            quantity (int): Maximum number of calendar spreads to execute (default: 1)
+            log_file (str): Optional log file path for detailed logging
+            debug (bool): Enable debug logging (default: False)
+            finviz_url (str): Optional Finviz URL to scrape symbols from
+
+        Example:
+            scanner = OptionScan()
+            scanner.calendar_finder(
+                symbol_list=["SPY", "QQQ", "AAPL"],
+                cost_limit=500.0,
+                profit_target=0.30,
+                iv_spread_threshold=0.04,
+                quantity=2
+            )
+        """
+        # Create CalendarSpread instance with configuration
+        from modules.Arbitrage.CalendarSpread import CalendarSpreadConfig
+
+        config = CalendarSpreadConfig(
+            min_iv_spread=iv_spread_threshold * 100,  # Convert to percentage
+            min_theta_ratio=theta_ratio_threshold,
+            max_days_front=front_expiry_max_days,
+            min_days_back=back_expiry_min_days,
+            max_days_back=back_expiry_max_days,
+            min_volume=min_volume,
+            max_bid_ask_spread=max_bid_ask_spread,
+            max_net_debit=cost_limit,
+            target_profit_ratio=profit_target,
+        )
+
+        calendar = CalendarSpread(log_file=log_file)
+        calendar.config = config
+
+        # Handle symbol list logic (same as other methods)
+        default_list = [
+            "SPY",
+            "QQQ",
+            "META",
+            "AAPL",
+            "MSFT",
+            "GOOGL",
+            "TSLA",
+            "NVDA",
+            "AMZN",
+            "NFLX",
+            "AMD",
+            "INTC",
+            "V",
+            "MA",
+        ]
+
+        if finviz_url:
+            logger.info(f"Scraping ticker symbols from Finviz URL: {finviz_url}")
+            scraped_symbols = scrape_tickers_from_finviz(finviz_url)
+            if scraped_symbols:
+                if symbol_list:
+                    logger.warning(
+                        "Both Finviz URL and manual symbols provided, using Finviz tickers"
+                    )
+                symbol_list = scraped_symbols
+                logger.info(
+                    f"Successfully loaded {len(symbol_list)} tickers from Finviz: {symbol_list}"
+                )
+            else:
+                logger.error(
+                    "Failed to scrape tickers from Finviz URL, falling back to provided or default symbols"
+                )
+                symbol_list = symbol_list if symbol_list else default_list
+        elif not symbol_list:
+            symbol_list = default_list
+
+        logger.info(
+            f"Starting CALENDAR scan with {len(symbol_list)} symbols: {symbol_list}"
+        )
+        logger.info(
+            f"Calendar parameters: IV spread ≥{iv_spread_threshold:.1%}, theta ratio ≥{theta_ratio_threshold:.1f}"
+        )
+        logger.info(
+            f"Expiry window: front ≤{front_expiry_max_days}d, back {back_expiry_min_days}-{back_expiry_max_days}d"
+        )
+        logger.info(
+            f"Cost limit: ${cost_limit:.0f}, target profit: {profit_target:.1%}"
+        )
+
+        try:
+            asyncio.run(
+                calendar.process(
+                    symbols=symbol_list,
+                    cost_limit=cost_limit,
+                    profit_target=profit_target,
+                    quantity=quantity,
+                )
+            )
+        except KeyboardInterrupt:
+            logger.info("Calendar spread scan interrupted by user")
+            if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
+                calendar.ib.disconnect()
+        except Exception as e:
+            logger.error(f"Error in calendar spread scan: {str(e)}")
+            if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
+                calendar.ib.disconnect()
+        finally:
+            # Ensure cleanup even if no exceptions occurred
+            if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
+                calendar.ib.disconnect()
