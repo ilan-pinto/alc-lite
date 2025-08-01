@@ -67,6 +67,8 @@ class TestCLIArguments:
             quantity=5,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -95,6 +97,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -115,6 +119,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -135,6 +141,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -174,6 +182,8 @@ class TestCLIArguments:
             quantity=7,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -217,6 +227,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -248,6 +260,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -279,6 +293,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -320,6 +336,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -351,6 +369,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -439,6 +459,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -476,6 +498,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -505,6 +529,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -540,6 +566,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -569,6 +597,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -604,6 +634,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -633,6 +665,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -668,6 +702,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -703,6 +739,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -730,6 +768,8 @@ class TestCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
             scoring_strategy="balanced",
             risk_reward_weight=None,

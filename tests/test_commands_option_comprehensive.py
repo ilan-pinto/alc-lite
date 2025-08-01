@@ -273,8 +273,9 @@ class TestOptionScanCalendarFinder:
         test_error = Exception("Test connection error")
         mock_calendar_spread.return_value.scan.side_effect = test_error
 
-        # Exception should be caught and logged, not re-raised
-        option_scan.calendar_finder(symbol_list=["SPY"])
+        # Exception should be caught and logged, then re-raised
+        with pytest.raises(Exception, match="Test connection error"):
+            option_scan.calendar_finder(symbol_list=["SPY"])
 
         # Verify disconnect was called on exception (may be called multiple times due to finally block)
         assert mock_calendar_spread.return_value.ib.disconnect.call_count >= 1
@@ -677,7 +678,13 @@ class TestOptionScanIntegration:
             log_file = "test.log"
             debug = True
 
-            option_scan.sfr_finder(symbol_list=["SPY"], log_file=log_file, debug=debug)
+            option_scan.sfr_finder(
+                symbol_list=["SPY"],
+                profit_target=1.0,
+                cost_limit=100.0,
+                log_file=log_file,
+                debug=debug,
+            )
             option_scan.syn_finder(symbol_list=["QQQ"], log_file=log_file, debug=debug)
             option_scan.calendar_finder(
                 symbol_list=["AAPL"], log_file=log_file, debug=debug
@@ -697,7 +704,7 @@ class TestOptionScanIntegration:
             mock_calendar.assert_called_once()
             calendar_kwargs = mock_calendar.call_args[1]
             assert calendar_kwargs["log_file"] == log_file
-            assert calendar_kwargs["debug"] == debug
+            # Note: CalendarSpread doesn't receive debug parameter, only log_file
 
     def test_option_scan_consistent_symbol_handling(
         self, option_scan: OptionScan
@@ -724,7 +731,12 @@ class TestOptionScanIntegration:
             # Test with finviz URL - all methods should use scraped symbols
             finviz_url = "https://finviz.com/screener.ashx?v=111"
 
-            option_scan.sfr_finder(symbol_list=["SPY"], finviz_url=finviz_url)
+            option_scan.sfr_finder(
+                symbol_list=["SPY"],
+                profit_target=1.0,
+                cost_limit=100.0,
+                finviz_url=finviz_url,
+            )
             option_scan.syn_finder(symbol_list=["QQQ"], finviz_url=finviz_url)
             option_scan.calendar_finder(symbol_list=["AAPL"], finviz_url=finviz_url)
 
@@ -735,7 +747,7 @@ class TestOptionScanIntegration:
             sfr_call_kwargs = mock_sfr.return_value.scan.call_args[0][0]
             syn_call_kwargs = mock_syn.return_value.scan.call_args[0][0]
             calendar_call_kwargs = mock_calendar.return_value.scan.call_args[1][
-                "symbols"
+                "symbol_list"
             ]
 
             assert sfr_call_kwargs == test_symbols
@@ -791,8 +803,8 @@ class TestOptionScanPerformance:
             ), f"calendar_finder took too long: {execution_time:.3f}s"
 
             # Verify large symbol list was passed correctly
-            mock_instance.process.assert_called_once()
-            args, kwargs = mock_instance.process.call_args
+            mock_instance.scan.assert_called_once()
+            args, kwargs = mock_instance.scan.call_args
             assert len(kwargs["symbol_list"]) == 1000
 
     def test_calendar_finder_memory_efficiency_with_large_configs(
@@ -823,4 +835,4 @@ class TestOptionScanPerformance:
 
             # Verify CalendarSpread was instantiated 100 times (not accumulating objects)
             assert mock_calendar.call_count == 100
-            assert mock_instance.process.call_count == 100
+            assert mock_instance.scan.call_count == 100

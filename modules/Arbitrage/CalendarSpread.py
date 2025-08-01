@@ -25,6 +25,33 @@ from .common import configure_logging, get_logger
 from .metrics import RejectionReason, metrics_collector
 
 
+def _safe_isnan(value) -> bool:
+    """
+    Safe NaN check that handles different data types including None values.
+
+    Args:
+        value: Value to check for NaN or None
+
+    Returns:
+        bool: True if value is NaN, None, or cannot be converted to float
+    """
+    if value is None:
+        return True
+
+    try:
+        # Handle numpy arrays, scalars, and other numeric types
+        if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+            # For array-like objects, check if any element is NaN
+            return bool(np.any(np.isnan(np.asarray(value, dtype=float))))
+        else:
+            # For scalar values, convert to float and check
+            float_val = float(value)
+            return np.isnan(float_val)
+    except (TypeError, ValueError, OverflowError):
+        # If conversion fails, treat as NaN
+        return True
+
+
 class TTLCache:
     """Time-to-live cache with size limits and LRU eviction for performance optimization"""
 
@@ -462,6 +489,12 @@ class CalendarSpreadConfig:
     max_net_debit: float = 500.0  # Maximum cost to enter position
     target_profit_ratio: float = 0.3  # Target profit as % of max profit
 
+    # Pricing optimization parameters
+    base_edge_factor: float = 0.3  # Base edge to give up (30% of spread)
+    max_edge_factor: float = 0.65  # Maximum edge in wide spreads
+    wide_spread_threshold: float = 0.15  # Spread % to trigger higher edge
+    time_adjustment_enabled: bool = True  # Enable time-of-day adjustments
+
 
 class CalendarSpreadOpportunityManager:
     """
@@ -672,8 +705,8 @@ class CalendarSpreadExecutor(BaseExecutor):
             currency="USD",
         )
 
-        # Calculate limit price (net debit)
-        limit_price = opportunity.net_debit
+        # Calculate limit price (net debit) - use optimized pricing
+        limit_price = self.calculate_optimized_limit_price(opportunity)
 
         order = Order(
             orderId=self.ib.client.getReqId(),
@@ -842,6 +875,22 @@ class CalendarSpreadExecutor(BaseExecutor):
             )
             return False
 
+        # Validate net_debit is not None, NaN, or <= 0
+        if (
+            opportunity.net_debit is None
+            or np.isnan(opportunity.net_debit)
+            or opportunity.net_debit <= 0
+        ):
+            metrics_collector.add_rejection_reason(
+                RejectionReason.INVALID_CONTRACT_DATA,
+                {
+                    "symbol": self.symbol,
+                    "net_debit": opportunity.net_debit,
+                    "reason": "invalid_net_debit_in_validation",
+                },
+            )
+            return False
+
         # Check net debit limit
         if opportunity.net_debit > self.config.max_net_debit:
             metrics_collector.add_rejection_reason(
@@ -891,6 +940,120 @@ class CalendarSpreadExecutor(BaseExecutor):
             return 1.0
 
         return (leg.ask - leg.bid) / mid_price
+
+    def calculate_optimized_limit_price(
+        self, opportunity: CalendarSpreadOpportunity
+    ) -> float:
+        """
+        Calculate execution-optimized limit price using bid/ask aware pricing
+
+        This method implements asymmetric pricing for better execution:
+        - Back leg: pay closer to ask (we're buying)
+        - Front leg: receive closer to bid (we're selling)
+        """
+        # Validate bid/ask data
+        if (
+            opportunity.front_leg.bid <= 0
+            or opportunity.front_leg.ask <= 0
+            or opportunity.back_leg.bid <= 0
+            or opportunity.back_leg.ask <= 0
+        ):
+            logger.warning(
+                f"[{opportunity.symbol}] Invalid bid/ask data, falling back to midpoint pricing"
+            )
+            return opportunity.net_debit
+
+        # Calculate spread widths
+        front_spread = opportunity.front_leg.ask - opportunity.front_leg.bid
+        back_spread = opportunity.back_leg.ask - opportunity.back_leg.bid
+
+        # Calculate spread percentages
+        front_spread_pct = front_spread / max(opportunity.front_leg.price, 0.01)
+        back_spread_pct = back_spread / max(opportunity.back_leg.price, 0.01)
+
+        # Dynamic edge factors based on liquidity
+        front_edge = self.config.base_edge_factor
+        back_edge = self.config.base_edge_factor
+
+        # Increase edge for wide spreads
+        if front_spread_pct > self.config.wide_spread_threshold:
+            front_edge = min(
+                self.config.max_edge_factor,
+                front_edge + (front_spread_pct - self.config.wide_spread_threshold),
+            )
+        if back_spread_pct > self.config.wide_spread_threshold:
+            back_edge = min(
+                self.config.max_edge_factor,
+                back_edge + (back_spread_pct - self.config.wide_spread_threshold),
+            )
+
+        # Time of day adjustment
+        if self.config.time_adjustment_enabled:
+            time_factor = self._get_time_adjustment_factor()
+            front_edge *= time_factor
+            back_edge *= time_factor
+
+        # Calculate execution prices
+        # Back leg: pay closer to ask (we're buying)
+        back_execution_price = opportunity.back_leg.bid + (back_edge * back_spread)
+
+        # Front leg: receive closer to bid (we're selling)
+        front_execution_price = opportunity.front_leg.ask - (front_edge * front_spread)
+
+        net_debit = back_execution_price - front_execution_price
+
+        # Safety bound: don't pay more than 150% of midpoint
+        midpoint_debit = opportunity.net_debit  # Current midpoint-based calculation
+        max_acceptable = midpoint_debit * 1.5
+
+        optimized_price = round(min(net_debit, max_acceptable), 2)
+
+        # Log pricing details
+        logger.info(
+            f"[{opportunity.symbol}] Price optimization: "
+            f"Midpoint=${midpoint_debit:.2f}, Optimized=${optimized_price:.2f}, "
+            f"Edge=${optimized_price - midpoint_debit:.2f} "
+            f"(Front edge={front_edge:.2f}, Back edge={back_edge:.2f})"
+        )
+
+        return optimized_price
+
+    def _get_time_adjustment_factor(self) -> float:
+        """Get pricing adjustment based on US market time (adjusted for Israel timezone)"""
+        from datetime import datetime
+
+        import pytz
+
+        try:
+            # Get current time in Israel and convert to US Eastern Time
+            israel_tz = pytz.timezone("Asia/Jerusalem")
+            us_eastern_tz = pytz.timezone("US/Eastern")
+
+            # Get current time in Israel timezone
+            israel_time = datetime.now(israel_tz)
+            # Convert to US Eastern Time
+            us_time = israel_time.astimezone(us_eastern_tz)
+
+            hour = us_time.hour + (us_time.minute / 60.0)
+
+        except ImportError:
+            # Fallback if pytz is not available - assume Israel is UTC+2/+3
+            # US Eastern is UTC-5/-4, so difference is 7-8 hours
+            current_time = datetime.now()
+            # Approximate conversion: subtract 7 hours (average offset)
+            us_hour = (current_time.hour - 7) % 24
+            hour = us_hour + (current_time.minute / 60.0)
+
+        # US Market hours (9:30 AM - 4:00 PM Eastern)
+        # Market open/close need more aggressive pricing
+        if 9.5 <= hour <= 10.0 or 15.5 <= hour <= 16.0:
+            return 1.3  # 30% more edge
+        # Mid-day standard pricing (US market hours)
+        elif 10.0 <= hour <= 15.5:
+            return 1.0
+        # Pre/post market or outside US market hours
+        else:
+            return 1.5  # 50% more edge
 
     async def _execute_calendar_spread(
         self, opportunity: CalendarSpreadOpportunity
@@ -1996,17 +2159,39 @@ class CalendarSpread(ArbitrageClass):
                         f"[{symbol}] {option_type} {strike}: IV spread: {iv_spread:.1f}%, Net debit: ${net_debit:.2f}"
                     )
 
-                    # Apply price-based filters
-                    if net_debit > self.config.max_net_debit or net_debit <= 0:
+                    # Apply price-based filters - check for invalid net_debit values first
+                    if net_debit is None or np.isnan(net_debit) or net_debit <= 0:
+                        if net_debit is None:
+                            rejection_reason = "net_debit is None"
+                        elif np.isnan(net_debit):
+                            rejection_reason = "net_debit is NaN"
+                        else:
+                            rejection_reason = f"net_debit <= 0: ${net_debit:.2f}"
+
                         logger.info(
-                            f"[{symbol}] {option_type} {strike}: Net debit invalid: ${net_debit:.2f} (max: ${self.config.max_net_debit:.0f})"
+                            f"[{symbol}] {option_type} {strike}: Invalid net_debit - {rejection_reason}"
                         )
                         metrics_collector.add_rejection_reason(
-                            (
-                                RejectionReason.COST_LIMIT_EXCEEDED
-                                if net_debit > self.config.max_net_debit
-                                else RejectionReason.INVALID_CONTRACT_DATA
-                            ),
+                            RejectionReason.INVALID_CONTRACT_DATA,
+                            {
+                                "symbol": symbol,
+                                "strike": strike,
+                                "option_type": option_type,
+                                "net_debit": net_debit,
+                                "reason": rejection_reason,
+                                "front_price": front_leg.price,
+                                "back_price": back_leg.price,
+                            },
+                        )
+                        continue
+
+                    # Apply cost limit filter
+                    if net_debit > self.config.max_net_debit:
+                        logger.info(
+                            f"[{symbol}] {option_type} {strike}: Net debit exceeds limit: ${net_debit:.2f} (max: ${self.config.max_net_debit:.0f})"
+                        )
+                        metrics_collector.add_rejection_reason(
+                            RejectionReason.COST_LIMIT_EXCEEDED,
                             {
                                 "symbol": symbol,
                                 "strike": strike,
@@ -2264,8 +2449,8 @@ class CalendarSpread(ArbitrageClass):
             currency="USD",
         )
 
-        # Calculate limit price (net debit)
-        limit_price = opportunity.net_debit
+        # Calculate limit price (net debit) - use optimized pricing
+        limit_price = self.calculate_optimized_limit_price(opportunity)
 
         order = Order(
             orderId=self.ib.client.getReqId(),
@@ -2950,7 +3135,9 @@ class CalendarSpread(ArbitrageClass):
             ready_count = sum(
                 1
                 for ticker in tickers
-                if ticker and not np.isnan(ticker.midpoint()) and ticker.midpoint() > 0
+                if ticker
+                and not _safe_isnan(ticker.midpoint())
+                and ticker.midpoint() > 0
             )
 
             ready_percentage = ready_count / len(tickers) if tickers else 0
@@ -2966,7 +3153,7 @@ class CalendarSpread(ArbitrageClass):
         final_ready = sum(
             1
             for ticker in tickers
-            if ticker and not np.isnan(ticker.midpoint()) and ticker.midpoint() > 0
+            if ticker and not _safe_isnan(ticker.midpoint()) and ticker.midpoint() > 0
         )
         logger.info(
             f"Final market data status: {final_ready}/{len(tickers)} contracts ready"

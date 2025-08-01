@@ -145,8 +145,15 @@ class TestCalendarSpreadInitialization:
         assert hasattr(calendar, "iv_cache")
         assert hasattr(calendar, "greeks_cache")
         assert calendar.cache_ttl == 60
-        assert calendar.iv_cache == {}
-        assert calendar.greeks_cache == {}
+
+        # Fix: Check for TTLCache type and empty state, not dict equality
+        assert hasattr(calendar.iv_cache, "get")  # TTLCache methods
+        assert hasattr(calendar.iv_cache, "put")
+        assert calendar.iv_cache.size() == 0  # Empty cache
+
+        assert hasattr(calendar.greeks_cache, "get")
+        assert hasattr(calendar.greeks_cache, "put")
+        assert calendar.greeks_cache.size() == 0  # Empty cache
 
     def test_calendar_spread_with_log_file(self):
         """Test CalendarSpread initialization with log file"""
@@ -168,23 +175,17 @@ class TestCalendarSpreadUtilityMethods:
         future_date = datetime.now() + timedelta(days=30)
         expiry_str = future_date.strftime("%Y%m%d")
 
-        # Create a mock executor to test the method
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._calculate_days_to_expiry = (
-            CalendarSpreadExecutor._calculate_days_to_expiry.__get__(mock_executor)
-        )
+        # Create a calendar spread instance to test the method
+        calendar = CalendarSpread()
 
-        days = mock_executor._calculate_days_to_expiry(expiry_str)
+        days = calendar._calculate_days_to_expiry(expiry_str)
         assert 29 <= days <= 31  # Allow for some variation due to timing
 
     def test_calculate_days_to_expiry_invalid_date(self):
         """Test days to expiry calculation with invalid date"""
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._calculate_days_to_expiry = (
-            CalendarSpreadExecutor._calculate_days_to_expiry.__get__(mock_executor)
-        )
+        calendar = CalendarSpread()
 
-        days = mock_executor._calculate_days_to_expiry("invalid_date")
+        days = calendar._calculate_days_to_expiry("invalid_date")
         assert days == 30  # Should return default
 
     def test_calculate_implied_volatility_with_cache(self):
@@ -196,7 +197,7 @@ class TestCalendarSpreadUtilityMethods:
 
         # Pre-populate cache
         cache_key = f"{mock_contract.conId}_{mock_ticker.time}"
-        self.calendar.iv_cache[cache_key] = 30.0
+        self.calendar.iv_cache.put(cache_key, 30.0)
 
         iv = self.calendar._calculate_implied_volatility(mock_ticker, mock_contract)
         assert iv == 30.0
@@ -222,59 +223,41 @@ class TestCalendarSpreadUtilityMethods:
 
         # Should be cached now
         cache_key = f"{mock_contract.conId}_{mock_ticker.time}"
-        assert cache_key in self.calendar.iv_cache
+        assert self.calendar.iv_cache.get(cache_key) is not None
 
     def test_detect_term_structure_inversion_true(self):
         """Test term structure inversion detection - positive case"""
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._detect_term_structure_inversion = (
-            CalendarSpreadExecutor._detect_term_structure_inversion.__get__(
-                mock_executor
-            )
-        )
+        calendar = CalendarSpread()
 
         # Front month much higher IV than back month (creating inversion)
-        result = mock_executor._detect_term_structure_inversion(
+        result = calendar._detect_term_structure_inversion(
             front_iv=35.0, back_iv=20.0, front_days=30, back_days=60
         )
         assert result == True
 
     def test_detect_term_structure_inversion_false(self):
         """Test term structure inversion detection - negative case"""
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._detect_term_structure_inversion = (
-            CalendarSpreadExecutor._detect_term_structure_inversion.__get__(
-                mock_executor
-            )
-        )
+        calendar = CalendarSpread()
 
         # Normal term structure (back month higher IV when normalized)
-        result = mock_executor._detect_term_structure_inversion(
+        result = calendar._detect_term_structure_inversion(
             front_iv=20.0, back_iv=30.0, front_days=30, back_days=60
         )
         assert result == False
 
     def test_detect_term_structure_inversion_invalid_expiries(self):
         """Test term structure inversion with invalid expiry relationship"""
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._detect_term_structure_inversion = (
-            CalendarSpreadExecutor._detect_term_structure_inversion.__get__(
-                mock_executor
-            )
-        )
+        calendar = CalendarSpread()
 
         # Front expiry same or longer than back expiry
-        result = mock_executor._detect_term_structure_inversion(
+        result = calendar._detect_term_structure_inversion(
             front_iv=30.0, back_iv=25.0, front_days=60, back_days=30
         )
         assert result == False
 
     def test_calculate_liquidity_score_high_quality(self):
         """Test liquidity score calculation for high quality leg"""
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._calculate_liquidity_score = (
-            CalendarSpreadExecutor._calculate_liquidity_score.__get__(mock_executor)
-        )
+        calendar = CalendarSpread()
 
         leg = CalendarSpreadLeg(
             contract=Mock(),
@@ -290,15 +273,12 @@ class TestCalendarSpreadUtilityMethods:
             days_to_expiry=30,
         )
 
-        score = mock_executor._calculate_liquidity_score(leg)
+        score = calendar._calculate_liquidity_score(leg)
         assert 0.7 <= score <= 1.0  # Should be high due to good volume and tight spread
 
     def test_calculate_liquidity_score_low_quality(self):
         """Test liquidity score calculation for low quality leg"""
-        mock_executor = Mock(spec=CalendarSpreadExecutor)
-        mock_executor._calculate_liquidity_score = (
-            CalendarSpreadExecutor._calculate_liquidity_score.__get__(mock_executor)
-        )
+        calendar = CalendarSpread()
 
         leg = CalendarSpreadLeg(
             contract=Mock(),
@@ -314,7 +294,7 @@ class TestCalendarSpreadUtilityMethods:
             days_to_expiry=30,
         )
 
-        score = mock_executor._calculate_liquidity_score(leg)
+        score = calendar._calculate_liquidity_score(leg)
         assert 0.0 <= score <= 0.4  # Should be low due to poor volume and wide spread
 
     def test_calculate_calendar_spread_score(self):

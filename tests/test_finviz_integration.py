@@ -392,6 +392,8 @@ class TestCLIFinvizIntegration:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111&f=cap_largeover",
         )
 
@@ -422,6 +424,8 @@ class TestCLIFinvizIntegration:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
         )
 
@@ -455,6 +459,8 @@ class TestCLIFinvizIntegration:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111&f=cap_largeover",
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -492,6 +498,8 @@ class TestCLIFinvizIntegration:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=escaped_url,  # URL passed as-is to function, cleaning happens inside
         )
 
@@ -530,6 +538,8 @@ class TestCLIFinvizIntegration:
             quantity=5,
             log_file=None,
             debug=True,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
             scoring_strategy="balanced",
             risk_reward_weight=None,
@@ -564,6 +574,8 @@ class TestCLIFinvizIntegration:
             quantity=1,  # Default
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
         )
 
@@ -591,6 +603,8 @@ class TestCLIFinvizIntegration:
             quantity=1,  # Default
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
             scoring_strategy="balanced",
             risk_reward_weight=None,

@@ -66,7 +66,9 @@ class TestCalendarCLIArguments:
             max_bid_ask_spread=0.15,  # Default
             quantity=1,  # Default
             log_file=None,  # Default
-            debug=False,  # Default
+            debug=False,
+            warning=False,
+            error=False,  # Default
             finviz_url=None,  # Default
         )
 
@@ -126,6 +128,8 @@ class TestCalendarCLIArguments:
             quantity=3,
             log_file="calendar_test.log",
             debug=True,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
         )
 
@@ -160,6 +164,8 @@ class TestCalendarCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -194,6 +200,8 @@ class TestCalendarCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -230,6 +238,8 @@ class TestCalendarCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -282,6 +292,8 @@ class TestCalendarCLIArguments:
             quantity=100,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -334,6 +346,8 @@ class TestCalendarCLIArguments:
             quantity=-5,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -386,6 +400,8 @@ class TestCalendarCLIArguments:
             quantity=0,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -438,6 +454,8 @@ class TestCalendarCLIArguments:
             quantity=999,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -627,6 +645,8 @@ class TestCalendarCLIArguments:
             quantity=1,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url=None,
         )
 
@@ -668,6 +688,8 @@ class TestCalendarCLIArguments:
             quantity=2,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
         )
 
@@ -709,6 +731,8 @@ class TestCalendarCLIArguments:
             quantity=5,
             log_file=None,
             debug=False,
+            warning=False,
+            error=False,
             finviz_url="https://finviz.com/screener.ashx?v=222",
         )
 
@@ -879,7 +903,7 @@ class TestCalendarCLIIntegration:
             mock_print_welcome.assert_called_once()
             args, kwargs = mock_print_welcome.call_args
             # Should include version and default profit
-            assert alchimest.__version__ in str(args) or alchimist.__version__ in str(
+            assert alchimest.__version__ in str(args) or alchimest.__version__ in str(
                 kwargs
             )
 
@@ -934,6 +958,8 @@ class TestCalendarCLIIntegration:
             "quantity": 1,
             "log_file": None,
             "debug": False,
+            "warning": False,
+            "error": False,
             "finviz_url": None,
         }
 

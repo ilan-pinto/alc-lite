@@ -457,6 +457,7 @@ class OptionScan:
             logger.error(f"Error in calendar spread scan: {str(e)}")
             if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
                 calendar.ib.disconnect()
+            raise
         finally:
             # Ensure cleanup even if no exceptions occurred
             if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
