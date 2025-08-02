@@ -256,6 +256,69 @@ class VectorizedGreeksCalculator:
         }
 
     @staticmethod
+    def black_scholes_price_batch(
+        S: np.ndarray,  # Stock prices
+        K: np.ndarray,  # Strike prices
+        T: np.ndarray,  # Time to expiry (years)
+        r: float,  # Risk-free rate
+        sigma: np.ndarray,  # Volatilities (as decimals, e.g., 0.20 for 20%)
+        option_type: np.ndarray,  # 1 for call, -1 for put
+    ) -> np.ndarray:
+        """Vectorized Black-Scholes option pricing calculation"""
+
+        if not SCIPY_AVAILABLE:
+            # Use numpy approximations if scipy not available
+            return VectorizedGreeksCalculator._approximate_prices_batch(
+                S, K, T, r, sigma, option_type
+            )
+
+        # Prevent division by zero and invalid calculations
+        T = np.maximum(T, 1e-6)  # Minimum 1 day
+        sigma = np.maximum(sigma, 0.001)  # Minimum 0.1% volatility
+
+        # Black-Scholes calculations
+        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+
+        # Standard normal CDF
+        N_d1 = norm.cdf(d1)
+        N_d2 = norm.cdf(d2)
+
+        # Calculate option prices
+        call_price = S * N_d1 - K * np.exp(-r * T) * N_d2
+        put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+
+        # Return call or put price based on option_type
+        return np.where(option_type == 1, call_price, put_price)
+
+    @staticmethod
+    def _approximate_prices_batch(
+        S: np.ndarray,
+        K: np.ndarray,
+        T: np.ndarray,
+        r: float,
+        sigma: np.ndarray,
+        option_type: np.ndarray,
+    ) -> np.ndarray:
+        """Approximate option pricing using numpy when scipy unavailable"""
+
+        # Simple intrinsic value with time value approximation
+        moneyness = S / K
+        time_sqrt = np.sqrt(T)
+
+        # Intrinsic value
+        call_intrinsic = np.maximum(S - K, 0)
+        put_intrinsic = np.maximum(K - S, 0)
+
+        # Simple time value approximation
+        time_value = S * sigma * time_sqrt * 0.4 * np.exp(-((moneyness - 1) ** 2) * 2)
+
+        call_price = call_intrinsic + time_value
+        put_price = put_intrinsic + time_value
+
+        return np.where(option_type == 1, call_price, put_price)
+
+    @staticmethod
     def _approximate_greeks_batch(
         S: np.ndarray,
         K: np.ndarray,
@@ -472,6 +535,11 @@ class CalendarSpreadOpportunity:
 
     # Scoring
     composite_score: float
+
+    # Profitability boundaries (optional fields must be last)
+    lower_breakeven: Optional[float] = None  # Lower breakeven stock price
+    upper_breakeven: Optional[float] = None  # Upper breakeven stock price
+    profitability_range: Optional[float] = None  # Distance between breakevens
 
 
 @dataclass
@@ -748,6 +816,19 @@ class CalendarSpreadExecutor(BaseExecutor):
         logger.info(
             f"Max Loss: ${opportunity.max_loss:.2f} | Score: {opportunity.composite_score:.3f}"
         )
+
+        # Display profitability boundaries if available
+        if (
+            opportunity.lower_breakeven is not None
+            and opportunity.upper_breakeven is not None
+        ):
+            logger.info(
+                f"Breakeven Range: ${opportunity.lower_breakeven:.2f} - ${opportunity.upper_breakeven:.2f} "
+                f"(Range: ${opportunity.profitability_range:.2f})"
+            )
+        else:
+            logger.info("Breakeven Range: Not calculated")
+
         logger.info(f"Term Structure Inversion: {opportunity.term_structure_inversion}")
 
     async def executor(self, event: Event) -> None:
@@ -1370,6 +1451,209 @@ class CalendarSpread(ArbitrageClass):
         remaining_time_value = back_price * 0.6  # Rough estimate
 
         return max(0.0, remaining_time_value - net_debit)
+
+    def _calculate_breakeven_boundaries(
+        self,
+        stock_price: float,
+        strike: float,
+        front_iv: float,
+        back_iv: float,
+        front_days: int,
+        back_days: int,
+        option_type: str,
+        front_price: float,
+        back_price: float,
+        risk_free_rate: float = 0.05,
+    ) -> Tuple[float, float, float]:
+        """
+        Calculate upper and lower breakeven boundaries for calendar spread.
+
+        Returns:
+            Tuple of (lower_breakeven, upper_breakeven, max_loss)
+        """
+        # Net debit of the spread (cost to enter)
+        net_debit = back_price - front_price
+
+        # Convert days to years for Black-Scholes
+        front_time = front_days / 365.0
+        back_time = back_days / 365.0
+
+        # Convert IV from percentage to decimal
+        front_vol = front_iv / 100.0
+        back_vol = back_iv / 100.0
+
+        # Option type for calculations (1 for call, -1 for put)
+        opt_type = 1 if option_type.upper() == "CALL" else -1
+
+        # Define search range around current stock price
+        search_range = stock_price * 0.5  # +/- 50% of current price
+        min_price = max(0.01, stock_price - search_range)
+        max_price = stock_price + search_range
+
+        # Create array of stock prices to test
+        price_points = np.linspace(min_price, max_price, 200)
+
+        # Calculate P&L at front expiration for each price point
+        pnl_values = self._calculate_spread_pnl_at_expiration(
+            price_points,
+            strike,
+            front_vol,
+            back_vol,
+            front_time,
+            back_time,
+            opt_type,
+            net_debit,
+            risk_free_rate,
+        )
+
+        # Find breakeven points (where P&L crosses zero)
+        breakeven_points = []
+        for i in range(len(pnl_values) - 1):
+            if (
+                pnl_values[i] * pnl_values[i + 1] <= 0
+            ):  # Sign change indicates breakeven
+                # Linear interpolation to find exact breakeven point
+                if pnl_values[i + 1] != pnl_values[i]:
+                    breakeven = price_points[i] - pnl_values[i] * (
+                        price_points[i + 1] - price_points[i]
+                    ) / (pnl_values[i + 1] - pnl_values[i])
+                    breakeven_points.append(breakeven)
+
+        # Determine lower and upper breakeven
+        if len(breakeven_points) >= 2:
+            lower_breakeven = min(breakeven_points)
+            upper_breakeven = max(breakeven_points)
+        elif len(breakeven_points) == 1:
+            # Only one breakeven point found
+            if breakeven_points[0] < stock_price:
+                lower_breakeven = breakeven_points[0]
+                upper_breakeven = max_price  # No upper breakeven
+            else:
+                lower_breakeven = min_price  # No lower breakeven
+                upper_breakeven = breakeven_points[0]
+        else:
+            # No breakeven points found (unusual case)
+            lower_breakeven = min_price
+            upper_breakeven = max_price
+
+        # Calculate maximum loss
+        max_loss = abs(min(pnl_values))
+
+        return lower_breakeven, upper_breakeven, max_loss
+
+    def _calculate_spread_pnl_at_expiration(
+        self,
+        stock_prices: np.ndarray,
+        strike: float,
+        front_vol: float,
+        back_vol: float,
+        front_time: float,
+        back_time: float,
+        option_type: int,
+        net_debit: float,
+        risk_free_rate: float,
+    ) -> np.ndarray:
+        """
+        Calculate calendar spread P&L at front option expiration for different stock prices.
+
+        Calendar spread P&L = (Back option value at front expiry) - (Front option value at expiry) - Net debit
+        """
+        # At front expiration, front option has no time value, only intrinsic value
+        if option_type == 1:  # Call
+            front_value_at_expiry = np.maximum(stock_prices - strike, 0)
+        else:  # Put
+            front_value_at_expiry = np.maximum(strike - stock_prices, 0)
+
+        # Back option still has remaining time value at front expiry
+        remaining_time = back_time - front_time
+        remaining_time = np.maximum(remaining_time, 1e-6)  # Prevent negative time
+
+        # Calculate back option value at front expiry using Black-Scholes
+        back_value_at_front_expiry = (
+            VectorizedGreeksCalculator.black_scholes_price_batch(
+                stock_prices,
+                np.full_like(stock_prices, strike),
+                np.full_like(stock_prices, remaining_time),
+                risk_free_rate,
+                np.full_like(stock_prices, back_vol),
+                np.full_like(stock_prices, option_type),
+            )
+        )
+
+        # Calendar spread P&L = Back option value - Front option payout - Net debit
+        # We sold the front option, so we keep the premium but pay out if it's ITM
+        # We bought the back option, so we own its remaining value
+        pnl = back_value_at_front_expiry - front_value_at_expiry - net_debit
+
+        return pnl
+
+    def _calculate_profit_loss_curve(
+        self,
+        stock_price: float,
+        strike: float,
+        front_iv: float,
+        back_iv: float,
+        front_days: int,
+        back_days: int,
+        option_type: str,
+        front_price: float,
+        back_price: float,
+        risk_free_rate: float = 0.05,
+        price_range_pct: float = 0.4,
+        num_points: int = 100,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calculate detailed profit/loss curve for calendar spread across stock price range.
+
+        Args:
+            stock_price: Current stock price
+            strike: Option strike price
+            front_iv: Front month implied volatility (%)
+            back_iv: Back month implied volatility (%)
+            front_days: Days to front expiration
+            back_days: Days to back expiration
+            option_type: "CALL" or "PUT"
+            front_price: Front option price
+            back_price: Back option price
+            risk_free_rate: Risk-free interest rate
+            price_range_pct: Price range as percentage of stock price (0.4 = ±40%)
+            num_points: Number of points in the curve
+
+        Returns:
+            Tuple of (stock_prices, pnl_values) arrays
+        """
+        # Net debit of the spread (cost to enter)
+        net_debit = back_price - front_price
+
+        # Convert parameters for Black-Scholes
+        front_time = front_days / 365.0
+        back_time = back_days / 365.0
+        front_vol = front_iv / 100.0
+        back_vol = back_iv / 100.0
+        opt_type = 1 if option_type.upper() == "CALL" else -1
+
+        # Define price range
+        range_amount = stock_price * price_range_pct
+        min_price = max(0.01, stock_price - range_amount)
+        max_price = stock_price + range_amount
+
+        # Create array of stock prices for the curve
+        stock_prices = np.linspace(min_price, max_price, num_points)
+
+        # Calculate P&L at front expiration for each price point
+        pnl_values = self._calculate_spread_pnl_at_expiration(
+            stock_prices,
+            strike,
+            front_vol,
+            back_vol,
+            front_time,
+            back_time,
+            opt_type,
+            net_debit,
+            risk_free_rate,
+        )
+
+        return stock_prices, pnl_values
 
     def _calculate_implied_volatility(
         self, ticker: Ticker, option_contract: Contract
@@ -2359,6 +2643,44 @@ class CalendarSpread(ArbitrageClass):
                         term_structure_inversion,
                     )
 
+                    # Calculate profitability boundaries
+                    lower_breakeven = None
+                    upper_breakeven = None
+                    profitability_range = None
+
+                    if current_stock_price is not None:
+                        try:
+                            lower_breakeven, upper_breakeven, boundary_max_loss = (
+                                self._calculate_breakeven_boundaries(
+                                    current_stock_price,
+                                    strike,
+                                    front_leg.iv,
+                                    back_leg.iv,
+                                    front_leg.days_to_expiry,
+                                    back_leg.days_to_expiry,
+                                    option_type,
+                                    front_leg.price,
+                                    back_leg.price,
+                                )
+                            )
+
+                            # Calculate profitability range
+                            if (
+                                lower_breakeven is not None
+                                and upper_breakeven is not None
+                            ):
+                                profitability_range = upper_breakeven - lower_breakeven
+
+                            logger.debug(
+                                f"[{symbol}] {option_type} {strike} boundaries: "
+                                f"Lower: ${lower_breakeven:.2f}, Upper: ${upper_breakeven:.2f}, Range: ${profitability_range:.2f}"
+                            )
+
+                        except Exception as e:
+                            logger.debug(
+                                f"[{symbol}] {option_type} {strike}: Boundary calculation failed: {e}"
+                            )
+
                     # Create opportunity
                     opportunity = CalendarSpreadOpportunity(
                         symbol=symbol,
@@ -2371,6 +2693,9 @@ class CalendarSpread(ArbitrageClass):
                         net_debit=net_debit,
                         max_profit=max_profit,
                         max_loss=net_debit,
+                        lower_breakeven=lower_breakeven,
+                        upper_breakeven=upper_breakeven,
+                        profitability_range=profitability_range,
                         front_bid_ask_spread=(
                             (front_leg.ask - front_leg.bid) / front_leg.price
                             if front_leg.price > 0
@@ -2708,6 +3033,19 @@ class CalendarSpread(ArbitrageClass):
                         )
                         logger.info(f"  Net Debit: ${best_opportunity.net_debit:.2f}")
                         logger.info(f"  Max Profit: ${best_opportunity.max_profit:.2f}")
+
+                        # Display boundary information if available
+                        if (
+                            best_opportunity.lower_breakeven is not None
+                            and best_opportunity.upper_breakeven is not None
+                        ):
+                            logger.info(
+                                f"  Breakeven Range: ${best_opportunity.lower_breakeven:.2f} - ${best_opportunity.upper_breakeven:.2f} "
+                                f"(Range: ${best_opportunity.profitability_range:.2f})"
+                            )
+                        else:
+                            logger.info("  Breakeven Range: Not calculated")
+
                         logger.info(
                             f"  Liquidity Score: {best_opportunity.combined_liquidity_score:.3f}"
                         )

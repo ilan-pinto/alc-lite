@@ -206,6 +206,90 @@ When running with `--debug`, you'll see detailed scoring information:
   Composite Score: 0.8234
 ```
 
+### Scanning for Calendar Spreads
+Calendar spreads are market-neutral options strategies that profit from the differential time decay between front and back month options. This strategy is most effective when the front month option has higher implied volatility and decays faster than the back month option.
+
+```bash
+python alchimest.py calendar --symbols SPY QQQ AAPL --cost-limit 300 --profit-target 0.25
+```
+
+**Core Parameters:**
+- `--symbols`: A list of stock symbols to scan
+- `--cost-limit`: The maximum net debit to pay for the calendar spread (default: $300)
+- `--profit-target`: Target profit as percentage of maximum profit (default: 0.25 = 25%)
+- `--quantity`: Maximum number of calendar spreads to execute (default: 1)
+
+**Advanced Calendar Spread Parameters:**
+- `--iv-spread-threshold`: Minimum IV spread between back and front months (default: 0.015 = 1.5%)
+- `--theta-ratio-threshold`: Minimum theta ratio (front/back) required (default: 1.5)
+- `--front-expiry-max-days`: Maximum days to front expiration (default: 45)
+- `--back-expiry-min-days`: Minimum days to back expiration (default: 60)
+- `--back-expiry-max-days`: Maximum days to back expiration (default: 120)
+- `--min-volume`: Minimum daily volume per option leg (default: 10)
+- `--max-bid-ask-spread`: Maximum bid-ask spread as percentage of mid (default: 0.15)
+
+**Calendar Spread Examples:**
+```bash
+# Basic calendar spread scan with default settings
+python alchimest.py calendar --symbols SPY QQQ AAPL
+
+# High IV environment with stricter requirements
+python alchimest.py calendar --symbols AAPL TSLA --iv-spread-threshold 0.04 --theta-ratio-threshold 2.0
+
+# Conservative approach with tight expiry windows
+python alchimest.py calendar --symbols SPY IWM --front-expiry-max-days 30 --back-expiry-min-days 90
+
+# High-volume liquid options only
+python alchimest.py calendar --symbols MSFT GOOGL --min-volume 50 --max-bid-ask-spread 0.10
+
+# Multiple contracts with higher cost tolerance
+python alchimest.py calendar --symbols SPY QQQ --cost-limit 500 --quantity 3 --profit-target 0.30
+
+# Using Finviz screener for large-cap stocks
+python alchimest.py calendar --fin "https://finviz.com/screener.ashx?v=111&f=cap_largeover" --cost-limit 400
+
+# Debug mode with detailed logging
+python alchimest.py calendar --debug --symbols AAPL --log calendar_debug.log
+```
+
+#### How Calendar Spreads Work
+
+Calendar spreads profit when:
+1. **IV Spread Advantage**: Back month IV is higher than front month IV (term structure inversion)
+2. **Theta Decay Differential**: Front month option decays faster than back month (higher theta ratio)
+3. **Price Stability**: Underlying stays near the strike price at front expiration
+4. **Volatility Contraction**: Front month IV decreases relative to back month
+
+#### Strategy Logic
+
+The calendar spread scanner evaluates opportunities using:
+
+**Quality Filters:**
+- Minimum implied volatility spread between expiration months
+- Theta ratio requirements ensuring favorable time decay
+- Liquidity filters (volume, bid-ask spreads)
+- Expiration window constraints
+
+**Scoring System:**
+- **IV Spread Score**: Higher scores for greater back-front IV differential
+- **Theta Ratio Score**: Rewards higher front/back theta ratios
+- **Profit Potential**: Based on maximum profit vs net debit ratio
+- **Market Quality**: Considers liquidity and execution quality
+
+**Global Selection Process:**
+1. Scans all symbols for calendar spread opportunities
+2. Applies quality filters and calculates composite scores
+3. Ranks opportunities across all symbols and expirations
+4. Executes the highest-scoring opportunity that meets all criteria
+
+#### Risk Management Features
+
+- **Cost Limits**: Maximum net debit controls per-trade risk
+- **Quality Thresholds**: Ensures adequate liquidity and tight spreads
+- **Expiration Management**: Controlled front/back month relationships
+- **Circuit Breakers**: API failure protection and recovery
+- **Performance Monitoring**: Comprehensive metrics and profiling
+
 ### Performance Metrics and Monitoring
 The application includes comprehensive metrics collection to track scanning performance:
 
