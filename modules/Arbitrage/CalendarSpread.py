@@ -21,7 +21,7 @@ except ImportError:
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
-from .common import configure_logging, get_logger
+from .common import get_logger
 from .metrics import RejectionReason, metrics_collector
 
 
@@ -705,8 +705,8 @@ class CalendarSpreadExecutor(BaseExecutor):
             currency="USD",
         )
 
-        # Calculate limit price (net debit) - use optimized pricing
-        limit_price = self.calculate_optimized_limit_price(opportunity)
+        # Calculate limit price (net debit) - use midpoint pricing for executor
+        limit_price = opportunity.net_debit
 
         order = Order(
             orderId=self.ib.client.getReqId(),
@@ -928,6 +928,25 @@ class CalendarSpreadExecutor(BaseExecutor):
             )
             return False
 
+        # Check profit target
+        profit_ratio = (
+            opportunity.max_profit / opportunity.net_debit
+            if opportunity.net_debit > 0
+            else 0.0
+        )
+        if profit_ratio < self.config.target_profit_ratio:
+            metrics_collector.add_rejection_reason(
+                RejectionReason.PROFIT_RATIO_THRESHOLD_NOT_MET,
+                {
+                    "symbol": self.symbol,
+                    "profit_ratio": profit_ratio,
+                    "target_ratio": self.config.target_profit_ratio,
+                    "max_profit": opportunity.max_profit,
+                    "net_debit": opportunity.net_debit,
+                },
+            )
+            return False
+
         return True
 
     def _calculate_spread_percentage(self, leg: CalendarSpreadLeg) -> float:
@@ -940,83 +959,6 @@ class CalendarSpreadExecutor(BaseExecutor):
             return 1.0
 
         return (leg.ask - leg.bid) / mid_price
-
-    def calculate_optimized_limit_price(
-        self, opportunity: CalendarSpreadOpportunity
-    ) -> float:
-        """
-        Calculate execution-optimized limit price using bid/ask aware pricing
-
-        This method implements asymmetric pricing for better execution:
-        - Back leg: pay closer to ask (we're buying)
-        - Front leg: receive closer to bid (we're selling)
-        """
-        # Validate bid/ask data
-        if (
-            opportunity.front_leg.bid <= 0
-            or opportunity.front_leg.ask <= 0
-            or opportunity.back_leg.bid <= 0
-            or opportunity.back_leg.ask <= 0
-        ):
-            logger.warning(
-                f"[{opportunity.symbol}] Invalid bid/ask data, falling back to midpoint pricing"
-            )
-            return opportunity.net_debit
-
-        # Calculate spread widths
-        front_spread = opportunity.front_leg.ask - opportunity.front_leg.bid
-        back_spread = opportunity.back_leg.ask - opportunity.back_leg.bid
-
-        # Calculate spread percentages
-        front_spread_pct = front_spread / max(opportunity.front_leg.price, 0.01)
-        back_spread_pct = back_spread / max(opportunity.back_leg.price, 0.01)
-
-        # Dynamic edge factors based on liquidity
-        front_edge = self.config.base_edge_factor
-        back_edge = self.config.base_edge_factor
-
-        # Increase edge for wide spreads
-        if front_spread_pct > self.config.wide_spread_threshold:
-            front_edge = min(
-                self.config.max_edge_factor,
-                front_edge + (front_spread_pct - self.config.wide_spread_threshold),
-            )
-        if back_spread_pct > self.config.wide_spread_threshold:
-            back_edge = min(
-                self.config.max_edge_factor,
-                back_edge + (back_spread_pct - self.config.wide_spread_threshold),
-            )
-
-        # Time of day adjustment
-        if self.config.time_adjustment_enabled:
-            time_factor = self._get_time_adjustment_factor()
-            front_edge *= time_factor
-            back_edge *= time_factor
-
-        # Calculate execution prices
-        # Back leg: pay closer to ask (we're buying)
-        back_execution_price = opportunity.back_leg.bid + (back_edge * back_spread)
-
-        # Front leg: receive closer to bid (we're selling)
-        front_execution_price = opportunity.front_leg.ask - (front_edge * front_spread)
-
-        net_debit = back_execution_price - front_execution_price
-
-        # Safety bound: don't pay more than 150% of midpoint
-        midpoint_debit = opportunity.net_debit  # Current midpoint-based calculation
-        max_acceptable = midpoint_debit * 1.5
-
-        optimized_price = round(min(net_debit, max_acceptable), 2)
-
-        # Log pricing details
-        logger.info(
-            f"[{opportunity.symbol}] Price optimization: "
-            f"Midpoint=${midpoint_debit:.2f}, Optimized=${optimized_price:.2f}, "
-            f"Edge=${optimized_price - midpoint_debit:.2f} "
-            f"(Front edge={front_edge:.2f}, Back edge={back_edge:.2f})"
-        )
-
-        return optimized_price
 
     def _get_time_adjustment_factor(self) -> float:
         """Get pricing adjustment based on US market time (adjusted for Israel timezone)"""
@@ -1084,6 +1026,113 @@ class CalendarSpreadExecutor(BaseExecutor):
 
         except Exception as e:
             logger.error(f"Error executing calendar spread: {str(e)}")
+
+    def calculate_optimized_limit_price(
+        self, opportunity: CalendarSpreadOpportunity
+    ) -> float:
+        """
+        Calculate execution-optimized limit price using bid/ask aware pricing
+        This method implements asymmetric pricing for better execution:
+        - Back leg: pay closer to ask (we're buying)
+        - Front leg: receive closer to bid (we're selling)
+        """
+        # Validate bid/ask data
+        if (
+            opportunity.front_leg.bid <= 0
+            or opportunity.front_leg.ask <= 0
+            or opportunity.back_leg.bid <= 0
+            or opportunity.back_leg.ask <= 0
+        ):
+            logger.warning(
+                f"[{opportunity.symbol}] Invalid bid/ask data, falling back to midpoint pricing"
+            )
+            return opportunity.net_debit
+
+        # Calculate spread widths
+        front_spread = opportunity.front_leg.ask - opportunity.front_leg.bid
+        back_spread = opportunity.back_leg.ask - opportunity.back_leg.bid
+
+        # Calculate spread percentages
+        front_spread_pct = front_spread / max(opportunity.front_leg.price, 0.01)
+        back_spread_pct = back_spread / max(opportunity.back_leg.price, 0.01)
+
+        # Dynamic edge factors based on liquidity
+        front_edge = self.config.base_edge_factor
+        back_edge = self.config.base_edge_factor
+
+        # Increase edge for wide spreads
+        if front_spread_pct > self.config.wide_spread_threshold:
+            front_edge = min(
+                self.config.max_edge_factor,
+                front_edge + (front_spread_pct - self.config.wide_spread_threshold),
+            )
+
+        if back_spread_pct > self.config.wide_spread_threshold:
+            back_edge = min(
+                self.config.max_edge_factor,
+                back_edge + (back_spread_pct - self.config.wide_spread_threshold),
+            )
+
+        # Time of day adjustment
+        if self.config.time_adjustment_enabled:
+            time_factor = self._get_time_adjustment_factor()
+            front_edge *= time_factor
+            back_edge *= time_factor
+
+        # Calculate execution prices
+        # Back leg: pay closer to ask (we're buying)
+        back_execution_price = opportunity.back_leg.bid + (back_edge * back_spread)
+
+        # Front leg: receive closer to bid (we're selling)
+        front_execution_price = opportunity.front_leg.ask - (front_edge * front_spread)
+
+        net_debit = back_execution_price - front_execution_price
+
+        # Safety bound: don't pay more than 150% of midpoint
+        midpoint_debit = opportunity.net_debit  # Current midpoint-based calculation
+        max_acceptable = midpoint_debit * 1.5
+
+        optimized_price = round(min(net_debit, max_acceptable), 2)
+
+        # Log pricing details
+        logger.info(
+            f"[{opportunity.symbol}] Price optimization: "
+            f"Midpoint=${midpoint_debit:.2f}, Optimized=${optimized_price:.2f}, "
+            f"Edge=${optimized_price - midpoint_debit:.2f} "
+            f"(Front edge={front_edge:.2f}, Back edge={back_edge:.2f})"
+        )
+
+        return optimized_price
+
+    def _get_time_adjustment_factor(self) -> float:
+        """Get pricing adjustment based on US market time (adjusted for Israel timezone)"""
+        from datetime import datetime
+
+        import pytz
+
+        # Get current time in Israel timezone
+        israel_tz = pytz.timezone("Asia/Jerusalem")
+        now_israel = datetime.now(israel_tz)
+
+        # Convert to US Eastern time (market timezone)
+        us_eastern = pytz.timezone("US/Eastern")
+        now_eastern = now_israel.astimezone(us_eastern)
+
+        # Market hours: 9:30 AM - 4:00 PM ET
+        market_open = now_eastern.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_eastern.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        if market_open <= now_eastern <= market_close:
+            # During market hours
+            if now_eastern.hour < 11:  # Morning (9:30-11:00)
+                return 1.1  # More aggressive pricing
+            elif now_eastern.hour >= 15:  # Afternoon (3:00-4:00)
+                return 1.2  # Even more aggressive near close
+            else:  # Midday (11:00-3:00)
+                return 1.0  # Standard pricing
+        else:
+            # Outside market hours - more conservative
+            return 0.9
 
 
 class CalendarSpread(ArbitrageClass):
@@ -2236,6 +2285,26 @@ class CalendarSpread(ArbitrageClass):
                         front_leg.days_to_expiry,
                     )
 
+                    # Apply profit target filtering
+                    profit_ratio = max_profit / net_debit if net_debit > 0 else 0.0
+                    if profit_ratio < self.config.target_profit_ratio:
+                        logger.info(
+                            f"[{symbol}] {option_type} {strike}: Profit ratio insufficient: {profit_ratio:.2f} < {self.config.target_profit_ratio:.2f} (max_profit: ${max_profit:.2f}, net_debit: ${net_debit:.2f})"
+                        )
+                        metrics_collector.add_rejection_reason(
+                            RejectionReason.PROFIT_RATIO_THRESHOLD_NOT_MET,
+                            {
+                                "symbol": symbol,
+                                "strike": strike,
+                                "option_type": option_type,
+                                "profit_ratio": profit_ratio,
+                                "target_ratio": self.config.target_profit_ratio,
+                                "max_profit": max_profit,
+                                "net_debit": net_debit,
+                            },
+                        )
+                        continue
+
                     front_liquidity = self._calculate_liquidity_score(front_leg)
                     back_liquidity = self._calculate_liquidity_score(back_leg)
                     combined_liquidity = (front_liquidity + back_liquidity) / 2.0
@@ -2398,7 +2467,10 @@ class CalendarSpread(ArbitrageClass):
 
         # Profit potential component (0-20%)
         profit_ratio = max_profit / net_debit if net_debit > 0 else 0.0
-        profit_score = min(1.0, profit_ratio / 2.0)  # Normalize to 200% return
+        # Use target_profit_ratio as the baseline, giving higher scores for exceeding target
+        profit_score = min(
+            1.0, profit_ratio / (self.config.target_profit_ratio * 2.0)
+        )  # Normalize to 2x target ratio
 
         # Term structure inversion bonus (0-10%)
         inversion_bonus = 1.0 if term_structure_inversion else 0.0
@@ -2469,6 +2541,36 @@ class CalendarSpread(ArbitrageClass):
 
         return calendar_contract, order
 
+    def _get_time_adjustment_factor(self) -> float:
+        """Get pricing adjustment based on US market time (adjusted for Israel timezone)"""
+        from datetime import datetime
+
+        import pytz
+
+        # Get current time in Israel timezone
+        israel_tz = pytz.timezone("Asia/Jerusalem")
+        now_israel = datetime.now(israel_tz)
+
+        # Convert to US Eastern time (market timezone)
+        us_eastern = pytz.timezone("US/Eastern")
+        now_eastern = now_israel.astimezone(us_eastern)
+
+        # Market hours: 9:30 AM - 4:00 PM ET
+        market_open = now_eastern.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_eastern.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        if market_open <= now_eastern <= market_close:
+            # During market hours
+            if now_eastern.hour < 11:  # Morning (9:30-11:00)
+                return 1.1  # More aggressive pricing
+            elif now_eastern.hour >= 15:  # Afternoon (3:00-4:00)
+                return 1.2  # Even more aggressive near close
+            else:  # Midday (11:00-3:00)
+                return 1.0  # Standard pricing
+        else:
+            # Outside market hours - more conservative
+            return 0.9
+
     async def scan(
         self,
         symbol_list: List[str],
@@ -2492,7 +2594,21 @@ class CalendarSpread(ArbitrageClass):
 
         # Update configuration
         self.config.max_net_debit = cost_limit
-        self.config.target_profit_ratio = profit_target
+
+        # Validate and set profit target
+        if profit_target <= 0.0:
+            logger.warning(
+                f"Invalid profit_target {profit_target}, using default 0.3 (30%)"
+            )
+            self.config.target_profit_ratio = 0.3
+        elif profit_target > 3.0:
+            logger.warning(
+                f"Profit target {profit_target} seems high (>300%), using 3.0"
+            )
+            self.config.target_profit_ratio = 3.0
+        else:
+            self.config.target_profit_ratio = profit_target
+
         self.quantity = quantity
 
         try:
@@ -2694,10 +2810,15 @@ class CalendarSpread(ArbitrageClass):
                     success = self.global_manager.add_opportunity(symbol, opportunity)
                     if success:
                         opportunities_reported += 1
+                        profit_ratio = (
+                            opportunity.max_profit / opportunity.net_debit
+                            if opportunity.net_debit > 0
+                            else 0.0
+                        )
                         logger.info(
                             f"[{symbol}] Reported calendar spread opportunity: "
                             f"{opportunity.option_type} {opportunity.strike} "
-                            f"IV: {opportunity.iv_spread:.1f}% Score: {opportunity.composite_score:.3f}"
+                            f"IV: {opportunity.iv_spread:.1f}% Profit ratio: {profit_ratio:.1%} Score: {opportunity.composite_score:.3f}"
                         )
 
                 logger.info(
@@ -2744,6 +2865,7 @@ class CalendarSpread(ArbitrageClass):
 
             logger.info(f"[{symbol}] Starting calendar spread scan with parameters:")
             logger.info(f"  Max net debit: ${self.config.max_net_debit:.0f}")
+            logger.info(f"  Target profit ratio: {self.config.target_profit_ratio:.1%}")
             logger.info(f"  Min IV spread: {self.config.min_iv_spread:.1f}%")
             logger.info(f"  Min theta ratio: {self.config.min_theta_ratio:.1f}")
             logger.info(f"  Front expiry max: {self.config.max_days_front}d")
@@ -3190,7 +3312,7 @@ class CalendarSpread(ArbitrageClass):
             logger.debug("IB connection optimized for calendar spread performance")
 
         except Exception as e:
-            logger.warning(
+            logger.info(
                 f"Some IB optimization settings failed (continuing anyway): {e}"
             )
 

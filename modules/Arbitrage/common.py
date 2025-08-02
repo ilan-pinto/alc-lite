@@ -29,11 +29,23 @@ class InfoOnlyFilter(logging.Filter):
         return record.levelno == logging.INFO
 
 
-class WarningFilter(logging.Filter):
+class InfoWarningFilter(logging.Filter):
     """Filter that allows INFO and WARNING-level logs through."""
 
     def filter(self, record):
         return record.levelno in [logging.INFO, logging.WARNING]
+
+
+class InfoWarningErrorCriticalFilter(logging.Filter):
+    """Filter that allows INFO, WARNING, ERROR, and CRITICAL logs through (but not DEBUG)."""
+
+    def filter(self, record):
+        return record.levelno in [
+            logging.INFO,
+            logging.WARNING,
+            logging.ERROR,
+            logging.CRITICAL,
+        ]
 
 
 def get_console_handler(filter_type: str = "info") -> RichHandler:
@@ -43,7 +55,8 @@ def get_console_handler(filter_type: str = "info") -> RichHandler:
         filter_type: Type of filter to apply:
             - "info": Show only INFO messages (default)
             - "warning": Show INFO and WARNING messages
-            - "none": Show all log levels (DEBUG, INFO, WARNING, ERROR)
+            - "error": Show INFO, WARNING, ERROR, and CRITICAL messages (no DEBUG)
+            - "none": Show all log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
     Returns:
         RichHandler: Configured handler with appropriate filter
@@ -62,7 +75,9 @@ def get_console_handler(filter_type: str = "info") -> RichHandler:
     if filter_type == "info":
         handler.addFilter(InfoOnlyFilter())
     elif filter_type == "warning":
-        handler.addFilter(WarningFilter())
+        handler.addFilter(InfoWarningFilter())
+    elif filter_type == "error":
+        handler.addFilter(InfoWarningErrorCriticalFilter())
     elif filter_type == "none":
         pass  # No filter added
     else:
@@ -77,25 +92,30 @@ def configure_logging(
     use_info_filter: bool = True,
     debug: bool = False,
     warning: bool = False,
+    error: bool = False,
     log_file: str = None,
 ) -> None:
     """Configure logging with Rich handler and optional file output.
 
     Args:
         level: Base logging level (default: INFO)
-        use_info_filter: Whether to use INFO-only filter when debug/warning are False
-        debug: If True, show all log levels (DEBUG, INFO, WARNING, ERROR)
+        use_info_filter: Whether to use INFO-only filter when debug/warning/error are False
+        debug: If True, show all log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         warning: If True, show INFO and WARNING levels only
+        error: If True, show INFO, WARNING, ERROR, and CRITICAL levels (no DEBUG)
         log_file: Optional path to log file for persistent logging
 
     Note:
-        - debug=True takes precedence over warning=True
-        - When both debug and warning are False, uses INFO-only filter (if use_info_filter=True)
+        - debug=True takes precedence over error=True and warning=True
+        - error=True takes precedence over warning=True
+        - When all flags are False, uses INFO-only filter (if use_info_filter=True)
         - File logging (if enabled) applies the same filter as console logging
     """
     # Determine filter type based on flags
     if debug:
         filter_type = "none"  # Show all levels
+    elif error:
+        filter_type = "error"  # Show INFO, WARNING, ERROR, CRITICAL (no DEBUG)
     elif warning:
         filter_type = "warning"  # Show INFO and WARNING
     else:
@@ -117,7 +137,9 @@ def configure_logging(
         if filter_type == "info":
             file_handler.addFilter(InfoOnlyFilter())
         elif filter_type == "warning":
-            file_handler.addFilter(WarningFilter())
+            file_handler.addFilter(InfoWarningFilter())
+        elif filter_type == "error":
+            file_handler.addFilter(InfoWarningErrorCriticalFilter())
         # No filter for "none" type (debug mode)
 
         handlers.append(file_handler)
@@ -126,6 +148,7 @@ def configure_logging(
         level=logging.DEBUG if debug else level,
         format="%(message)s",
         handlers=handlers,
+        force=True,  # Override any existing logging configuration
     )
 
 

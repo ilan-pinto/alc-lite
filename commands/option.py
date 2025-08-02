@@ -23,15 +23,13 @@ def _configure_logging_level(debug=False, warning=False, error=False):
         logger.debug("Debug logging enabled - all levels shown")
     elif error:
         # Error mode: show INFO, WARNING, ERROR, CRITICAL (but not DEBUG)
-        configure_logging(
-            level=logging.INFO, use_info_filter=False, debug=False, warning=False
-        )
+        configure_logging(error=True, use_info_filter=False)
         logger.info(
             "Error logging enabled - INFO, WARNING, ERROR and CRITICAL messages will be shown"
         )
     elif warning:
         # Warning mode: show INFO and WARNING (original behavior)
-        configure_logging(warning=True)
+        configure_logging(warning=True, use_info_filter=False)
         logger.info("Warning logging enabled - INFO and WARNING messages will be shown")
     else:
         # Default: INFO only (original behavior)
@@ -454,7 +452,7 @@ class OptionScan:
             if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
                 calendar.ib.disconnect()
         except Exception as e:
-            logger.error(f"Error in calendar spread scan: {str(e)}")
+            logger.info(f"[Error] in calendar spread scan: {str(e)}")
             if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
                 calendar.ib.disconnect()
             raise

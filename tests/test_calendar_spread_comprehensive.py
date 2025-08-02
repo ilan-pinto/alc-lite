@@ -1925,7 +1925,7 @@ class TestCalendarSpreadOptimizedPricing:
 
             # Should return one of the valid adjustment factors
             assert isinstance(factor, float)
-            assert factor in [1.0, 1.3, 1.5]
+            assert factor in [0.9, 1.0, 1.1, 1.2]
 
     def test_get_time_adjustment_factor_mid_day(self):
         """Test time adjustment factor during mid-day (10:00 AM - 3:30 PM)"""
@@ -1947,7 +1947,7 @@ class TestCalendarSpreadOptimizedPricing:
 
             # Should return one of the valid adjustment factors
             assert isinstance(factor, float)
-            assert factor in [1.0, 1.3, 1.5]
+            assert factor in [0.9, 1.0, 1.1, 1.2]
 
     def test_get_time_adjustment_factor_pre_post_market(self):
         """Test time adjustment factor during pre/post market hours"""
@@ -1967,7 +1967,7 @@ class TestCalendarSpreadOptimizedPricing:
             factor = executor._get_time_adjustment_factor()
 
             # Should return one of the valid factors
-            assert factor in [1.0, 1.3, 1.5]
+            assert factor in [0.9, 1.0, 1.1, 1.2]
 
     def test_optimized_pricing_with_invalid_bid_ask_fallback(self):
         """Test that optimized pricing falls back to midpoint when bid/ask data is invalid"""
@@ -2145,6 +2145,15 @@ class TestCalendarSpreadDetectorIntegration:
             days_to_expiry=65,
         )
 
+        # Calculate max_profit to ensure profit ratio > 0.3 for valid test cases
+        # Only apply this when net_debit is positive and not None/NaN
+        if net_debit is not None and not np.isnan(net_debit) and net_debit > 0:
+            # Use profit ratio of 0.35 (35%) to be safely above the 30% threshold
+            max_profit = net_debit * 0.35
+        else:
+            # For invalid net_debit cases, use a fixed value
+            max_profit = 1.0
+
         return CalendarSpreadOpportunity(
             symbol="SPY",
             strike=450,
@@ -2154,7 +2163,7 @@ class TestCalendarSpreadDetectorIntegration:
             iv_spread=3.0,
             theta_ratio=2.0,
             net_debit=net_debit,  # Above thresholds
-            max_profit=1.0,
+            max_profit=max_profit,
             max_loss=3.25,
             front_bid_ask_spread=0.036,
             back_bid_ask_spread=0.023,
