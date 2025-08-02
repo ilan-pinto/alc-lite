@@ -25,7 +25,6 @@ from commands.option import OptionScan
 from modules.Arbitrage.CalendarSpread import (
     CalendarSpread,
     CalendarSpreadConfig,
-    CalendarSpreadExecutor,
     CalendarSpreadLeg,
     CalendarSpreadOpportunity,
 )

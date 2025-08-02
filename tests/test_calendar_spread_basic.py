@@ -13,7 +13,6 @@ import pytest
 from modules.Arbitrage.CalendarSpread import (
     CalendarSpread,
     CalendarSpreadConfig,
-    CalendarSpreadExecutor,
     CalendarSpreadLeg,
     CalendarSpreadOpportunity,
 )
