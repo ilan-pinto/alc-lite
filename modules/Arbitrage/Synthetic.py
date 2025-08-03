@@ -13,14 +13,11 @@ from ib_async import IB, Contract, Option, Order, Ticker
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
-from .common import configure_logging, get_logger
+from .common import get_logger
 from .metrics import RejectionReason, metrics_collector
 
 # Global contract_ticker for use in SynExecutor and patching in tests
 contract_ticker = {}
-
-# Global variable to store debug mode
-_debug_mode = False
 
 # Configure logging will be done in main
 logger = get_logger()
@@ -1122,13 +1119,8 @@ class Syn(ArbitrageClass):
     def __init__(
         self,
         log_file: str = None,
-        debug: bool = False,
         scoring_config: ScoringConfig = None,
     ):
-        global _debug_mode
-        _debug_mode = debug
-        # Reconfigure logging with debug mode
-        configure_logging(level=logging.INFO, debug=debug)
         super().__init__(log_file=log_file)
         self.active_executors: Dict[str, SynExecutor] = {}
         self.global_manager = GlobalOpportunityManager(scoring_config)

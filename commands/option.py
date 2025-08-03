@@ -164,7 +164,7 @@ class OptionScan:
         # Configure logging level based on CLI flags
         _configure_logging_level(debug=debug, warning=warning, error=error)
 
-        sfr = SFR(log_file=log_file, debug=debug)
+        sfr = SFR(log_file=log_file)
         default_list = [
             "SPY",
             "MRK",
@@ -260,7 +260,7 @@ class OptionScan:
         _configure_logging_level(debug=debug, warning=warning, error=error)
 
         # Create Syn instance with scoring configuration
-        syn = Syn(log_file=log_file, debug=debug, scoring_config=scoring_config)
+        syn = Syn(log_file=log_file, scoring_config=scoring_config)
         default_list = [
             "SPY",
             "MRK",

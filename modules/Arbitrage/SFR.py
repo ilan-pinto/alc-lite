@@ -10,11 +10,8 @@ from ib_async import IB, Contract, Order, Ticker
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
-from .common import configure_logging, get_logger
+from .common import get_logger
 from .metrics import RejectionReason, metrics_collector
-
-# Global variable to store debug mode
-_debug_mode = False
 
 # Configure logging will be done in main
 logger = get_logger()
@@ -648,11 +645,7 @@ class SFR(ArbitrageClass):
     that handles all expiries, eliminating the need to constantly add/remove event handlers.
     """
 
-    def __init__(self, log_file: str = None, debug: bool = False):
-        global _debug_mode
-        _debug_mode = debug
-        # Reconfigure logging with debug mode
-        configure_logging(level=logging.INFO, debug=debug)
+    def __init__(self, log_file: str = None):
         super().__init__(log_file=log_file)
 
     def cleanup_inactive_executors(self):
