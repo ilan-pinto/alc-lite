@@ -166,7 +166,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -325,7 +325,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -477,7 +477,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -617,7 +617,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -727,7 +727,7 @@ class TestSyntheticArbitrageIntegration:
         mock_ib = MockIB()
         self.mock_ib_instances.append(mock_ib)
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -944,7 +944,7 @@ class TestSyntheticArbitrageIntegration:
         mock_ib = MockIB()
         self.mock_ib_instances.append(mock_ib)
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -1038,7 +1038,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -1141,7 +1141,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -1230,7 +1230,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -1432,7 +1432,7 @@ class TestSyntheticArbitrageIntegration:
         print(f"  📊 Expected Expiry 2 risk-reward ratio: ~1.77 (better)")
         print(f"  📊 Algorithm should select Expiry 2 with higher ratio")
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -1568,7 +1568,7 @@ class TestSyntheticArbitrageIntegration:
         self.mock_ib_instances.append(mock_ib)
         mock_ib.test_market_data = market_data
 
-        syn = Syn(debug=True)
+        syn = Syn()
         syn.ib = mock_ib
         syn.order_manager = MagicMock()
 
@@ -1687,7 +1687,7 @@ class TestGlobalOpportunitySelectionIntegration:
         print("\n🔍 Testing synthetic global selection integration")
 
         # Create Syn instance with global selection enabled
-        syn = Syn(debug=True, scoring_config=ScoringConfig.create_balanced())
+        syn = Syn(scoring_config=ScoringConfig.create_balanced())
 
         # Verify global manager is properly initialized
         assert syn.global_manager is not None
@@ -1795,7 +1795,7 @@ class TestGlobalOpportunitySelectionIntegration:
         print("\n🔍 Testing multiple symbols global best selection")
 
         # Create Syn instance with aggressive strategy (favors high risk-reward)
-        syn = Syn(debug=True, scoring_config=ScoringConfig.create_aggressive())
+        syn = Syn(scoring_config=ScoringConfig.create_aggressive())
 
         # Create opportunities with different risk profiles
 
@@ -1959,7 +1959,7 @@ class TestGlobalOpportunitySelectionIntegration:
             print(f"  🧪 Testing {strategy_name.upper()} strategy:")
 
             # Create fresh Syn instance for each strategy
-            syn = Syn(debug=True, scoring_config=config)
+            syn = Syn(scoring_config=config)
             mock_ib = MockIB()
             syn.ib = mock_ib
             syn.order_manager = MagicMock()

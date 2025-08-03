@@ -7,13 +7,10 @@ box spread specific business logic.
 """
 
 import asyncio
-import time
-from datetime import datetime
 from itertools import permutations
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-import numpy as np
-from ib_async import Contract, FuturesOption, Index, Option, OptionChain, Stock, Ticker
+from ib_async import Contract, FuturesOption, Index, Option, OptionChain, Stock
 
 from modules.Arbitrage.Strategy import ArbitrageClass
 
@@ -22,13 +19,7 @@ from ..metrics import RejectionReason, metrics_collector
 from .executor import BoxExecutor
 from .models import BoxSpreadConfig, BoxSpreadLeg, BoxSpreadOpportunity
 from .opportunity_manager import BoxOpportunityManager
-from .utils import (
-    AdaptiveCacheManager,
-    PerformanceProfiler,
-    TTLCache,
-    VectorizedGreeksCalculator,
-    _safe_isnan,
-)
+from .utils import AdaptiveCacheManager, PerformanceProfiler, TTLCache, _safe_isnan
 
 logger = get_logger()
 
@@ -119,6 +110,9 @@ class BoxSpread(ArbitrageClass):
             symbol: Stock symbol to scan
         """
         try:
+            # Start metrics collection for this scan
+            metrics_collector.start_scan(symbol, "BoxSpread")
+
             # Define the underlying stock
             exchange, option_type, stock = self.get_stock_contract(symbol)
 
@@ -150,14 +144,16 @@ class BoxSpread(ArbitrageClass):
                 chain = await self._get_chain(stock, exchange=exchange)
                 await self.search_box_in_chain(chain, option_type, stock, stock_price)
 
+            # Finish scan successfully
+            metrics_collector.finish_scan(success=True)
+
         except Exception as e:
             logger.error(f"Error scanning box spreads for {symbol}: {e}")
-            metrics_collector.record_rejection(
-                strategy="box_spread",
-                symbol=symbol,
-                reason=RejectionReason.SCAN_ERROR,
-                details=str(e),
+            metrics_collector.add_rejection_reason(
+                RejectionReason.DATA_COLLECTION_TIMEOUT,
+                {"symbol": symbol, "error": str(e)},
             )
+            metrics_collector.finish_scan(success=False, error_message=str(e))
 
     async def search_box_in_chain(
         self, chain: OptionChain, option_type, stock: Contract, stock_price: float
@@ -300,8 +296,6 @@ class BoxSpread(ArbitrageClass):
 
             if not contracts:
                 return
-
-            long_call_k1, short_call_k2, short_put_k1, long_put_k2 = contracts
 
             # Qualify contracts
             await self.ib.qualifyContractsAsync(*contracts)
@@ -447,7 +441,7 @@ class BoxSpread(ArbitrageClass):
                 composite_score=0.0,
             )
 
-            # Create and register executor
+            # Create executor and add to active executors for master_executor management
             box_executor = BoxExecutor(
                 opportunity=opportunity,
                 ib=self.ib,
@@ -455,8 +449,8 @@ class BoxSpread(ArbitrageClass):
                 config=self.config,
             )
 
-            # Register executor with pending tickers event
-            self.ib.pendingTickersEvent += box_executor.executor
+            # Add executor to active executors - managed by master_executor
+            self.active_executors[opportunity.symbol] = box_executor
 
         except Exception as e:
             logger.error(f"Error creating box executor: {e}")
@@ -521,6 +515,12 @@ class BoxSpread(ArbitrageClass):
         # Connect to IB
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=clientId)
 
+        # Register order fill handler
+        self.ib.orderStatusEvent += self.onFill
+
+        # Register master executor for handling market data events
+        self.ib.pendingTickersEvent += self.master_executor
+
         # Initialize global contract ticker
         global contract_ticker
         contract_ticker = {}
@@ -532,6 +532,12 @@ class BoxSpread(ArbitrageClass):
 
         try:
             while True:
+                # Start performance timing for this cycle
+                self.profiler.start_timer("full_scan_cycle")
+
+                # Start cycle metrics tracking
+                metrics_collector.start_cycle(len(symbol_list))
+
                 # Scan all symbols in parallel
                 tasks = []
                 for symbol in symbol_list:
@@ -547,6 +553,17 @@ class BoxSpread(ArbitrageClass):
                 scan_summary = self.global_manager.get_scan_summary()
                 logger.info(f"Scan iteration complete: {scan_summary}")
 
+                # Finish cycle tracking
+                metrics_collector.finish_cycle()
+
+                # Print cycle metrics summary
+                if len(metrics_collector.scan_metrics) > 0:
+                    metrics_collector.print_summary()
+
+                # End performance timing for this cycle
+                cycle_duration = self.profiler.end_timer("full_scan_cycle")
+                logger.debug(f"Scan cycle completed in {cycle_duration:.2f} seconds")
+
                 # Clear contract ticker and reset for next iteration
                 contract_ticker.clear()
 
@@ -561,6 +578,14 @@ class BoxSpread(ArbitrageClass):
         except Exception as e:
             logger.error(f"Error in box spread scan: {e}")
         finally:
+            # Always print final metrics summary before exiting
+            logger.info("Box spread scanning complete - printing final metrics summary")
+            if len(metrics_collector.scan_metrics) > 0:
+                metrics_collector.print_summary()
+
+            # Print performance profiling report
+            self.profiler.log_performance_report()
+
             # Final cleanup
             scan_summary = self.global_manager.get_scan_summary()
             logger.info(f"Box spread scan completed: {scan_summary}")

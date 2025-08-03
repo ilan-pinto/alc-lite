@@ -207,7 +207,7 @@ class TestArbitrageIntegration:
             print("  ⚠️ Could not find C131 or P130 in market data")
 
         # Create SFR instance with debug logging
-        sfr = SFR(debug=True)
+        sfr = SFR()
 
         # Test the core method that was causing failures
         test_strikes = [128.0, 129.0, 130.0, 131.0, 132.0, 133.0, 134.0, 135.0]
@@ -607,7 +607,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = market_data
         self.mock_ib_instances.append(mock_ib)  # Track MockIB instance
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
         sfr.order_manager = MagicMock()
 
@@ -796,7 +796,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = market_data
         self.mock_ib_instances.append(mock_ib)  # Track MockIB instance
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
         sfr.order_manager = MagicMock()
 
@@ -1018,7 +1018,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = market_data
         self.mock_ib_instances.append(mock_ib)  # Track MockIB instance
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
         sfr.order_manager = MagicMock()
 
@@ -1184,7 +1184,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = market_data
         self.mock_ib_instances.append(mock_ib)  # Track MockIB instance
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
 
         # Test the strike position finding logic directly
@@ -1273,7 +1273,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = multi_market_data
         self.mock_ib_instances.append(mock_ib)  # Track MockIB instance
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
         sfr.order_manager = MagicMock()
 
@@ -1570,7 +1570,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = multi_market_data
         self.mock_ib_instances.append(mock_ib)  # Track MockIB instance
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
         sfr.order_manager = MagicMock()
 
@@ -1955,7 +1955,7 @@ class TestArbitrageIntegration:
         mock_ib.test_market_data = enhanced_market_data
         self.mock_ib_instances.append(mock_ib)
 
-        sfr = SFR(debug=True)
+        sfr = SFR()
         sfr.ib = mock_ib
         sfr.order_manager = MagicMock()
 

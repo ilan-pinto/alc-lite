@@ -170,11 +170,12 @@ class BoxOpportunityManager:
             opportunity.composite_score = self._calculate_composite_score(opportunity)
 
             # Track metrics
-            metrics_collector.record_opportunity_found(
-                strategy="box_spread",
-                symbol=symbol,
-                profit=opportunity.arbitrage_profit,
-                score=opportunity.composite_score,
+            metrics_collector.record_opportunity_found()
+
+            # Log successful opportunity found
+            logger.info(
+                f"[{symbol}] OPPORTUNITY FOUND - Box spread K1={k1_strike}, K2={k2_strike}: "
+                f"profit=${opportunity.arbitrage_profit:.4f}, score={opportunity.composite_score:.3f}"
             )
 
             self.total_opportunities_found += 1
@@ -495,13 +496,27 @@ class BoxOpportunityManager:
         key = f"{symbol}_{combination}"
         self.rejected_opportunities[key] = reasons
 
-        # Record metrics
+        # Log rejection with details
+        reason_text = ", ".join(reasons)
+        logger.warning(f"[{symbol}] REJECTED - Box spread {combination}: {reason_text}")
+
+        # Record metrics - use appropriate rejection reason
         for reason in reasons:
-            metrics_collector.record_rejection(
-                strategy="box_spread",
-                symbol=symbol,
-                reason=RejectionReason.OTHER,  # Could be more specific
-                details=reason,
+            # Map rejection reasons to appropriate enum values
+            if "profit" in reason.lower() or "target" in reason.lower():
+                rejection_reason = RejectionReason.PROFIT_TARGET_NOT_MET
+            elif "strike" in reason.lower() or "combination" in reason.lower():
+                rejection_reason = RejectionReason.INVALID_STRIKE_COMBINATION
+            elif "liquidity" in reason.lower() or "volume" in reason.lower():
+                rejection_reason = RejectionReason.VOLUME_TOO_LOW
+            elif "spread" in reason.lower():
+                rejection_reason = RejectionReason.BID_ASK_SPREAD_TOO_WIDE
+            else:
+                rejection_reason = RejectionReason.INVALID_CONTRACT_DATA
+
+            metrics_collector.add_rejection_reason(
+                rejection_reason,
+                {"symbol": symbol, "combination": combination, "reason": reason},
             )
 
     def get_scan_summary(self) -> dict:

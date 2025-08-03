@@ -14,6 +14,7 @@ import numpy as np
 from ib_async import IB, ComboLeg, Contract, LimitOrder, Order, Ticker
 
 from ..common import get_logger
+from ..metrics import RejectionReason, metrics_collector
 from ..Strategy import OrderManagerClass
 from .models import BoxSpreadConfig, BoxSpreadOpportunity
 from .utils import _safe_isnan
@@ -83,6 +84,14 @@ class BoxExecutor:
                     self.required_tickers[contract.conId] = ticker
 
                 elif self._should_cancel_due_to_poor_liquidity(ticker):
+                    logger.warning(
+                        f"[{self.opportunity.symbol}] REJECTED - Poor liquidity: "
+                        f"bid/ask sizes below minimum threshold"
+                    )
+                    metrics_collector.add_rejection_reason(
+                        RejectionReason.MISSING_MARKET_DATA,
+                        {"symbol": self.opportunity.symbol, "reason": "Poor liquidity"},
+                    )
                     await self._cancel_execution("Poor liquidity")
                     return
 
@@ -97,6 +106,17 @@ class BoxExecutor:
                     if should_execute:
                         await self._execute_box_spread(limit_price)
                     else:
+                        logger.warning(
+                            f"[{self.opportunity.symbol}] REJECTED - Execution criteria not met: "
+                            f"arbitrage conditions no longer favorable"
+                        )
+                        metrics_collector.add_rejection_reason(
+                            RejectionReason.ARBITRAGE_CONDITION_NOT_MET,
+                            {
+                                "symbol": self.opportunity.symbol,
+                                "reason": "Execution criteria not met",
+                            },
+                        )
                         await self._cancel_execution("Execution criteria not met")
 
         except Exception as e:
@@ -183,8 +203,17 @@ class BoxExecutor:
 
             # Check if still profitable
             if adjusted_profit <= self.config.min_absolute_profit:
-                logger.info(
-                    f"Box spread no longer profitable: profit={adjusted_profit:.4f}"
+                logger.warning(
+                    f"[{self.opportunity.symbol}] REJECTED - Profit target not met: "
+                    f"adjusted_profit=${adjusted_profit:.4f} <= min_absolute_profit=${self.config.min_absolute_profit:.4f}"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.PROFIT_TARGET_NOT_MET,
+                    {
+                        "symbol": self.opportunity.symbol,
+                        "adjusted_profit": adjusted_profit,
+                        "min_absolute_profit": self.config.min_absolute_profit,
+                    },
                 )
                 return False, 0.0
 
@@ -192,8 +221,18 @@ class BoxExecutor:
             if current_net_debit > 0:
                 profit_pct = (adjusted_profit / current_net_debit) * 100
                 if profit_pct < self.config.min_arbitrage_profit * 100:
-                    logger.info(
-                        f"Box spread profit percentage too low: {profit_pct:.2f}%"
+                    logger.warning(
+                        f"[{self.opportunity.symbol}] REJECTED - ROI too low: "
+                        f"profit_pct={profit_pct:.2f}% < min_required={self.config.min_arbitrage_profit * 100:.2f}%"
+                    )
+                    metrics_collector.add_rejection_reason(
+                        RejectionReason.MIN_ROI_NOT_MET,
+                        {
+                            "symbol": self.opportunity.symbol,
+                            "profit_pct": profit_pct,
+                            "min_arbitrage_profit": self.config.min_arbitrage_profit
+                            * 100,
+                        },
                     )
                     return False, 0.0
 
@@ -275,9 +314,20 @@ class BoxExecutor:
 
             if trade:
                 logger.info(f"Box spread order placed successfully: {trade}")
+                metrics_collector.record_opportunity_found()
                 self.execution_completed = True
             else:
-                logger.error("Failed to place box spread order")
+                logger.warning(
+                    f"[{self.opportunity.symbol}] REJECTED - Order placement failed: "
+                    f"unable to place box spread combo order"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.ORDER_REJECTED,
+                    {
+                        "symbol": self.opportunity.symbol,
+                        "reason": "Order placement failed",
+                    },
+                )
 
             # Cleanup
             await self._cleanup_execution()

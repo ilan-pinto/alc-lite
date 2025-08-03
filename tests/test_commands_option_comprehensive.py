@@ -694,17 +694,17 @@ class TestOptionScanIntegration:
             mock_sfr.assert_called_once()
             sfr_kwargs = mock_sfr.call_args[1]
             assert sfr_kwargs["log_file"] == log_file
-            assert sfr_kwargs["debug"] == debug
+            # SFR no longer receives debug parameter
 
             mock_syn.assert_called_once()
             syn_kwargs = mock_syn.call_args[1]
             assert syn_kwargs["log_file"] == log_file
-            assert syn_kwargs["debug"] == debug
+            # Syn no longer receives debug parameter, may receive scoring_config
 
             mock_calendar.assert_called_once()
             calendar_kwargs = mock_calendar.call_args[1]
             assert calendar_kwargs["log_file"] == log_file
-            # Note: CalendarSpread doesn't receive debug parameter, only log_file
+            # CalendarSpread doesn't receive debug parameter, only log_file
 
     def test_option_scan_consistent_symbol_handling(
         self, option_scan: OptionScan
