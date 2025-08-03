@@ -109,3 +109,6 @@ temp_zip/
 *.zip
 filled_orders.txt
 .vscode/launch.json
+
+# Database files
+backtesting/infra/database/podman/data/
