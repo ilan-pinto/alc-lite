@@ -460,3 +460,164 @@ class OptionScan:
             # Ensure cleanup even if no exceptions occurred
             if hasattr(calendar, "ib") and calendar.ib and calendar.ib.isConnected():
                 calendar.ib.disconnect()
+
+    def box_finder(
+        self,
+        symbol_list,
+        cost_limit=500.0,
+        profit_target=0.01,
+        min_profit=0.05,
+        max_strike_width=50.0,
+        min_strike_width=1.0,
+        range=0.1,
+        min_volume=5,
+        max_spread=0.10,
+        min_days_expiry=1,
+        max_days_expiry=90,
+        quantity=1,
+        safety_buffer=0.02,
+        require_risk_free=True,
+        log_file=None,
+        debug=False,
+        warning=False,
+        error=False,
+        finviz_url=None,
+    ):
+        """
+        Search for box spread arbitrage opportunities.
+
+        Box spreads are risk-free arbitrage when net_debit < strike_width.
+        The strategy consists of 4 legs:
+        - Long call at K1 (lower strike)
+        - Short call at K2 (higher strike)
+        - Short put at K1 (lower strike)
+        - Long put at K2 (higher strike)
+
+        Args:
+            symbol_list: List of symbols to scan
+            cost_limit: Maximum net debit to pay (default: $500)
+            profit_target: Minimum profit as percentage (default: 0.01 = 1%)
+            min_profit: Minimum absolute profit per spread (default: $0.05)
+            max_strike_width: Maximum K2-K1 difference (default: $50)
+            min_strike_width: Minimum K2-K1 difference (default: $1)
+            range: Price range for strike selection (default: 0.1 = 10%)
+            min_volume: Minimum volume per leg (default: 5)
+            max_spread: Maximum bid-ask spread % (default: 0.10 = 10%)
+            min_days_expiry: Minimum days to expiration (default: 1)
+            max_days_expiry: Maximum days to expiration (default: 90)
+            quantity: Number of spreads to execute (default: 1)
+            safety_buffer: Safety margin % (default: 0.02 = 2%)
+            require_risk_free: Only execute risk-free arbitrage (default: True)
+            log_file: Optional log file path
+            debug/warning/error: Logging level flags
+            finviz_url: Optional Finviz screener URL
+        """
+        # Configure logging level
+        _configure_logging_level(debug=debug, warning=warning, error=error)
+
+        # Import box spread strategy
+        from modules.Arbitrage.box_spread import BoxSpread
+
+        # Create box spread strategy instance
+        box = BoxSpread(log_file=log_file)
+
+        # Configure strategy parameters
+        box.config.max_net_debit = cost_limit
+        box.config.min_arbitrage_profit = profit_target
+        box.config.min_absolute_profit = min_profit
+        box.config.max_strike_width = max_strike_width
+        box.config.min_strike_width = min_strike_width
+        box.config.min_volume_per_leg = min_volume
+        box.config.max_bid_ask_spread_percent = max_spread
+        box.config.min_days_to_expiry = min_days_expiry
+        box.config.max_days_to_expiry = max_days_expiry
+        box.config.safety_buffer = safety_buffer
+        box.config.require_risk_free = require_risk_free
+
+        # Validate configuration
+        try:
+            box.config.validate()
+        except ValueError as e:
+            logger.error(f"Invalid box spread configuration: {e}")
+            return
+
+        # Set default symbols if none provided
+        default_list = [
+            "AAPL",
+            "MSFT",
+            "GOOGL",
+            "AMZN",
+            "TSLA",
+            "META",
+            "NVDA",
+            "NFLX",
+            "SPY",
+            "QQQ",
+            "IWM",
+            "GLD",
+            "TLT",
+            "PLTR",
+        ]
+
+        # Handle Finviz URL if provided
+        if finviz_url:
+            try:
+                scraped_symbols = scrape_tickers_from_finviz(finviz_url)
+                if scraped_symbols:
+                    if symbol_list:
+                        logger.warning(
+                            "Both Finviz URL and manual symbols provided, using Finviz tickers"
+                        )
+                    symbol_list = scraped_symbols
+                    logger.info(
+                        f"Successfully loaded {len(symbol_list)} tickers from Finviz: {symbol_list}"
+                    )
+                else:
+                    logger.error(
+                        "Failed to scrape tickers from Finviz URL, falling back to provided or default symbols"
+                    )
+                    symbol_list = symbol_list if symbol_list else default_list
+            except Exception as e:
+                logger.error(f"Error processing Finviz URL: {e}")
+                symbol_list = symbol_list if symbol_list else default_list
+        elif not symbol_list:
+            symbol_list = default_list
+
+        logger.info(
+            f"Starting BOX SPREAD scan with {len(symbol_list)} symbols: {symbol_list}"
+        )
+        logger.info(
+            f"Box parameters: profit ≥{profit_target:.1%} (≥${min_profit:.2f}), "
+            f"strike width ${min_strike_width:.0f}-${max_strike_width:.0f}"
+        )
+        logger.info(
+            f"Cost limit: ${cost_limit:.0f}, expiry window: {min_days_expiry}-{max_days_expiry} days"
+        )
+        logger.info(
+            f"Volume ≥{min_volume}, spread ≤{max_spread:.1%}, "
+            f"safety buffer: {safety_buffer:.1%}, risk-free only: {require_risk_free}"
+        )
+
+        try:
+            asyncio.run(
+                box.scan(
+                    symbol_list=symbol_list,
+                    range=range,
+                    profit_target=profit_target,
+                    max_spread=max_strike_width,
+                    clientId=4,  # Use different client ID for box spreads
+                )
+            )
+        except KeyboardInterrupt:
+            logger.info("Box spread scan interrupted by user")
+            if hasattr(box, "ib") and box.ib and box.ib.isConnected():
+                box.ib.disconnect()
+        except Exception as e:
+            logger.error(f"Error in box spread scan: {str(e)}")
+            if hasattr(box, "ib") and box.ib and box.ib.isConnected():
+                box.ib.disconnect()
+            raise
+        finally:
+            # Ensure cleanup even if no exceptions occurred
+            if hasattr(box, "ib") and box.ib and box.ib.isConnected():
+                box.ib.disconnect()

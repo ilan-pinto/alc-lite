@@ -53,6 +53,9 @@ def main() -> None:
         "    %(prog)s calendar --symbols SPY QQQ AAPL --cost-limit 300 --profit-target 0.25\n"
         "    %(prog)s calendar --symbols AAPL TSLA --iv-spread-threshold 0.04 --theta-ratio-threshold 2.0\n"
         "    %(prog)s calendar --symbols SPY IWM --front-expiry-max-days 30 --min-volume 50\n\n"
+        "  Box spread scan - risk-free arbitrage from strike width differential:\n"
+        "    %(prog)s box --symbols SPY QQQ --cost-limit 500 --profit-target 0.02\n"
+        "    %(prog)s box --symbols AAPL TSLA --max-strike-width 10 --min-profit 0.10\n\n"
         "  Custom scoring weights:\n"
         "    %(prog)s syn --symbols SPY QQQ --risk-reward-weight 0.5 --liquidity-weight 0.3\n\n"
         "Calendar spreads are market-neutral strategies that profit when front month options\n"
@@ -254,6 +257,138 @@ def main() -> None:
         help="Enable error logging (shows INFO, WARNING, ERROR and CRITICAL levels)",
     )
     parser_calendar.add_argument(
+        "-f",
+        "--fin",
+        type=str,
+        default=None,
+        help="Finviz screener URL to extract ticker symbols from (wrap in quotes)",
+    )
+
+    # Box spread sub-command
+    parser_box = subparsers.add_parser(
+        "box",
+        help="Search for box spread arbitrage opportunities - risk-free profit from strike width differential",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="Scan for box spread arbitrage opportunities that provide risk-free profit when "
+        "net debit < strike width. Box spreads consist of 4 legs: long call K1, short call K2, "
+        "short put K1, long put K2. When executed properly, they guarantee the strike width as profit.",
+        epilog="Box Spread Examples:\n"
+        "  Basic box scan:\n"
+        "    alchimest.py box --symbols SPY QQQ --cost-limit 500 --profit-target 0.02\n\n"
+        "  Conservative parameters:\n"
+        "    alchimest.py box --symbols SPY IWM --max-strike-width 10 --min-profit 0.10\n\n"
+        "  High volume requirements:\n"
+        "    alchimest.py box --symbols AAPL TSLA --min-volume 25 --max-spread 0.05\n",
+    )
+    parser_box.add_argument(
+        "-s",
+        "--symbols",
+        nargs="+",
+        help="List of symbols to scan for box spreads",
+    )
+    parser_box.add_argument(
+        "-l",
+        "--cost-limit",
+        type=float,
+        default=500.0,
+        help="Maximum net debit to pay for box spread (default: $500)",
+    )
+    parser_box.add_argument(
+        "-p",
+        "--profit-target",
+        type=float,
+        default=0.01,
+        help="Minimum profit target as percentage (default: 0.01 = 1 percent)",
+    )
+    parser_box.add_argument(
+        "--min-profit",
+        type=float,
+        default=0.05,
+        help="Minimum absolute profit per spread (default: $0.05)",
+    )
+    parser_box.add_argument(
+        "--max-strike-width",
+        type=float,
+        default=50.0,
+        help="Maximum strike width (K2-K1) to consider (default: $50)",
+    )
+    parser_box.add_argument(
+        "--min-strike-width",
+        type=float,
+        default=1.0,
+        help="Minimum strike width (K2-K1) to consider (default: $1)",
+    )
+    parser_box.add_argument(
+        "--range",
+        type=float,
+        default=0.1,
+        help="Price range around current stock price for strike selection (default: 0.1 = 10 percent)",
+    )
+    parser_box.add_argument(
+        "--min-volume",
+        type=int,
+        default=5,
+        help="Minimum daily volume per option leg (default: 5)",
+    )
+    parser_box.add_argument(
+        "--max-spread",
+        type=float,
+        default=0.10,
+        help="Maximum bid-ask spread as percent of mid price (default: 0.10 = 10 percent)",
+    )
+    parser_box.add_argument(
+        "--min-days-expiry",
+        type=int,
+        default=1,
+        help="Minimum days to expiration (default: 1)",
+    )
+    parser_box.add_argument(
+        "--max-days-expiry",
+        type=int,
+        default=90,
+        help="Maximum days to expiration (default: 90)",
+    )
+    parser_box.add_argument(
+        "-q",
+        "--quantity",
+        type=int,
+        default=1,
+        help="Maximum number of box spreads to execute (default: 1)",
+    )
+    parser_box.add_argument(
+        "--safety-buffer",
+        type=float,
+        default=0.02,
+        help="Safety margin for pricing as percentage of net debit (default: 0.02 = 2 percent)",
+    )
+    parser_box.add_argument(
+        "--require-risk-free",
+        action="store_true",
+        default=True,
+        help="Only execute if truly risk-free (default: True)",
+    )
+    parser_box.add_argument(
+        "--log",
+        type=str,
+        default=None,
+        help="Log file path to write all logs to a text file",
+    )
+    parser_box.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows all log levels)",
+    )
+    parser_box.add_argument(
+        "--warning",
+        action="store_true",
+        help="Enable warning logging (shows INFO and WARNING levels)",
+    )
+    parser_box.add_argument(
+        "--error",
+        action="store_true",
+        help="Enable error logging (shows INFO, WARNING, ERROR and CRITICAL levels)",
+    )
+    parser_box.add_argument(
         "-f",
         "--fin",
         type=str,
@@ -491,6 +626,30 @@ def main() -> None:
             min_volume=args.min_volume,
             max_bid_ask_spread=args.max_bid_ask_spread,
             quantity=args.quantity,
+            log_file=log_file,
+            debug=args.debug,
+            warning=args.warning,
+            error=args.error,
+            finviz_url=args.fin,
+        )
+
+    elif args.command == "box":
+        op = OptionScan()
+        op.box_finder(
+            symbol_list=args.symbols,
+            cost_limit=args.cost_limit,
+            profit_target=args.profit_target,
+            min_profit=args.min_profit,
+            max_strike_width=args.max_strike_width,
+            min_strike_width=args.min_strike_width,
+            range=args.range,
+            min_volume=args.min_volume,
+            max_spread=args.max_spread,
+            min_days_expiry=args.min_days_expiry,
+            max_days_expiry=args.max_days_expiry,
+            quantity=args.quantity,
+            safety_buffer=args.safety_buffer,
+            require_risk_free=args.require_risk_free,
             log_file=log_file,
             debug=args.debug,
             warning=args.warning,
