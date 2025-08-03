@@ -25,7 +25,9 @@ backtesting/infra/
 1. **Start the database container:**
    ```bash
    cd backtesting/infra/database/podman
-   podman-compose up -d
+   docker-compose up -d
+   # OR if using podman-compose:
+   # podman-compose up -d
    ```
 
 2. **Verify the setup:**
@@ -212,10 +214,14 @@ SELECT drop_old_partitions('market_data_ticks', 24);  -- Keep 24 months
 
 ### Common Issues
 
-1. **Container won't start**
+1. **TimescaleDB build errors (now fixed)**
+   - Updated to use official `timescale/timescaledb:latest-pg15` image
+   - No more compilation issues with GSSAPI headers
+
+2. **Container won't start**
    - Check available disk space
    - Verify port 5432 is not in use
-   - Check container logs: `podman logs alc_timescaledb`
+   - Check container logs: `docker logs alc_timescaledb` or `podman logs alc_timescaledb`
 
 2. **Data collection errors**
    - Verify IB connection is active
