@@ -15,8 +15,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     -- Set timezone to UTC for consistency
     SET timezone = 'UTC';
 
-    -- Performance tuning for TimescaleDB
-    SELECT timescaledb_tune();
+    -- TimescaleDB initialization completed
+    SELECT 'TimescaleDB initialized successfully' as status;
 EOSQL
 
 echo "TimescaleDB initialization completed. Schema files will be executed next."
