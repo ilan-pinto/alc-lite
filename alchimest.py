@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.theme import Theme
 
 # Version information
-__version__ = "1.13.0"
+__version__ = "1.14.0"
 
 # Custom theme for log levels
 custom_theme = Theme(
