@@ -345,8 +345,110 @@ FROM underlying_securities us
 WHERE us.symbol IN ('SPY', 'QQQ', 'AAPL');
 " "Adding sample arbitrage opportunities"
 
-# 6. Add corporate actions
-echo -e "\n${BLUE}6. Adding sample corporate actions...${NC}"
+# 6. Populate sample VIX data
+echo -e "\n${BLUE}6. Populating sample VIX data...${NC}"
+
+execute_sql "
+WITH vix_time_series AS (
+    SELECT
+        CURRENT_TIMESTAMP - INTERVAL '1 hour' + (INTERVAL '1 minute' * s.minute_offset) as timestamp
+    FROM generate_series(0, 60, 2) s(minute_offset)  -- Every 2 minutes for last hour
+),
+vix_instruments_data AS (
+    SELECT id, symbol FROM vix_instruments WHERE active = true
+)
+INSERT INTO vix_data_ticks
+(time, instrument_id, last_price, bid_price, ask_price, volume, tick_type, data_quality_score)
+SELECT
+    vts.timestamp,
+    vi.id,
+    CASE
+        WHEN vi.symbol = 'VIX' THEN 18.5 + (random() * 8 - 4)  -- VIX: 14.5-22.5
+        WHEN vi.symbol = 'VIX1D' THEN 16.0 + (random() * 6 - 3)  -- VIX1D: 13-19
+        WHEN vi.symbol = 'VIX9D' THEN 17.5 + (random() * 7 - 3.5)  -- VIX9D: 14-21
+        WHEN vi.symbol = 'VIX3M' THEN 20.0 + (random() * 8 - 4)  -- VIX3M: 16-24
+        WHEN vi.symbol = 'VIX6M' THEN 21.5 + (random() * 6 - 3)  -- VIX6M: 18.5-24.5
+        ELSE 18.0 + (random() * 4 - 2)
+    END as last_price,
+    CASE
+        WHEN vi.symbol = 'VIX' THEN 18.3 + (random() * 8 - 4)
+        WHEN vi.symbol = 'VIX1D' THEN 15.8 + (random() * 6 - 3)
+        WHEN vi.symbol = 'VIX9D' THEN 17.3 + (random() * 7 - 3.5)
+        WHEN vi.symbol = 'VIX3M' THEN 19.8 + (random() * 8 - 4)
+        WHEN vi.symbol = 'VIX6M' THEN 21.3 + (random() * 6 - 3)
+        ELSE 17.8 + (random() * 4 - 2)
+    END as bid_price,
+    CASE
+        WHEN vi.symbol = 'VIX' THEN 18.7 + (random() * 8 - 4)
+        WHEN vi.symbol = 'VIX1D' THEN 16.2 + (random() * 6 - 3)
+        WHEN vi.symbol = 'VIX9D' THEN 17.7 + (random() * 7 - 3.5)
+        WHEN vi.symbol = 'VIX3M' THEN 20.2 + (random() * 8 - 4)
+        WHEN vi.symbol = 'VIX6M' THEN 21.7 + (random() * 6 - 3)
+        ELSE 18.2 + (random() * 4 - 2)
+    END as ask_price,
+    (random() * 1000)::int as volume,
+    'SAMPLE' as tick_type,
+    0.95 + random() * 0.05 as data_quality_score
+FROM vix_time_series vts
+CROSS JOIN vix_instruments_data vi
+ON CONFLICT DO NOTHING;
+\" \"Generating sample VIX data ticks\"
+
+execute_sql "
+WITH vix_snapshots AS (
+    SELECT
+        CURRENT_TIMESTAMP - INTERVAL '30 minutes' + (INTERVAL '5 minutes' * s.minute_offset) as timestamp
+    FROM generate_series(0, 6) s(minute_offset)  -- Every 5 minutes for last 30 minutes
+)
+INSERT INTO vix_term_structure
+(timestamp, vix_1d, vix_9d, vix_30d, vix_3m, vix_6m)
+SELECT
+    vs.timestamp,
+    16.0 + (random() * 6 - 3) as vix_1d,      -- VIX1D: 13-19
+    17.5 + (random() * 7 - 3.5) as vix_9d,    -- VIX9D: 14-21
+    18.5 + (random() * 8 - 4) as vix_30d,     -- VIX: 14.5-22.5
+    20.0 + (random() * 8 - 4) as vix_3m,      -- VIX3M: 16-24
+    21.5 + (random() * 6 - 3) as vix_6m       -- VIX6M: 18.5-24.5
+FROM vix_snapshots vs
+ON CONFLICT (timestamp) DO NOTHING;
+\" \"Generating VIX term structure snapshots\"
+
+# Add some sample VIX correlation records
+execute_sql "
+INSERT INTO vix_arbitrage_correlation
+(arbitrage_opportunity_id, vix_snapshot_id, vix_level, vix_regime,
+ term_structure_type, vix_spike_active, arbitrage_success,
+ execution_speed_ms, profit_realized, correlation_weight)
+SELECT
+    ao.id,
+    vts.id,
+    vts.vix_30d,
+    CASE
+        WHEN vts.vix_30d < 15 THEN 'LOW'
+        WHEN vts.vix_30d BETWEEN 15 AND 25 THEN 'MEDIUM'
+        WHEN vts.vix_30d BETWEEN 25 AND 40 THEN 'HIGH'
+        ELSE 'EXTREME'
+    END as vix_regime,
+    CASE
+        WHEN vts.vix_3m > vts.vix_30d THEN 'CONTANGO'
+        WHEN vts.vix_3m < vts.vix_30d THEN 'BACKWARDATION'
+        ELSE 'FLAT'
+    END as term_structure_type,
+    vts.vix_30d > 30 as vix_spike_active,
+    random() > 0.3 as arbitrage_success,  -- 70% success rate for sample data
+    (50 + random() * 200)::int as execution_speed_ms,
+    CASE WHEN random() > 0.3 THEN
+        ao.theoretical_profit * (0.8 + random() * 0.4)  -- 80-120% of theoretical
+    ELSE NULL END as profit_realized,
+    1.0 as correlation_weight
+FROM arbitrage_opportunities ao
+CROSS JOIN vix_term_structure vts
+WHERE ao.id % 3 = 0  -- Sample every 3rd arbitrage opportunity
+LIMIT 50;  -- Limit to 50 correlation records
+\" \"Adding sample VIX correlation records\"
+
+# 7. Add corporate actions
+echo -e "\n${BLUE}7. Adding sample corporate actions...${NC}"
 
 execute_sql "
 INSERT INTO corporate_actions
@@ -380,6 +482,10 @@ execute_sql "SELECT COUNT(*) as market_data_points FROM market_data_ticks;" "Mar
 execute_sql "SELECT COUNT(*) as stock_data_points FROM stock_data_ticks;" "Stock data points"
 execute_sql "SELECT COUNT(*) as arbitrage_opportunities FROM arbitrage_opportunities;" "Arbitrage opportunities"
 execute_sql "SELECT COUNT(*) as corporate_actions FROM corporate_actions;" "Corporate actions"
+execute_sql "SELECT COUNT(*) as vix_instruments FROM vix_instruments;" "VIX instruments"
+execute_sql "SELECT COUNT(*) as vix_data_points FROM vix_data_ticks;" "VIX data ticks"
+execute_sql "SELECT COUNT(*) as vix_term_structures FROM vix_term_structure;" "VIX term structures"
+execute_sql "SELECT COUNT(*) as vix_correlations FROM vix_arbitrage_correlation;" "VIX correlations"
 
 echo -e "\n${GREEN}✅ Database population completed successfully!${NC}"
 echo -e "\n${BLUE}Next steps:${NC}"
@@ -394,3 +500,14 @@ echo "JOIN option_chains oc ON us.id = oc.underlying_id GROUP BY symbol;"
 echo ""
 echo "SELECT strategy_type, COUNT(*), AVG(roi_percent) as avg_roi"
 echo "FROM arbitrage_opportunities GROUP BY strategy_type;"
+echo ""
+echo "-- VIX Analysis Queries:"
+echo "SELECT * FROM get_latest_vix_structure();"
+echo ""
+echo "SELECT vix_regime, COUNT(*) as opportunities, "
+echo "       AVG(CASE WHEN arbitrage_success THEN 1.0 ELSE 0.0 END) * 100 as success_rate"
+echo "FROM vix_arbitrage_correlation GROUP BY vix_regime;"
+echo ""
+echo "SELECT term_structure_type, COUNT(*) as count,"
+echo "       AVG(vix_level) as avg_vix FROM vix_term_structure"
+echo "WHERE term_structure_type IS NOT NULL GROUP BY term_structure_type;"
