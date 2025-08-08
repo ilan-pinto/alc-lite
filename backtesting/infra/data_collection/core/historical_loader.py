@@ -16,12 +16,15 @@ from ib_async import IB, BarData, Contract, Option, Stock
 
 try:
     # Try relative imports first (when used as module)
-    from .config import DatabaseConfig, HistoricalConfig
+    from ..config.config import DatabaseConfig, HistoricalConfig
     from .validators import DataValidator
 except ImportError:
     # Fall back to absolute imports (when run directly)
-    from config import DatabaseConfig, HistoricalConfig
-    from validators import DataValidator
+    from backtesting.infra.data_collection.config.config import (
+        DatabaseConfig,
+        HistoricalConfig,
+    )
+    from backtesting.infra.data_collection.core.validators import DataValidator
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +107,6 @@ class HistoricalDataLoader:
             )
 
             # Load option data
-
             for contract_batch in self._batch_contracts(option_contracts, 10):
                 batch_bars = await self._load_option_batch_history(
                     contract_batch, start_date, end_date
@@ -228,13 +230,26 @@ class HistoricalDataLoader:
         return contracts
 
     async def _load_option_batch_history(
-        self, contracts: List[Tuple[Contract, int]], start_date: date, end_date: date
+        self,
+        contracts: List[Tuple[Contract, int]],
+        start_date: date,
+        end_date: date,
+        progress=None,
+        batch_task=None,
     ) -> int:
         """Load historical data for a batch of option contracts."""
         total_bars = 0
 
-        for contract, contract_id in contracts:
+        for i, (contract, contract_id) in enumerate(contracts):
             try:
+                # Update progress if provided
+                if progress and batch_task is not None:
+                    progress.update(
+                        batch_task,
+                        description=f"Loading option {contract.symbol} {contract.strike}{contract.right} {contract.lastTradeDateOrContractMonth}",
+                        completed=i,
+                    )
+
                 # For options, we typically want shorter duration requests
                 # due to lower liquidity and data availability
                 bars_loaded = await self._load_single_option_history(
@@ -247,6 +262,68 @@ class HistoricalDataLoader:
                 self.failed_requests += 1
 
             await self._rate_limit_delay()
+
+        # Mark batch as complete
+        if progress and batch_task is not None:
+            progress.update(batch_task, completed=len(contracts))
+
+        return total_bars
+
+    async def _load_option_batch_history_parallel(
+        self,
+        contracts: List[Tuple[Contract, int]],
+        start_date: date,
+        end_date: date,
+        progress=None,
+        batch_task=None,
+        max_concurrent: int = 5,
+    ) -> int:
+        """Load historical data for a batch of option contracts in parallel."""
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def load_with_semaphore(
+            contract_data: Tuple[Contract, int], index: int
+        ) -> int:
+            """Load single contract with semaphore for rate limiting."""
+            async with semaphore:
+                contract, contract_id = contract_data
+                try:
+                    # Update progress if provided
+                    if progress and batch_task is not None:
+                        progress.update(
+                            batch_task,
+                            description=f"Loading option {contract.symbol} {contract.strike}{contract.right}",
+                            completed=index,
+                        )
+
+                    # Small delay to prevent overwhelming IB API
+                    await asyncio.sleep(0.1)  # 100ms between requests
+
+                    bars_loaded = await self._load_single_option_history(
+                        contract, contract_id, start_date, end_date
+                    )
+                    return bars_loaded
+
+                except Exception as e:
+                    logger.error(f"Error loading option {contract.conId}: {e}")
+                    self.failed_requests += 1
+                    return 0
+
+        # Create tasks for all contracts
+        tasks = [
+            load_with_semaphore(contract_data, i)
+            for i, contract_data in enumerate(contracts)
+        ]
+
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Sum up successful results
+        total_bars = sum(r for r in results if isinstance(r, int))
+
+        # Mark batch as complete
+        if progress and batch_task is not None:
+            progress.update(batch_task, completed=len(contracts))
 
         return total_bars
 
@@ -329,81 +406,82 @@ class HistoricalDataLoader:
             return 0
 
         async with self.db_pool.acquire() as conn:
-            values = []
+            # Use transaction for atomic delete + insert
+            async with conn.transaction():
+                # Get time range from bars
+                start_time = min(bar.date for bar in bars)
+                end_time = max(bar.date for bar in bars)
 
-            for bar in bars:
-                values.append(
-                    (
-                        bar.date,  # Already datetime
-                        underlying_id,
-                        float(bar.close),
-                        None,  # bid_price
-                        None,  # ask_price
-                        None,  # bid_size
-                        None,  # ask_size
-                        int(bar.volume) if bar.volume else None,
-                        float(bar.average) if bar.average else None,  # vwap
-                        float(bar.open),
-                        float(bar.high),
-                        float(bar.low),
-                        float(bar.close),
-                        "HISTORICAL",
-                    )
-                )
-
-            # Bulk insert with conflict handling
-            # First, try to insert with ON CONFLICT
-            try:
-                result = await conn.executemany(
+                # Delete existing data for this underlying in the time range
+                delete_result = await conn.execute(
                     """
-                    INSERT INTO stock_data_ticks
-                    (time, underlying_id, price, bid_price, ask_price,
-                     bid_size, ask_size, volume, vwap,
-                     open_price, high_price, low_price, close_price, tick_type)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                    ON CONFLICT (time, underlying_id) DO NOTHING
-                """,
-                    values,
+                    DELETE FROM stock_data_ticks
+                    WHERE underlying_id = $1
+                    AND time >= $2
+                    AND time <= $3
+                    AND tick_type = 'HISTORICAL'
+                    """,
+                    underlying_id,
+                    start_time,
+                    end_time,
                 )
-                # Extract count from result
-                count = int(result.split()[-1]) if result else len(values)
-            except asyncpg.exceptions.InvalidTableDefinitionError:
-                # If unique constraint doesn't exist, fall back to manual duplicate checking
-                logger.warning(
-                    "No unique constraint on (time, underlying_id), checking for duplicates manually"
-                )
-                count = 0
-                for value in values:
-                    try:
-                        # Check if record exists
-                        exists = await conn.fetchval(
-                            """
-                            SELECT 1 FROM stock_data_ticks
-                            WHERE time = $1 AND underlying_id = $2
-                            LIMIT 1
-                            """,
-                            value[0],
-                            value[1],
-                        )
+                # Extract row count from result
+                deleted = int(delete_result.split()[-1]) if delete_result else 0
 
-                        if not exists:
-                            # Insert if it doesn't exist
-                            await conn.execute(
-                                """
-                                INSERT INTO stock_data_ticks
-                                (time, underlying_id, price, bid_price, ask_price,
-                                 bid_size, ask_size, volume, vwap,
-                                 open_price, high_price, low_price, close_price, tick_type)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                                """,
-                                *value,
-                            )
-                            count += 1
-                    except Exception as e:
-                        logger.error(f"Error inserting stock bar: {e}")
-                        continue
-            logger.debug(f"Stored {count} stock bars")
-            return count
+                if deleted:
+                    logger.debug(
+                        f"Deleted {deleted} existing stock bars for underlying {underlying_id}"
+                    )
+
+                values = []
+
+                for bar in bars:
+                    values.append(
+                        (
+                            bar.date,  # Already datetime
+                            underlying_id,
+                            float(bar.close),
+                            None,  # bid_price
+                            None,  # ask_price
+                            None,  # bid_size
+                            None,  # ask_size
+                            int(bar.volume) if bar.volume else None,
+                            float(bar.average) if bar.average else None,  # vwap
+                            float(bar.open),
+                            float(bar.high),
+                            float(bar.low),
+                            float(bar.close),
+                            "HISTORICAL",
+                        )
+                    )
+
+                # Bulk insert using executemany
+                # We still use ON CONFLICT for extra safety since stock_data_ticks has a unique constraint
+                if values:
+                    await conn.executemany(
+                        """
+                        INSERT INTO stock_data_ticks
+                        (time, underlying_id, price, bid_price, ask_price,
+                         bid_size, ask_size, volume, vwap,
+                         open_price, high_price, low_price, close_price, tick_type)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        ON CONFLICT (time, underlying_id) DO UPDATE SET
+                            price = EXCLUDED.price,
+                            volume = EXCLUDED.volume,
+                            vwap = EXCLUDED.vwap,
+                            open_price = EXCLUDED.open_price,
+                            high_price = EXCLUDED.high_price,
+                            low_price = EXCLUDED.low_price,
+                            close_price = EXCLUDED.close_price,
+                            tick_type = EXCLUDED.tick_type
+                        """,
+                        values,
+                    )
+
+            logger.debug(
+                f"Stored {len(values)} stock bars for underlying {underlying_id}"
+            )
+            return len(values)
 
     async def _store_option_bars(self, contract_id: int, bars: List[BarData]) -> int:
         """Store option bars in database."""
@@ -411,44 +489,66 @@ class HistoricalDataLoader:
             return 0
 
         async with self.db_pool.acquire() as conn:
-            values = []
+            # Use transaction for atomic delete + insert
+            async with conn.transaction():
+                # Get time range from bars
+                start_time = min(bar.date for bar in bars)
+                end_time = max(bar.date for bar in bars)
 
-            for bar in bars:
-                # For options, we store the midpoint as both bid and ask
-                # with a small spread for more realistic backtesting
-                midpoint = float(bar.close)
-                half_spread = midpoint * 0.01  # 1% spread assumption
-
-                values.append(
-                    (
-                        bar.date,
-                        contract_id,
-                        max(0.01, midpoint - half_spread),  # bid_price
-                        midpoint + half_spread,  # ask_price
-                        midpoint,  # last_price
-                        100,  # bid_size (assumed)
-                        100,  # ask_size (assumed)
-                        None,  # last_size
-                        int(bar.volume) if bar.volume else None,
-                        None,  # open_interest (not available)
-                        None,  # Greeks will be calculated separately
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        "HISTORICAL",
-                    )
+                # Delete existing data for this contract in the time range
+                delete_result = await conn.execute(
+                    """
+                    DELETE FROM market_data_ticks
+                    WHERE contract_id = $1
+                    AND time >= $2
+                    AND time <= $3
+                    AND tick_type = 'HISTORICAL'
+                    """,
+                    contract_id,
+                    start_time,
+                    end_time,
                 )
+                # Extract row count from result
+                deleted = int(delete_result.split()[-1]) if delete_result else 0
 
-            # Bulk insert with better error handling
-            count = 0
+                if deleted:
+                    logger.debug(
+                        f"Deleted {deleted} existing option bars for contract {contract_id}"
+                    )
 
-            # For market_data_ticks, we might have multiple ticks per timestamp
-            # So we'll just insert without ON CONFLICT
-            for value in values:
-                try:
-                    await conn.execute(
+                values = []
+
+                for bar in bars:
+                    # For options, we store the midpoint as both bid and ask
+                    # with a small spread for more realistic backtesting
+                    midpoint = float(bar.close)
+                    half_spread = midpoint * 0.01  # 1% spread assumption
+
+                    values.append(
+                        (
+                            bar.date,
+                            contract_id,
+                            max(0.01, midpoint - half_spread),  # bid_price
+                            midpoint + half_spread,  # ask_price
+                            midpoint,  # last_price
+                            100,  # bid_size (assumed)
+                            100,  # ask_size (assumed)
+                            None,  # last_size
+                            int(bar.volume) if bar.volume else None,
+                            None,  # open_interest (not available)
+                            None,  # Greeks will be calculated separately
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            "HISTORICAL",
+                        )
+                    )
+
+                # Bulk insert using executemany for better performance
+                if values:
+                    await conn.executemany(
                         """
                         INSERT INTO market_data_ticks
                         (time, contract_id, bid_price, ask_price, last_price,
@@ -457,17 +557,11 @@ class HistoricalDataLoader:
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                                 $11, $12, $13, $14, $15, $16, $17)
                         """,
-                        *value,
+                        values,
                     )
-                    count += 1
-                except asyncpg.exceptions.UniqueViolationError:
-                    # Skip duplicates silently
-                    continue
-                except Exception as e:
-                    logger.error(f"Error inserting option bar: {e}")
-                    continue
-            logger.debug(f"Stored {count} option bars")
-            return count
+
+            logger.debug(f"Stored {len(values)} option bars for contract {contract_id}")
+            return len(values)
 
     async def _ensure_underlying_exists(self, symbol: str) -> Optional[int]:
         """Ensure underlying security exists in database."""

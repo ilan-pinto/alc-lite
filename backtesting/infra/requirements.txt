@@ -1,0 +1,28 @@
+# Historical Data Loading Pipeline Requirements
+
+# Core dependencies
+asyncpg>=0.28.0
+ib-async>=0.9.86
+rich>=13.0.0
+pyyaml>=6.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Optional dependencies for enhanced functionality
+python-dateutil>=2.8.0
+click>=8.1.0  # Alternative CLI framework
+schedule>=1.2.0  # For scheduled data collection
+psutil>=5.9.0  # System monitoring
+prometheus-client>=0.16.0 # Metrics export
+
+# Development and testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.0.0
+
+# Documentation
+sphinx>=6.0.0
+sphinx-rtd-theme>=1.2.0

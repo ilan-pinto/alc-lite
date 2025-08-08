@@ -12,7 +12,7 @@ class DatabaseConfig:
     """Database connection configuration."""
 
     host: str = os.getenv("DB_HOST", "localhost")
-    port: int = int(os.getenv("DB_PORT", "5432"))
+    port: int = int(os.getenv("DB_PORT", "5433"))
     database: str = os.getenv("DB_NAME", "options_arbitrage")
     user: str = os.getenv("DB_USER", "trading_user")
     password: str = os.getenv("DB_PASSWORD", "secure_trading_password")

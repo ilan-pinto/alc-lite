@@ -14,33 +14,22 @@ import logging
 import numpy as np
 from ib_async import IB, Contract, Option, Stock, Ticker
 
-from .config import CollectionConfig, DatabaseConfig
-from .validators import DataValidator
+try:
+    # Try relative imports first (when used as module)
+    from ..config.config import CollectionConfig, DatabaseConfig
+    from .validators import DataValidator, MarketDataSnapshot
+except ImportError:
+    # Fall back to absolute imports (when run directly)
+    from backtesting.infra.data_collection.config.config import (
+        CollectionConfig,
+        DatabaseConfig,
+    )
+    from backtesting.infra.data_collection.core.validators import (
+        DataValidator,
+        MarketDataSnapshot,
+    )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class MarketDataSnapshot:
-    """Structured market data snapshot for database storage."""
-
-    contract_id: int
-    timestamp: datetime
-    bid_price: Optional[float]
-    ask_price: Optional[float]
-    last_price: Optional[float]
-    bid_size: Optional[int]
-    ask_size: Optional[int]
-    last_size: Optional[int]
-    volume: Optional[int]
-    open_interest: Optional[int]
-    delta: Optional[float]
-    gamma: Optional[float]
-    theta: Optional[float]
-    vega: Optional[float]
-    rho: Optional[float]
-    implied_volatility: Optional[float]
-    tick_type: str = "REALTIME"
 
 
 class OptionsDataCollector:
@@ -269,6 +258,7 @@ class OptionsDataCollector:
         """Register underlying security in database."""
         async with self.db_pool.acquire() as conn:
             try:
+                # First try with ON CONFLICT (efficient if constraint exists)
                 underlying_id = await conn.fetchval(
                     """
                     INSERT INTO underlying_securities (symbol, active)
@@ -280,6 +270,42 @@ class OptionsDataCollector:
                     symbol,
                 )
                 return underlying_id
+            except asyncpg.exceptions.InvalidTableDefinitionError:
+                # If unique constraint doesn't exist, fall back to manual check
+                logger.warning(
+                    f"No unique constraint on symbol column, checking manually for {symbol}"
+                )
+
+                # Check if symbol already exists
+                existing_id = await conn.fetchval(
+                    "SELECT id FROM underlying_securities WHERE symbol = $1", symbol
+                )
+
+                if existing_id:
+                    # Update existing record
+                    await conn.execute(
+                        "UPDATE underlying_securities SET updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                        existing_id,
+                    )
+                    return existing_id
+                else:
+                    # Insert new record
+                    try:
+                        new_id = await conn.fetchval(
+                            """
+                            INSERT INTO underlying_securities (symbol, active)
+                            VALUES ($1, true)
+                            RETURNING id
+                            """,
+                            symbol,
+                        )
+                        return new_id
+                    except asyncpg.exceptions.UniqueViolationError:
+                        # Race condition - another process inserted it
+                        return await conn.fetchval(
+                            "SELECT id FROM underlying_securities WHERE symbol = $1",
+                            symbol,
+                        )
             except Exception as e:
                 logger.error(f"Failed to register underlying {symbol}: {e}")
                 return None
@@ -292,6 +318,7 @@ class OptionsDataCollector:
             try:
                 expiry_date = datetime.strptime(expiry_str, "%Y%m%d").date()
 
+                # First try with ON CONFLICT (efficient if constraint exists)
                 contract_id = await conn.fetchval(
                     """
                     INSERT INTO option_chains
@@ -311,11 +338,77 @@ class OptionsDataCollector:
                     f"{contract.symbol}{contract.conId}",
                     contract.conId,
                     contract.exchange,
-                    contract.multiplier,
+                    int(contract.multiplier) if contract.multiplier else 100,
                     contract.currency,
                 )
 
                 return contract_id
+            except asyncpg.exceptions.InvalidTableDefinitionError:
+                # If unique constraint doesn't exist, fall back to manual check
+                logger.warning(
+                    f"No unique constraint on option_chains, checking manually"
+                )
+
+                # Check if contract already exists
+                existing_id = await conn.fetchval(
+                    """
+                    SELECT id FROM option_chains
+                    WHERE underlying_id = $1 AND expiration_date = $2
+                      AND strike_price = $3 AND option_type = $4
+                    """,
+                    underlying_id,
+                    expiry_date,
+                    contract.strike,
+                    contract.right,
+                )
+
+                if existing_id:
+                    # Update existing record
+                    await conn.execute(
+                        """
+                        UPDATE option_chains
+                        SET ib_con_id = $1, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = $2
+                        """,
+                        contract.conId,
+                        existing_id,
+                    )
+                    return existing_id
+                else:
+                    # Insert new record
+                    try:
+                        new_id = await conn.fetchval(
+                            """
+                            INSERT INTO option_chains
+                            (underlying_id, expiration_date, strike_price, option_type,
+                             contract_symbol, ib_con_id, exchange, multiplier, currency)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            RETURNING id
+                            """,
+                            underlying_id,
+                            expiry_date,
+                            contract.strike,
+                            contract.right,
+                            f"{contract.symbol}{contract.conId}",
+                            contract.conId,
+                            contract.exchange,
+                            int(contract.multiplier) if contract.multiplier else 100,
+                            contract.currency,
+                        )
+                        return new_id
+                    except asyncpg.exceptions.UniqueViolationError:
+                        # Race condition - another process inserted it
+                        return await conn.fetchval(
+                            """
+                            SELECT id FROM option_chains
+                            WHERE underlying_id = $1 AND expiration_date = $2
+                              AND strike_price = $3 AND option_type = $4
+                            """,
+                            underlying_id,
+                            expiry_date,
+                            contract.strike,
+                            contract.right,
+                        )
             except Exception as e:
                 logger.error(f"Failed to register option contract: {e}")
                 return None

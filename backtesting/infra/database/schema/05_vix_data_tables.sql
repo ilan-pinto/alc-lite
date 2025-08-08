@@ -230,7 +230,7 @@ RETURNS TABLE (
     vix_6m DECIMAL,
     regime VARCHAR,
     structure_type VARCHAR,
-    timestamp TIMESTAMPTZ
+    snapshot_timestamp TIMESTAMPTZ
 ) AS $$
 BEGIN
     RETURN QUERY

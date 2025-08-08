@@ -4,6 +4,9 @@ Ensures data integrity and quality for backtesting.
 """
 
 import asyncio
+
+# Import MarketDataSnapshot definition inline to avoid circular imports
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,7 +15,29 @@ import asyncpg
 import logging
 import numpy as np
 
-from .collector import MarketDataSnapshot
+
+@dataclass
+class MarketDataSnapshot:
+    """Structured market data snapshot for database storage."""
+
+    contract_id: int
+    timestamp: datetime
+    bid_price: Optional[float]
+    ask_price: Optional[float]
+    last_price: Optional[float]
+    bid_size: Optional[int]
+    ask_size: Optional[int]
+    last_size: Optional[int]
+    volume: Optional[int]
+    open_interest: Optional[int]
+    delta: Optional[float]
+    gamma: Optional[float]
+    theta: Optional[float]
+    vega: Optional[float]
+    rho: Optional[float]
+    implied_volatility: Optional[float]
+    tick_type: str = "REALTIME"
+
 
 logger = logging.getLogger(__name__)
 
