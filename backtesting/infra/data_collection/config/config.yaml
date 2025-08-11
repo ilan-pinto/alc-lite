@@ -5,7 +5,7 @@
 # Database connection settings
 database:
   host: localhost
-  port: 5432
+  port: 5433
   database: options_arbitrage
   user: trading_user
   password: secure_trading_password
@@ -103,8 +103,8 @@ options:
   # Days ahead to collect options data
   expiry_range_days: 60
 
-  # Percentage range around ATM (e.g., 0.20 = ±20%)
-  strike_range_percent: 0.20
+  # Percentage range around ATM (e.g., 0.10 = ±10%)
+  strike_range_percent: 0.10
 
   # Minimum volume filter
   min_volume: 0

@@ -26,10 +26,14 @@ Created: 2025-08-04
 import asyncio
 import json
 import sys
-import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+
+# Add project root to Python path for absolute imports
+project_root = Path(__file__).parent.parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 import argparse
 import asyncpg
@@ -43,7 +47,6 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
-    TaskID,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
@@ -52,16 +55,15 @@ from rich.table import Table
 
 try:
     # Try relative imports first (when used as module)
-    from ..config.config import CollectionConfig, DatabaseConfig, HistoricalConfig
-    from ..core.collector import OptionsDataCollector
-    from ..core.historical_loader import HistoricalDataLoader
-    from ..core.validators import DataValidator
-    from ..core.vix_collector import VIXDataCollector
+    from .config.config import CollectionConfig, HistoricalConfig
+    from .core.collector import OptionsDataCollector
+    from .core.historical_loader import HistoricalDataLoader
+    from .core.validators import DataValidator
+    from .core.vix_collector import VIXDataCollector
 except ImportError:
     # Fall back to absolute imports (when run directly)
     from backtesting.infra.data_collection.config.config import (
         CollectionConfig,
-        DatabaseConfig,
         HistoricalConfig,
     )
     from backtesting.infra.data_collection.core.collector import OptionsDataCollector

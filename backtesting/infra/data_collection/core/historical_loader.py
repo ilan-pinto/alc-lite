@@ -17,6 +17,7 @@ from ib_async import IB, BarData, Contract, Option, Stock
 try:
     # Try relative imports first (when used as module)
     from ..config.config import DatabaseConfig, HistoricalConfig
+    from .contract_utils import ContractFactory
     from .validators import DataValidator
 except ImportError:
     # Fall back to absolute imports (when run directly)
@@ -24,6 +25,7 @@ except ImportError:
         DatabaseConfig,
         HistoricalConfig,
     )
+    from backtesting.infra.data_collection.core.contract_utils import ContractFactory
     from backtesting.infra.data_collection.core.validators import DataValidator
 
 logger = logging.getLogger(__name__)
@@ -123,15 +125,15 @@ class HistoricalDataLoader:
         self, symbol: str, start_date: date, end_date: date
     ) -> int:
         """Load historical stock data."""
-        # Get stock contract
-        stock = Stock(symbol, "SMART", "USD")
-        qualified = await self.ib.qualifyContractsAsync(stock)
+        # Get appropriate contract (stock or index)
+        contract = ContractFactory.create_contract(symbol)
+        qualified = await self.ib.qualifyContractsAsync(contract)
 
         if not qualified:
             logger.error(f"Could not qualify stock {symbol}")
             return 0
 
-        stock = qualified[0]
+        contract = qualified[0]
 
         # Get or create underlying record
         underlying_id = await self._ensure_underlying_exists(symbol)
@@ -155,7 +157,7 @@ class HistoricalDataLoader:
 
             # Create request
             request = HistoricalRequest(
-                contract=stock,
+                contract=contract,
                 end_date=datetime.combine(current_end, datetime.min.time()),
                 duration=duration_str,
                 bar_size=self.config.bar_size,

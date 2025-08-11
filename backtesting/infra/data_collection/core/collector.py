@@ -17,6 +17,7 @@ from ib_async import IB, Contract, Option, Stock, Ticker
 try:
     # Try relative imports first (when used as module)
     from ..config.config import CollectionConfig, DatabaseConfig
+    from .contract_utils import ContractFactory
     from .validators import DataValidator, MarketDataSnapshot
 except ImportError:
     # Fall back to absolute imports (when run directly)
@@ -24,6 +25,7 @@ except ImportError:
         CollectionConfig,
         DatabaseConfig,
     )
+    from backtesting.infra.data_collection.core.contract_utils import ContractFactory
     from backtesting.infra.data_collection.core.validators import (
         DataValidator,
         MarketDataSnapshot,
@@ -138,31 +140,43 @@ class OptionsDataCollector:
 
     async def _initialize_symbol_contracts(self, symbol: str):
         """Initialize all relevant option contracts for a symbol."""
-        # Get underlying stock
-        stock = Stock(symbol, "SMART", "USD")
-        qualified_stocks = await self.ib.qualifyContractsAsync(stock)
+        # Get underlying contract (stock or index)
+        underlying_contract = ContractFactory.create_contract(symbol)
+        qualified_contracts = await self.ib.qualifyContractsAsync(underlying_contract)
 
-        if not qualified_stocks:
-            logger.warning(f"Could not qualify stock contract for {symbol}")
+        if not qualified_contracts:
+            logger.warning(f"Could not qualify contract for {symbol}")
             return
 
-        stock = qualified_stocks[0]
+        underlying_contract = qualified_contracts[0]
 
-        # Get current stock price for strike selection
-        ticker = self.ib.reqMktData(stock, "", False, False)
+        # Get current price for strike selection
+        ticker = self.ib.reqMktData(underlying_contract, "", False, False)
         await asyncio.sleep(1)  # Wait for price
 
-        stock_price = ticker.last if ticker.last else ticker.close
-        if not stock_price:
-            logger.warning(f"No price available for {symbol}")
-            self.ib.cancelMktData(stock)
+        current_price = ticker.last if ticker.last else ticker.close
+
+        # Handle case when market price is not available (market closed, etc.)
+        if not current_price or str(current_price) == "nan":
+            logger.info(
+                f"No live price available for {symbol}, using recent database price"
+            )
+            current_price = await self._get_recent_price_from_db(symbol)
+
+        if not current_price:
+            logger.warning(f"No price available for {symbol} from market or database")
+            self.ib.cancelMktData(underlying_contract)
             return
 
-        self.ib.cancelMktData(stock)
+        self.ib.cancelMktData(underlying_contract)
+        logger.info(f"Using price {current_price} for {symbol} strike selection")
 
         # Get options chains
         chains = await self.ib.reqSecDefOptParamsAsync(
-            stock.symbol, "", stock.secType, stock.conId
+            underlying_contract.symbol,
+            "",
+            underlying_contract.secType,
+            underlying_contract.conId,
         )
 
         if not chains:
@@ -174,10 +188,12 @@ class OptionsDataCollector:
 
         # Process each chain
         for chain in chains[:1]:  # Limit to primary exchange
-            await self._process_option_chain(symbol, underlying_id, chain, stock_price)
+            await self._process_option_chain(
+                symbol, underlying_id, chain, current_price
+            )
 
     async def _process_option_chain(
-        self, symbol: str, underlying_id: int, chain, stock_price: float
+        self, symbol: str, underlying_id: int, chain, current_price: float
     ):
         """Process a single option chain."""
         # Filter expiries
@@ -190,8 +206,8 @@ class OptionsDataCollector:
         ]
 
         # Filter strikes around current price
-        strike_min = stock_price * (1 - self.config.strike_range_percent)
-        strike_max = stock_price * (1 + self.config.strike_range_percent)
+        strike_min = current_price * (1 - self.config.strike_range_percent)
+        strike_max = current_price * (1 + self.config.strike_range_percent)
         relevant_strikes = [
             strike for strike in chain.strikes if strike_min <= strike <= strike_max
         ]
@@ -613,6 +629,43 @@ class OptionsDataCollector:
                 break
             except Exception as e:
                 logger.error(f"Error in health monitor: {e}")
+
+    async def _get_recent_price_from_db(self, symbol: str) -> Optional[float]:
+        """Get recent stock price from database when live price unavailable."""
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Get underlying_id first
+                underlying_id = await conn.fetchval(
+                    "SELECT id FROM underlying_securities WHERE symbol = $1", symbol
+                )
+
+                if not underlying_id:
+                    logger.warning(f"No underlying_id found for {symbol}")
+                    return None
+
+                # Get most recent price
+                recent_price = await conn.fetchval(
+                    """
+                    SELECT price FROM stock_data_ticks
+                    WHERE underlying_id = $1
+                    ORDER BY time DESC
+                    LIMIT 1
+                    """,
+                    underlying_id,
+                )
+
+                if recent_price:
+                    logger.info(
+                        f"Found recent database price for {symbol}: {recent_price}"
+                    )
+                    return float(recent_price)
+                else:
+                    logger.warning(f"No recent price data in database for {symbol}")
+                    return None
+
+        except Exception as e:
+            logger.error(f"Error getting recent price from database for {symbol}: {e}")
+            return None
 
     def get_stats(self) -> Dict:
         """Get current collector statistics."""
