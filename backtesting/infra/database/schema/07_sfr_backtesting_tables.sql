@@ -28,11 +28,7 @@ CREATE TABLE IF NOT EXISTS sfr_backtest_runs (
     base_slippage_bps INTEGER DEFAULT 2, -- Base slippage in basis points
     liquidity_penalty_factor DECIMAL(6,4) DEFAULT 1.0, -- Penalty for low liquidity
     commission_per_contract DECIMAL(8,4) DEFAULT 1.00, -- Commission cost per contract
-    -- Market environment filters
-    vix_regime_filter VARCHAR(20), -- Filter by VIX regime: 'LOW', 'MEDIUM', 'HIGH', 'EXTREME'
-    min_vix_level DECIMAL(8,4), -- Minimum VIX level to trade
-    max_vix_level DECIMAL(8,4), -- Maximum VIX level to trade
-    exclude_vix_spikes BOOLEAN DEFAULT false, -- Exclude trading during VIX spikes
+    -- REMOVED: Market environment filters (VIX-related)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -143,9 +139,7 @@ CREATE TABLE IF NOT EXISTS sfr_simulated_trades (
     close_timestamp TIMESTAMP(6) WITH TIME ZONE,
     close_reason VARCHAR(20), -- 'EXPIRY', 'EARLY_CLOSE', 'ASSIGNMENT'
     final_pnl DECIMAL(10,4), -- Final P&L if position held to close/expiry
-    -- Market context at execution
-    vix_level_at_execution DECIMAL(8,4),
-    vix_regime_at_execution VARCHAR(20),
+    -- REMOVED: Market context at execution (VIX-related)
     market_stress_indicator BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -189,11 +183,7 @@ CREATE TABLE IF NOT EXISTS sfr_performance_analytics (
     most_profitable_strike_diff INTEGER, -- Most profitable call-put strike difference
     most_profitable_expiry_range VARCHAR(20), -- e.g., "20-30 days"
     avg_days_to_expiry DECIMAL(6,2),
-    -- Market regime analysis
-    performance_by_vix_regime JSONB, -- {"LOW": {"trades": 10, "avg_profit": 5.2}, ...}
-    performance_correlation_vix DECIMAL(6,4), -- Correlation with VIX levels
-    best_vix_range_min DECIMAL(8,4), -- Most profitable VIX range
-    best_vix_range_max DECIMAL(8,4),
+    -- REMOVED: Market regime analysis (VIX-related)
     -- Time-based performance
     performance_by_hour JSONB, -- Hourly performance breakdown
     performance_by_day_of_week JSONB, -- Day of week performance
@@ -211,99 +201,11 @@ CREATE TABLE IF NOT EXISTS sfr_performance_analytics (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- SFR opportunity rejection tracking (for strategy optimization)
-CREATE TABLE IF NOT EXISTS sfr_rejection_log (
-    id BIGSERIAL PRIMARY KEY,
-    backtest_run_id INTEGER NOT NULL REFERENCES sfr_backtest_runs(id) ON DELETE CASCADE,
-    underlying_id INTEGER NOT NULL REFERENCES underlying_securities(id),
-    rejection_timestamp TIMESTAMP(6) WITH TIME ZONE NOT NULL,
-    rejection_stage VARCHAR(30) NOT NULL CHECK (rejection_stage IN (
-        'QUICK_VIABILITY', 'CONDITIONS_CHECK', 'EXECUTION_SIMULATION',
-        'MARKET_DATA_MISSING', 'INSUFFICIENT_LIQUIDITY', 'SPREAD_TOO_WIDE'
-    )),
-    rejection_reason VARCHAR(100) NOT NULL,
-    -- Context at rejection
-    expiry_date DATE,
-    call_strike DECIMAL(10,2),
-    put_strike DECIMAL(10,2),
-    stock_price DECIMAL(10,4),
-    net_credit DECIMAL(10,4),
-    min_profit DECIMAL(10,4),
-    min_roi DECIMAL(8,4),
-    -- Additional rejection context (JSON for flexibility)
-    rejection_details JSONB,
-    vix_level_at_rejection DECIMAL(8,4),
-    vix_regime_at_rejection VARCHAR(20),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- REMOVED: sfr_rejection_log table - unused (empty, 0 rows, can be recreated when needed)
 
--- VIX-SFR correlation analysis (extends existing VIX correlation framework)
-CREATE TABLE IF NOT EXISTS vix_sfr_correlation_analysis (
-    id BIGSERIAL PRIMARY KEY,
-    backtest_run_id INTEGER NOT NULL REFERENCES sfr_backtest_runs(id) ON DELETE CASCADE,
-    analysis_date DATE NOT NULL,
-    -- VIX regime breakdown
-    vix_regime VARCHAR(20) NOT NULL,
-    vix_level_min DECIMAL(8,4) NOT NULL,
-    vix_level_max DECIMAL(8,4) NOT NULL,
-    vix_level_avg DECIMAL(8,4) NOT NULL,
-    -- SFR opportunity metrics in this regime
-    total_opportunities INTEGER DEFAULT 0,
-    successful_trades INTEGER DEFAULT 0,
-    success_rate DECIMAL(6,4),
-    avg_min_profit DECIMAL(10,4),
-    avg_min_roi DECIMAL(8,4),
-    -- Statistical correlation measures
-    pearson_correlation DECIMAL(6,4), -- VIX level vs profit correlation
-    spearman_correlation DECIMAL(6,4), -- Non-parametric correlation
-    correlation_strength VARCHAR(20) DEFAULT 'WEAK' CHECK (correlation_strength IN ('STRONG', 'MODERATE', 'WEAK', 'NONE')),
-    -- Regime-specific insights
-    optimal_profit_target DECIMAL(8,4), -- Best profit target for this regime
-    optimal_cost_limit DECIMAL(10,2), -- Best cost limit for this regime
-    regime_trading_recommendation TEXT, -- Strategic recommendations
-    -- Statistical significance
-    sample_size INTEGER NOT NULL,
-    confidence_level DECIMAL(4,2) DEFAULT 95.0,
-    p_value DECIMAL(8,6),
-    statistically_significant BOOLEAN DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- REMOVED: vix_sfr_correlation_analysis table - unused
 
--- SFR risk metrics tracking
-CREATE TABLE IF NOT EXISTS sfr_risk_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    backtest_run_id INTEGER NOT NULL REFERENCES sfr_backtest_runs(id) ON DELETE CASCADE,
-    calculation_date DATE NOT NULL,
-    -- Position-level risk metrics
-    total_positions INTEGER DEFAULT 0,
-    max_concurrent_positions INTEGER DEFAULT 0,
-    avg_position_size DECIMAL(12,4),
-    total_capital_at_risk DECIMAL(12,4),
-    -- Time-based risk analysis
-    avg_holding_period_days DECIMAL(6,2),
-    max_holding_period_days INTEGER,
-    positions_held_to_expiry INTEGER,
-    early_closures INTEGER,
-    -- Concentration risk
-    max_symbol_concentration_pct DECIMAL(6,4), -- Max % in single symbol
-    max_expiry_concentration_pct DECIMAL(6,4), -- Max % in single expiry
-    sector_concentration JSONB, -- Concentration by sector
-    -- Greek exposure aggregation
-    portfolio_delta DECIMAL(12,6),
-    portfolio_gamma DECIMAL(12,6),
-    portfolio_theta DECIMAL(12,6),
-    portfolio_vega DECIMAL(12,6),
-    -- VaR and stress testing
-    var_1d_95pct DECIMAL(12,4), -- 1-day 95% Value at Risk
-    var_1d_99pct DECIMAL(12,4), -- 1-day 99% Value at Risk
-    expected_shortfall_95pct DECIMAL(12,4), -- Expected shortfall (CVaR)
-    max_theoretical_loss DECIMAL(12,4), -- Maximum possible loss
-    -- Scenario analysis results
-    stress_vix_spike_pnl DECIMAL(12,4), -- P&L in VIX spike scenario
-    stress_market_crash_pnl DECIMAL(12,4), -- P&L in market crash scenario
-    stress_volatility_crush_pnl DECIMAL(12,4), -- P&L in vol crush scenario
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- REMOVED: sfr_risk_metrics table - unused
 
 -- Indexes for efficient SFR backtesting queries
 CREATE INDEX IF NOT EXISTS idx_sfr_opportunities_backtest_symbol_time
@@ -324,14 +226,9 @@ CREATE INDEX IF NOT EXISTS idx_sfr_simulated_trades_execution_time
 CREATE INDEX IF NOT EXISTS idx_sfr_simulated_trades_performance
     ON sfr_simulated_trades (realized_min_roi DESC, execution_status) WHERE execution_status = 'FILLED';
 
-CREATE INDEX IF NOT EXISTS idx_sfr_rejection_log_analysis
-    ON sfr_rejection_log (backtest_run_id, rejection_stage, rejection_reason, rejection_timestamp DESC);
+-- REMOVED: Index for unused sfr_rejection_log table
 
-CREATE INDEX IF NOT EXISTS idx_vix_sfr_correlation_regime_analysis
-    ON vix_sfr_correlation_analysis (backtest_run_id, vix_regime, success_rate DESC);
-
-CREATE INDEX IF NOT EXISTS idx_sfr_risk_metrics_date_run
-    ON sfr_risk_metrics (backtest_run_id, calculation_date DESC);
+-- REMOVED: Indexes for unused correlation and risk metrics tables
 
 -- Update triggers for SFR tables
 CREATE TRIGGER update_sfr_backtest_runs_updated_at BEFORE UPDATE ON sfr_backtest_runs
@@ -437,44 +334,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to analyze SFR performance by VIX regime
-CREATE OR REPLACE FUNCTION analyze_sfr_vix_performance(p_backtest_run_id INTEGER)
-RETURNS TABLE (
-    vix_regime VARCHAR,
-    opportunity_count BIGINT,
-    success_count BIGINT,
-    success_rate DECIMAL,
-    avg_profit DECIMAL,
-    avg_roi DECIMAL,
-    correlation_strength DECIMAL
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        COALESCE(st.vix_regime_at_execution, 'UNKNOWN') as vix_regime,
-        COUNT(*) as opportunity_count,
-        COUNT(*) FILTER (WHERE st.execution_status = 'FILLED') as success_count,
-        (COUNT(*) FILTER (WHERE st.execution_status = 'FILLED') * 100.0 / COUNT(*))::DECIMAL(6,4) as success_rate,
-        AVG(st.realized_min_profit) FILTER (WHERE st.execution_status = 'FILLED')::DECIMAL(10,4) as avg_profit,
-        AVG(st.realized_min_roi) FILTER (WHERE st.execution_status = 'FILLED')::DECIMAL(8,4) as avg_roi,
-        CORR(st.vix_level_at_execution, st.realized_min_profit) FILTER (WHERE st.execution_status = 'FILLED')::DECIMAL(6,4) as correlation_strength
-    FROM sfr_opportunities so
-    LEFT JOIN sfr_simulated_trades st ON so.id = st.opportunity_id
-    WHERE so.backtest_run_id = p_backtest_run_id
-    GROUP BY COALESCE(st.vix_regime_at_execution, 'UNKNOWN')
-    ORDER BY success_rate DESC;
-END;
-$$ LANGUAGE plpgsql;
+-- REMOVED: analyze_sfr_vix_performance function - VIX analysis removed
 
 -- Comments for documentation
 COMMENT ON TABLE sfr_backtest_runs IS 'SFR-specific backtesting run parameters and configuration';
 COMMENT ON TABLE sfr_opportunities IS 'All SFR arbitrage opportunities discovered during backtesting with detailed metrics';
 COMMENT ON TABLE sfr_simulated_trades IS 'Detailed execution simulation results for SFR trades including slippage and commission modeling';
 COMMENT ON TABLE sfr_performance_analytics IS 'Comprehensive performance analytics calculated per SFR backtest run';
-COMMENT ON TABLE sfr_rejection_log IS 'Tracking of rejected opportunities for strategy optimization and analysis';
-COMMENT ON TABLE vix_sfr_correlation_analysis IS 'Analysis of correlation between VIX regimes and SFR performance';
-COMMENT ON TABLE sfr_risk_metrics IS 'Risk management metrics and exposure tracking for SFR strategies';
+-- REMOVED: Comment for unused sfr_rejection_log table
 
 COMMENT ON FUNCTION calculate_sfr_quality_score IS 'Calculates a composite quality score (0-1) for SFR opportunities based on ROI, liquidity, spreads, and time to expiry';
 COMMENT ON FUNCTION get_sfr_performance_summary IS 'Returns summary performance metrics for an SFR backtest run';
-COMMENT ON FUNCTION analyze_sfr_vix_performance IS 'Analyzes SFR performance breakdown by VIX regime with correlation analysis';
+-- REMOVED: Comments for VIX-related functions and tables

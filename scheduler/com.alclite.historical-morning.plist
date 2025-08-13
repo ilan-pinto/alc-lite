@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alclite.historical-morning</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ilpinto/dev/AlchimistProject/alc-lite</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ilpinto/micromamba/bin/python</string>
+        <string>/Users/ilpinto/dev/AlchimistProject/alc-lite/scheduler/run_collection_python.py</string>
+        <string>morning</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <!-- Morning collection at 5:00 PM Israel (10:00 AM ET) -->
+        <key>Hour</key>
+        <integer>17</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ilpinto/dev/AlchimistProject/alc-lite/logs/historical_morning_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ilpinto/dev/AlchimistProject/alc-lite/logs/historical_morning_stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/ilpinto/micromamba/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/ilpinto/dev/AlchimistProject/alc-lite</string>
+        <key>TZ</key>
+        <string>Asia/Jerusalem</string>
+    </dict>
+</dict>
+</plist>

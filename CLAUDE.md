@@ -2,6 +2,96 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Phase 1: Daily Options Data Collection (Israel Timezone)
+
+### Quick Start
+```bash
+# Manual collection run (Python wrapper - prevents timeout issues)
+python scheduler/run_israel_collection_python.py
+
+# Manual collection run (legacy shell script)
+./scheduler/run_collection_now_israel.sh
+
+# Check collection status
+python scheduler/check_collection_status.py
+
+# Force collection (even if already done today)
+python scheduler/run_israel_collection_python.py --force
+
+# Force collection with data truncation (deletes today's data first)
+python scheduler/run_israel_collection_python.py --force --truncate
+
+# Truncate today's data manually (with confirmation prompt)
+./scheduler/truncate_today_collection.sh
+
+# Collect specific symbol only
+python scheduler/run_israel_collection_python.py --symbols=SPY
+
+# Watch status (auto-refresh every 30s)
+python scheduler/check_collection_status.py --watch
+```
+
+### Scheduler Management
+```bash
+# Install LaunchAgent for automatic daily collection
+launchctl load ~/Library/LaunchAgents/com.alclite.daily-collector-israel.plist
+launchctl load ~/Library/LaunchAgents/com.alclite.friday-expiry-israel.plist
+
+# Check if scheduler is running
+launchctl list | grep alclite
+
+# Manually trigger scheduled job
+launchctl start com.alclite.daily-collector-israel
+
+# Disable automatic collection
+launchctl unload ~/Library/LaunchAgents/com.alclite.daily-collector-israel.plist
+
+# View logs
+tail -f logs/daily_collector.log
+tail -f logs/daily_collector_error.log
+```
+
+### Collection Schedule (Israel Time)
+- **Daily EOD Collection**: 11:45 PM IST / 12:45 AM IDT
+- **Friday Expiry Check**: 10:00 PM IST / 11:00 PM IDT (Fridays only)
+- **Morning Health Check**: 8:00 AM Israel time
+
+### Monitoring Queries
+```sql
+-- Check today's collection status
+SELECT symbol, collection_type, status, records_collected
+FROM daily_collection_status
+WHERE collection_date = CURRENT_DATE;
+
+-- Check collection health
+SELECT * FROM check_collection_health(NULL);
+
+-- Find data gaps
+SELECT symbol, gap_date, gap_type
+FROM data_gaps
+WHERE backfilled = false
+ORDER BY gap_date DESC;
+```
+
+### Handling Collection Errors
+
+#### Duplicate Key Violation
+If you encounter this error when forcing collection:
+```
+asyncpg.exceptions.UniqueViolationError: duplicate key value violates unique constraint
+DETAIL: Key (collection_date, symbol, collection_type)=(2025-08-11, ALL, end_of_day) already exists.
+```
+
+**Solutions:**
+1. Use the truncate flag: `./scheduler/run_collection_now_israel.sh --force --truncate`
+2. Manually truncate: `./scheduler/truncate_today_collection.sh`
+3. Direct SQL: `DELETE FROM daily_collection_status WHERE collection_date = CURRENT_DATE;`
+
+### Prerequisites for Phase 1
+1. **TimescaleDB** running on port 5433
+2. **IB Gateway/TWS** running on port 7497 (paper trading)
+3. **Python venv** activated with dependencies installed
+
 ## Common Development Commands
 
 ### Setup and Dependencies
@@ -136,6 +226,33 @@ The application uses `ib_async` for TWS/IB Gateway connectivity. The `OrderManag
 ### Testing Strategy
 
 The test suite focuses on CLI argument validation and integration testing. All tests mock the IB connection to avoid requiring actual broker connectivity during testing.
+
+## Data Collection Systems
+
+### Two Collection Systems
+
+This project has **two distinct data collection systems**:
+
+1. **Historical Bars Collection** (`scheduler/run_collection_python.py`)
+   - Collects historical bar data (OHLCV) for backtesting
+   - Uses `historical_bars_collector.py` internally
+   - Collection types: morning, midday, afternoon, eod, late_night, gap_fill, manual
+   - Purpose: Populate historical database for strategy backtesting
+   - Schedule: Multiple times per day via LaunchAgents
+
+2. **Daily Options Collection** (`scheduler/run_israel_collection_python.py`)
+   - Collects live options chain data for arbitrage scanning
+   - Uses `daily_collector.py` internally
+   - Collection types: end_of_day, friday_expiry_check, morning_check
+   - Purpose: Real-time options data for arbitrage detection
+   - Schedule: Daily at 11:45 PM Israel time, Friday expiry checks
+
+### Python Wrappers vs Shell Scripts
+
+Both systems now use **Python wrappers** instead of shell scripts to prevent asyncio.TimeoutError issues:
+- Shell scripts caused subprocess isolation that interfered with ib_async connections
+- Python wrappers maintain proper environment context and prevent timeouts
+- Both wrappers include HTML stats page generation with auto-opening
 
 ## Development Notes
 

@@ -10,7 +10,6 @@ Key Features:
 - Realistic execution modeling with multiple slippage models
 - Commission and fee calculations
 - Performance analytics and risk metrics
-- VIX correlation analysis integration
 - Comprehensive logging and error handling
 - Configurable time periods and parameters
 
@@ -45,15 +44,6 @@ class SlippageModel(Enum):
     LINEAR = "LINEAR"
     SQUARE_ROOT = "SQUARE_ROOT"
     IMPACT = "IMPACT"
-
-
-class VixRegime(Enum):
-    """VIX volatility regimes for market environment filtering."""
-
-    LOW = "LOW"  # VIX < 15
-    MEDIUM = "MEDIUM"  # VIX 15-25
-    HIGH = "HIGH"  # VIX 25-35
-    EXTREME = "EXTREME"  # VIX > 35
 
 
 class OpportunityQuality(Enum):
@@ -123,12 +113,6 @@ class SFRBacktestConfig:
     liquidity_penalty_factor: float = 1.0  # Penalty for low liquidity
     commission_per_contract: float = 1.00  # Commission cost per contract
 
-    # Market environment filters
-    vix_regime_filter: Optional[VixRegime] = None  # Filter by VIX regime
-    min_vix_level: Optional[float] = None  # Minimum VIX level to trade
-    max_vix_level: Optional[float] = None  # Maximum VIX level to trade
-    exclude_vix_spikes: bool = False  # Exclude trading during VIX spikes
-
 
 @dataclass
 class ExpiryOption:
@@ -144,10 +128,12 @@ class ExpiryOption:
 
 @dataclass
 class MarketData:
-    """Market data snapshot for backtesting."""
+    """Market data snapshot for backtesting with OHLCV and Greeks support."""
 
     timestamp: datetime
     stock_price: float
+
+    # Basic bid/ask/last data (legacy support)
     call_bid: Optional[float] = None
     call_ask: Optional[float] = None
     call_last: Optional[float] = None
@@ -156,8 +142,53 @@ class MarketData:
     put_ask: Optional[float] = None
     put_last: Optional[float] = None
     put_volume: Optional[int] = None
-    vix_level: Optional[float] = None
-    vix_regime: Optional[VixRegime] = None
+
+    # OHLCV data from 5-minute bars
+    call_open: Optional[float] = None
+    call_high: Optional[float] = None
+    call_low: Optional[float] = None
+    call_close: Optional[float] = None
+    call_vwap: Optional[float] = None
+    call_bar_count: Optional[int] = None
+
+    put_open: Optional[float] = None
+    put_high: Optional[float] = None
+    put_low: Optional[float] = None
+    put_close: Optional[float] = None
+    put_vwap: Optional[float] = None
+    put_bar_count: Optional[int] = None
+
+    # Greeks data
+    call_delta: Optional[float] = None
+    call_gamma: Optional[float] = None
+    call_theta: Optional[float] = None
+    call_vega: Optional[float] = None
+    call_rho: Optional[float] = None
+    call_iv: Optional[float] = None
+
+    put_delta: Optional[float] = None
+    put_gamma: Optional[float] = None
+    put_theta: Optional[float] = None
+    put_vega: Optional[float] = None
+    put_rho: Optional[float] = None
+    put_iv: Optional[float] = None
+
+    # Open Interest
+    call_open_interest: Optional[int] = None
+    put_open_interest: Optional[int] = None
+
+    # Spread metrics calculated from bid/ask close
+    call_spread: Optional[float] = None
+    call_mid: Optional[float] = None
+    put_spread: Optional[float] = None
+    put_mid: Optional[float] = None
+
+    # Data quality indicators
+    call_has_volume: bool = False
+    put_has_volume: bool = False
+    data_source: Optional[str] = (
+        None  # 'TRADES', 'BID_ASK', 'OPTION_IMPLIED_VOLATILITY'
+    )
 
 
 @dataclass
@@ -632,11 +663,10 @@ class SFRBacktestEngine:
                         max_strike_combinations, max_expiry_options, max_bid_ask_spread_call,
                         max_bid_ask_spread_put, combo_buffer_percent, data_timeout_seconds,
                         slippage_model, base_slippage_bps, liquidity_penalty_factor,
-                        commission_per_contract, vix_regime_filter, min_vix_level, max_vix_level,
-                        exclude_vix_spikes
+                        commission_per_contract
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                            $16, $17, $18, $19, $20, $21, $22, $23)
+                            $16, $17, $18, $19)
                     RETURNING id
                     """,
                     generic_run_id,
@@ -658,14 +688,6 @@ class SFRBacktestEngine:
                     self.config.base_slippage_bps,
                     self.config.liquidity_penalty_factor,
                     self.config.commission_per_contract,
-                    (
-                        self.config.vix_regime_filter.value
-                        if self.config.vix_regime_filter
-                        else None
-                    ),
-                    self.config.min_vix_level,
-                    self.config.max_vix_level,
-                    self.config.exclude_vix_spikes,
                 )
 
                 logger.info(f"✅ Created SFR backtest run with ID: {sfr_run_id}")
@@ -729,20 +751,6 @@ class SFRBacktestEngine:
 
             logger.debug(f"   📈 Stock price: ${stock_data['price']:.2f}")
 
-            # Get VIX data for market environment context
-            vix_data = await self._get_vix_data(trading_date)
-            if vix_data:
-                logger.debug(
-                    f"   🌪️  VIX: {vix_data['vix_level']:.2f} ({vix_data['vix_regime'].value})"
-                )
-
-            # Skip if VIX filtering is enabled and conditions not met
-            if not self._check_vix_filter(vix_data):
-                logger.debug(
-                    f"   ⏭️  Skipping {symbol} on {trading_date} due to VIX filter"
-                )
-                return {"opportunities_found": 0, "trades_executed": 0}
-
             # Get available option chains for the day
             expiry_options = await self._get_expiry_options(
                 underlying_id, stock_data["price"], trading_date
@@ -771,20 +779,57 @@ class SFRBacktestEngine:
                     )
                     continue
 
-                # Create market data snapshot
+                # Create market data snapshot with enhanced 5-minute bar data
                 market_data = MarketData(
                     timestamp=datetime.combine(trading_date, datetime.min.time()),
                     stock_price=stock_data["price"],
-                    call_bid=option_data["call_bid"],
-                    call_ask=option_data["call_ask"],
-                    call_last=option_data["call_last"],
-                    call_volume=option_data["call_volume"],
-                    put_bid=option_data["put_bid"],
-                    put_ask=option_data["put_ask"],
-                    put_last=option_data["put_last"],
-                    put_volume=option_data["put_volume"],
-                    vix_level=vix_data["vix_level"] if vix_data else None,
-                    vix_regime=vix_data["vix_regime"] if vix_data else None,
+                    # Legacy bid/ask/last data
+                    call_bid=option_data.get("call_bid"),
+                    call_ask=option_data.get("call_ask"),
+                    call_last=option_data.get("call_last"),
+                    call_volume=option_data.get("call_volume"),
+                    put_bid=option_data.get("put_bid"),
+                    put_ask=option_data.get("put_ask"),
+                    put_last=option_data.get("put_last"),
+                    put_volume=option_data.get("put_volume"),
+                    # OHLCV data from 5-minute bars
+                    call_open=option_data.get("call_open"),
+                    call_high=option_data.get("call_high"),
+                    call_low=option_data.get("call_low"),
+                    call_close=option_data.get("call_close"),
+                    call_vwap=option_data.get("call_vwap"),
+                    call_bar_count=option_data.get("call_bar_count"),
+                    put_open=option_data.get("put_open"),
+                    put_high=option_data.get("put_high"),
+                    put_low=option_data.get("put_low"),
+                    put_close=option_data.get("put_close"),
+                    put_vwap=option_data.get("put_vwap"),
+                    put_bar_count=option_data.get("put_bar_count"),
+                    # Greeks data
+                    call_iv=option_data.get("call_iv"),
+                    call_delta=option_data.get("call_delta"),
+                    call_gamma=option_data.get("call_gamma"),
+                    call_theta=option_data.get("call_theta"),
+                    call_vega=option_data.get("call_vega"),
+                    call_rho=option_data.get("call_rho"),
+                    put_iv=option_data.get("put_iv"),
+                    put_delta=option_data.get("put_delta"),
+                    put_gamma=option_data.get("put_gamma"),
+                    put_theta=option_data.get("put_theta"),
+                    put_vega=option_data.get("put_vega"),
+                    put_rho=option_data.get("put_rho"),
+                    # Open Interest
+                    call_open_interest=option_data.get("call_open_interest"),
+                    put_open_interest=option_data.get("put_open_interest"),
+                    # Spread metrics
+                    call_spread=option_data.get("call_spread"),
+                    call_mid=option_data.get("call_mid"),
+                    put_spread=option_data.get("put_spread"),
+                    put_mid=option_data.get("put_mid"),
+                    # Data quality
+                    call_has_volume=option_data.get("call_has_volume", False),
+                    put_has_volume=option_data.get("put_has_volume", False),
+                    data_source=option_data.get("data_source"),
                 )
 
                 # Check for SFR opportunity using live trading logic
@@ -865,77 +910,6 @@ class SFRBacktestEngine:
 
             return None
 
-    async def _get_vix_data(self, trading_date: date) -> Optional[Dict[str, Any]]:
-        """Get VIX data for market environment context."""
-        async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    close_price as vix_close,
-                    CASE
-                        WHEN close_price < 15 THEN 'LOW'
-                        WHEN close_price < 25 THEN 'MEDIUM'
-                        WHEN close_price < 40 THEN 'HIGH'
-                        ELSE 'EXTREME'
-                    END as vix_regime
-                FROM vix_data_ticks
-                WHERE instrument_id = 1 -- VIX instrument
-                  AND DATE(time) = $1
-                ORDER BY time DESC
-                LIMIT 1
-                """,
-                trading_date,
-            )
-
-            if row:
-                vix_level = float(row["vix_close"])
-
-                # Determine VIX regime if not stored
-                vix_regime = row["vix_regime"]
-                if not vix_regime:
-                    if vix_level < 15:
-                        vix_regime = VixRegime.LOW.value
-                    elif vix_level < 25:
-                        vix_regime = VixRegime.MEDIUM.value
-                    elif vix_level < 35:
-                        vix_regime = VixRegime.HIGH.value
-                    else:
-                        vix_regime = VixRegime.EXTREME.value
-
-                return {"vix_level": vix_level, "vix_regime": VixRegime(vix_regime)}
-
-            return None
-
-    def _check_vix_filter(self, vix_data: Optional[Dict[str, Any]]) -> bool:
-        """Check if VIX conditions meet filtering criteria."""
-        if not vix_data:
-            return True  # No VIX data, allow trading
-
-        vix_level = vix_data["vix_level"]
-        vix_regime = vix_data["vix_regime"]
-
-        # Check VIX regime filter
-        if (
-            self.config.vix_regime_filter
-            and vix_regime != self.config.vix_regime_filter
-        ):
-            return False
-
-        # Check VIX level bounds
-        if self.config.min_vix_level and vix_level < self.config.min_vix_level:
-            return False
-
-        if self.config.max_vix_level and vix_level > self.config.max_vix_level:
-            return False
-
-        # Check VIX spike exclusion (>20% daily change)
-        if self.config.exclude_vix_spikes:
-            # This would require previous day VIX data - simplified for now
-            if vix_level > 40:  # Simple spike detection
-                return False
-
-        return True
-
     async def _get_expiry_options(
         self, underlying_id: int, stock_price: float, trading_date: date
     ) -> List[ExpiryOption]:
@@ -992,19 +966,119 @@ class SFRBacktestEngine:
 
             return expiry_options
 
+    async def _validate_5min_bar_quality(
+        self,
+        option_data: Dict[str, Any],
+        expiry_option: ExpiryOption,
+        trading_date: date,
+    ) -> Tuple[bool, List[str]]:
+        """
+        Validate the quality of 5-minute bar data for reliable backtesting.
+
+        Returns:
+            Tuple of (is_valid, list_of_warnings)
+        """
+        warnings = []
+        is_valid = True
+
+        # Check for basic data completeness
+        required_fields = [
+            "call_close",
+            "put_close",
+            "call_bid",
+            "call_ask",
+            "put_bid",
+            "put_ask",
+        ]
+        missing_fields = [
+            field for field in required_fields if not option_data.get(field)
+        ]
+        if missing_fields:
+            warnings.append(f"Missing critical price data: {missing_fields}")
+            is_valid = False
+
+        # Volume validation
+        call_volume = option_data.get("call_volume", 0)
+        put_volume = option_data.get("put_volume", 0)
+        if call_volume == 0 and put_volume == 0:
+            warnings.append("No volume in either call or put options")
+            # Not invalid, but noteworthy
+
+        # OHLCV consistency checks
+        for option_type in ["call", "put"]:
+            open_price = option_data.get(f"{option_type}_open")
+            high_price = option_data.get(f"{option_type}_high")
+            low_price = option_data.get(f"{option_type}_low")
+            close_price = option_data.get(f"{option_type}_close")
+
+            if all([open_price, high_price, low_price, close_price]):
+                # High should be >= Open, Low, Close
+                if not (high_price >= max(open_price, close_price, low_price)):
+                    warnings.append(f"{option_type} high price inconsistency")
+                    is_valid = False
+
+                # Low should be <= Open, High, Close
+                if not (low_price <= min(open_price, close_price, high_price)):
+                    warnings.append(f"{option_type} low price inconsistency")
+                    is_valid = False
+
+        # Spread reasonableness checks
+        for option_type in ["call", "put"]:
+            bid = option_data.get(f"{option_type}_bid")
+            ask = option_data.get(f"{option_type}_ask")
+            if bid and ask:
+                spread = ask - bid
+                if spread < 0:
+                    warnings.append(f"{option_type} negative bid-ask spread")
+                    is_valid = False
+                elif spread > 50:  # Configurable threshold
+                    warnings.append(
+                        f"{option_type} unusually wide spread: ${spread:.2f}"
+                    )
+
+        # Greeks reasonableness checks (if available)
+        call_delta = option_data.get("call_delta")
+        put_delta = option_data.get("put_delta")
+
+        if call_delta is not None and not (0 <= call_delta <= 1):
+            warnings.append(f"Call delta out of range: {call_delta}")
+            is_valid = False
+
+        if put_delta is not None and not (-1 <= put_delta <= 0):
+            warnings.append(f"Put delta out of range: {put_delta}")
+            is_valid = False
+
+        # Gamma should be positive for both calls and puts
+        for option_type in ["call", "put"]:
+            gamma = option_data.get(f"{option_type}_gamma")
+            if gamma is not None and gamma < 0:
+                warnings.append(f"{option_type} gamma is negative: {gamma}")
+
+        # Open Interest validation
+        for option_type in ["call", "put"]:
+            oi = option_data.get(f"{option_type}_open_interest")
+            if oi is not None and oi < 0:
+                warnings.append(f"{option_type} negative open interest: {oi}")
+                is_valid = False
+
+        return is_valid, warnings
+
     async def _get_option_data(
         self, expiry_option: ExpiryOption, trading_date: date
     ) -> Optional[Dict[str, Any]]:
-        """Get option market data for both call and put contracts."""
+        """Get option market data from 5-minute bars for both call and put contracts."""
         async with self.db_pool.acquire() as conn:
-            # Get call data
+            # Get call data from 5-minute bars
             call_data = await conn.fetchrow(
                 """
-                SELECT bid_price, ask_price, last_price, volume
-                FROM market_data_ticks
+                SELECT
+                    open, high, low, close, volume, vwap, bar_count,
+                    bid_close, ask_close, spread_close, mid_close,
+                    implied_volatility as iv, delta, gamma, theta, vega, rho,
+                    open_interest, data_source
+                FROM option_bars_5min
                 WHERE contract_id = $1
                   AND DATE(time) = $2
-                  AND tick_type = 'HISTORICAL'
                 ORDER BY time DESC
                 LIMIT 1
                 """,
@@ -1012,14 +1086,17 @@ class SFRBacktestEngine:
                 trading_date,
             )
 
-            # Get put data
+            # Get put data from 5-minute bars
             put_data = await conn.fetchrow(
                 """
-                SELECT bid_price, ask_price, last_price, volume
-                FROM market_data_ticks
+                SELECT
+                    open, high, low, close, volume, vwap, bar_count,
+                    bid_close, ask_close, spread_close, mid_close,
+                    implied_volatility as iv, delta, gamma, theta, vega, rho,
+                    open_interest, data_source
+                FROM option_bars_5min
                 WHERE contract_id = $1
                   AND DATE(time) = $2
-                  AND tick_type = 'HISTORICAL'
                 ORDER BY time DESC
                 LIMIT 1
                 """,
@@ -1027,31 +1104,111 @@ class SFRBacktestEngine:
                 trading_date,
             )
 
+            # Return None if 5-minute bars not available
             if not call_data or not put_data:
+                logger.debug(
+                    f"   📊 5-minute bars not found for {expiry_option.expiry} on {trading_date}"
+                )
                 return None
 
-            return {
+            # Build the option data dictionary
+            option_data = {
+                # Legacy bid/ask/last data (derived from OHLCV)
                 "call_bid": (
-                    float(call_data["bid_price"]) if call_data["bid_price"] else None
+                    float(call_data["bid_close"]) if call_data["bid_close"] else None
                 ),
                 "call_ask": (
-                    float(call_data["ask_price"]) if call_data["ask_price"] else None
+                    float(call_data["ask_close"]) if call_data["ask_close"] else None
                 ),
                 "call_last": (
-                    float(call_data["last_price"]) if call_data["last_price"] else None
+                    float(call_data["close"]) if call_data["close"] else None
                 ),
                 "call_volume": call_data["volume"] or 0,
                 "put_bid": (
-                    float(put_data["bid_price"]) if put_data["bid_price"] else None
+                    float(put_data["bid_close"]) if put_data["bid_close"] else None
                 ),
                 "put_ask": (
-                    float(put_data["ask_price"]) if put_data["ask_price"] else None
+                    float(put_data["ask_close"]) if put_data["ask_close"] else None
                 ),
-                "put_last": (
-                    float(put_data["last_price"]) if put_data["last_price"] else None
-                ),
+                "put_last": (float(put_data["close"]) if put_data["close"] else None),
                 "put_volume": put_data["volume"] or 0,
+                # OHLCV data
+                "call_open": (float(call_data["open"]) if call_data["open"] else None),
+                "call_high": (float(call_data["high"]) if call_data["high"] else None),
+                "call_low": (float(call_data["low"]) if call_data["low"] else None),
+                "call_close": (
+                    float(call_data["close"]) if call_data["close"] else None
+                ),
+                "call_vwap": (float(call_data["vwap"]) if call_data["vwap"] else None),
+                "call_bar_count": call_data["bar_count"],
+                "put_open": (float(put_data["open"]) if put_data["open"] else None),
+                "put_high": (float(put_data["high"]) if put_data["high"] else None),
+                "put_low": (float(put_data["low"]) if put_data["low"] else None),
+                "put_close": (float(put_data["close"]) if put_data["close"] else None),
+                "put_vwap": (float(put_data["vwap"]) if put_data["vwap"] else None),
+                "put_bar_count": put_data["bar_count"],
+                # Greeks data
+                "call_iv": (float(call_data["iv"]) if call_data["iv"] else None),
+                "call_delta": (
+                    float(call_data["delta"]) if call_data["delta"] else None
+                ),
+                "call_gamma": (
+                    float(call_data["gamma"]) if call_data["gamma"] else None
+                ),
+                "call_theta": (
+                    float(call_data["theta"]) if call_data["theta"] else None
+                ),
+                "call_vega": (float(call_data["vega"]) if call_data["vega"] else None),
+                "call_rho": (float(call_data["rho"]) if call_data["rho"] else None),
+                "put_iv": (float(put_data["iv"]) if put_data["iv"] else None),
+                "put_delta": (float(put_data["delta"]) if put_data["delta"] else None),
+                "put_gamma": (float(put_data["gamma"]) if put_data["gamma"] else None),
+                "put_theta": (float(put_data["theta"]) if put_data["theta"] else None),
+                "put_vega": (float(put_data["vega"]) if put_data["vega"] else None),
+                "put_rho": (float(put_data["rho"]) if put_data["rho"] else None),
+                # Open Interest
+                "call_open_interest": call_data["open_interest"],
+                "put_open_interest": put_data["open_interest"],
+                # Spread metrics
+                "call_spread": (
+                    float(call_data["spread_close"])
+                    if call_data["spread_close"]
+                    else None
+                ),
+                "call_mid": (
+                    float(call_data["mid_close"]) if call_data["mid_close"] else None
+                ),
+                "put_spread": (
+                    float(put_data["spread_close"])
+                    if put_data["spread_close"]
+                    else None
+                ),
+                "put_mid": (
+                    float(put_data["mid_close"]) if put_data["mid_close"] else None
+                ),
+                # Data quality indicators
+                "call_has_volume": (call_data["volume"] or 0) > 0,
+                "put_has_volume": (put_data["volume"] or 0) > 0,
+                "data_source": call_data["data_source"] or "UNKNOWN",
             }
+
+            # Validate data quality
+            is_valid, quality_warnings = await self._validate_5min_bar_quality(
+                option_data, expiry_option, trading_date
+            )
+
+            if not is_valid:
+                logger.debug(
+                    f"   ⚠️  5-minute bar data quality issues for {expiry_option.expiry}: {quality_warnings}"
+                )
+                # Still return the data but log the issues
+                # In production, you might want to reject data that doesn't meet quality standards
+            elif quality_warnings:
+                logger.debug(
+                    f"   📊 5-minute bar data warnings for {expiry_option.expiry}: {quality_warnings}"
+                )
+
+            return option_data
 
     async def _check_sfr_opportunity(
         self, underlying_id: int, expiry_option: ExpiryOption, market_data: MarketData
@@ -1200,9 +1357,13 @@ class SFRBacktestEngine:
                     market_data,
                 )
 
-            # Calculate quality scores
+            # Calculate enhanced quality scores with 5-minute bar data and Greeks
             opportunity.liquidity_score = self._calculate_liquidity_score(
-                market_data.call_volume, market_data.put_volume, call_spread, put_spread
+                market_data.call_volume,
+                market_data.put_volume,
+                call_spread,
+                put_spread,
+                market_data,  # Pass full market data for enhanced analysis
             )
             opportunity.opportunity_quality = self._classify_opportunity_quality(
                 min_roi,
@@ -1210,6 +1371,7 @@ class SFRBacktestEngine:
                 call_spread,
                 put_spread,
                 days_to_expiry,
+                market_data,  # Pass market data for Greeks and OHLCV analysis
             )
             opportunity.execution_difficulty = self._classify_execution_difficulty(
                 opportunity.liquidity_score, call_spread, put_spread
@@ -1327,17 +1489,34 @@ class SFRBacktestEngine:
         put_volume: Optional[int],
         call_spread: float,
         put_spread: float,
+        market_data: Optional[MarketData] = None,
     ) -> float:
-        """Calculate composite liquidity score (0-1)."""
-        # Volume component (0-0.5)
+        """Calculate enhanced composite liquidity score (0-1) with 5-minute bar data."""
+        # Volume component (0-0.4) - enhanced with bar data
         total_volume = (call_volume or 0) + (put_volume or 0)
-        volume_score = min(0.5, total_volume / 200.0)  # Normalize to 200 volume = 0.5
+        volume_score = min(0.4, total_volume / 200.0)  # Normalize to 200 volume = 0.4
 
-        # Spread component (0-0.5) - tighter spreads are better
+        # Add bar count bonus if available (indicates active trading)
+        if market_data:
+            call_bar_count = market_data.call_bar_count or 0
+            put_bar_count = market_data.put_bar_count or 0
+            total_bar_count = call_bar_count + put_bar_count
+            bar_bonus = min(0.1, total_bar_count / 100.0)  # Up to 0.1 bonus
+            volume_score += bar_bonus
+
+        # Spread component (0-0.4) - tighter spreads are better
         avg_spread = (call_spread + put_spread) / 2.0
-        spread_score = max(0, 0.5 - (avg_spread / 10.0))  # Normalize to $10 spread = 0
+        spread_score = max(0, 0.4 - (avg_spread / 10.0))  # Normalize to $10 spread = 0
 
-        return volume_score + spread_score
+        # Open interest component (0-0.2) - higher OI indicates better liquidity
+        oi_score = 0.0
+        if market_data:
+            call_oi = market_data.call_open_interest or 0
+            put_oi = market_data.put_open_interest or 0
+            total_oi = call_oi + put_oi
+            oi_score = min(0.2, total_oi / 1000.0)  # Normalize to 1000 OI = 0.2
+
+        return min(1.0, volume_score + spread_score + oi_score)
 
     def _classify_opportunity_quality(
         self,
@@ -1346,16 +1525,38 @@ class SFRBacktestEngine:
         call_spread: float,
         put_spread: float,
         days_to_expiry: int,
+        market_data: Optional[MarketData] = None,
     ) -> OpportunityQuality:
-        """Classify opportunity quality based on multiple factors."""
-        # Calculate composite score
-        roi_component = min(0.4, max(0, min_roi / 5.0 * 0.4))
-        liquidity_component = liquidity_score * 0.3
-        spread_component = max(0, 0.2 - ((call_spread + put_spread) / 40.0 * 0.2))
+        """Enhanced opportunity quality classification with Greeks and OHLCV analysis."""
+        # ROI component (0-0.35)
+        roi_component = min(0.35, max(0, min_roi / 5.0 * 0.35))
+
+        # Liquidity component (0-0.25)
+        liquidity_component = liquidity_score * 0.25
+
+        # Spread component (0-0.15)
+        spread_component = max(0, 0.15 - ((call_spread + put_spread) / 40.0 * 0.15))
+
+        # Time component (0-0.1)
         time_component = 0.1 if 25 <= days_to_expiry <= 35 else 0.05
 
+        # Greeks quality component (0-0.1) - new enhancement
+        greeks_component = 0.0
+        if market_data:
+            greeks_component = self._calculate_greeks_quality_score(market_data)
+
+        # Data quality component (0-0.05) - new enhancement
+        data_quality_component = 0.0
+        if market_data:
+            data_quality_component = self._calculate_data_quality_score(market_data)
+
         quality_score = (
-            roi_component + liquidity_component + spread_component + time_component
+            roi_component
+            + liquidity_component
+            + spread_component
+            + time_component
+            + greeks_component
+            + data_quality_component
         )
 
         if quality_score >= 0.8:
@@ -1366,6 +1567,83 @@ class SFRBacktestEngine:
             return OpportunityQuality.FAIR
         else:
             return OpportunityQuality.POOR
+
+    def _calculate_greeks_quality_score(self, market_data: MarketData) -> float:
+        """Calculate quality score based on Greeks reasonableness (0-0.1)."""
+        score = 0.0
+
+        # Check if we have Greeks data
+        if not (market_data.call_delta and market_data.put_delta):
+            return 0.0  # No Greeks data available
+
+        # Delta reasonableness (calls should be positive, puts negative)
+        if market_data.call_delta and 0.0 < market_data.call_delta < 1.0:
+            score += 0.025
+        if market_data.put_delta and -1.0 < market_data.put_delta < 0.0:
+            score += 0.025
+
+        # Gamma should be positive for both
+        if market_data.call_gamma and market_data.call_gamma > 0:
+            score += 0.015
+        if market_data.put_gamma and market_data.put_gamma > 0:
+            score += 0.015
+
+        # Theta should be negative for both (time decay)
+        if market_data.call_theta and market_data.call_theta < 0:
+            score += 0.01
+        if market_data.put_theta and market_data.put_theta < 0:
+            score += 0.01
+
+        return min(0.1, score)
+
+    def _calculate_data_quality_score(self, market_data: MarketData) -> float:
+        """Calculate data quality score based on completeness and consistency (0-0.05)."""
+        score = 0.0
+
+        # OHLCV completeness bonus
+        if (
+            market_data.call_open
+            and market_data.call_high
+            and market_data.call_low
+            and market_data.call_close
+        ):
+            score += 0.015
+        if (
+            market_data.put_open
+            and market_data.put_high
+            and market_data.put_low
+            and market_data.put_close
+        ):
+            score += 0.015
+
+        # Volume activity bonus
+        if market_data.call_has_volume and market_data.put_has_volume:
+            score += 0.01
+
+        # Data source quality bonus
+        if market_data.data_source in ["TRADES", "BID_ASK"]:
+            score += 0.005
+        elif market_data.data_source == "OPTION_IMPLIED_VOLATILITY":
+            score += 0.003
+
+        # OHLCV consistency check (high >= low, etc.)
+        try:
+            if (
+                market_data.call_high
+                and market_data.call_low
+                and market_data.call_high >= market_data.call_low
+            ):
+                score += 0.0025
+            if (
+                market_data.put_high
+                and market_data.put_low
+                and market_data.put_high >= market_data.put_low
+            ):
+                score += 0.0025
+        except (TypeError, ValueError):
+            pass  # Skip if data is None or invalid
+
+        return min(0.05, score)
 
     def _classify_execution_difficulty(
         self, liquidity_score: float, call_spread: float, put_spread: float
@@ -1559,10 +1837,6 @@ class SFRBacktestEngine:
             "call_strike": expiry_option.call_strike,
             "put_strike": expiry_option.put_strike,
             "stock_price": market_data.stock_price,
-            "vix_level_at_rejection": market_data.vix_level,
-            "vix_regime_at_rejection": (
-                market_data.vix_regime.value if market_data.vix_regime else None
-            ),
         }
 
         self.rejections.append(rejection_record)
@@ -1759,12 +2033,10 @@ class SFRBacktestEngine:
                                 total_slippage, total_commission,
                                 realized_min_profit, realized_max_profit,
                                 realized_min_roi, realized_max_roi,
-                                execution_status, execution_quality, failure_reason,
-                                vix_level_at_execution, vix_regime_at_execution
+                                execution_status, execution_quality, failure_reason
                             )
                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                                    $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
-                                    $26, $27)
+                                    $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
                             """,
                             trade.opportunity.id,
                             self.backtest_run_id,
@@ -1791,12 +2063,6 @@ class SFRBacktestEngine:
                             trade.execution_status,
                             trade.execution_quality,
                             trade.failure_reason,
-                            trade.opportunity.market_data.vix_level,
-                            (
-                                trade.opportunity.market_data.vix_regime.value
-                                if trade.opportunity.market_data.vix_regime
-                                else None
-                            ),
                         )
 
                     # Store rejection log
@@ -1806,10 +2072,9 @@ class SFRBacktestEngine:
                             INSERT INTO sfr_rejection_log (
                                 backtest_run_id, underlying_id, rejection_timestamp,
                                 rejection_stage, rejection_reason,
-                                expiry_date, call_strike, put_strike, stock_price,
-                                vix_level_at_rejection, vix_regime_at_rejection
+                                expiry_date, call_strike, put_strike, stock_price
                             )
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                             """,
                             self.backtest_run_id,
                             rejection["underlying_id"],
@@ -1820,8 +2085,6 @@ class SFRBacktestEngine:
                             rejection.get("call_strike"),
                             rejection.get("put_strike"),
                             rejection.get("stock_price"),
-                            rejection.get("vix_level_at_rejection"),
-                            rejection.get("vix_regime_at_rejection"),
                         )
 
                     # Store performance analytics
@@ -1955,26 +2218,22 @@ class SFRBacktestEngine:
                 "SELECT * FROM get_sfr_performance_summary($1)", backtest_run_id
             )
 
-            # Get VIX performance breakdown
-            vix_performance = await conn.fetch(
-                "SELECT * FROM analyze_sfr_vix_performance($1)", backtest_run_id
-            )
-
-            # Get rejection analysis
-            rejections = await conn.fetch(
-                """
-                SELECT rejection_stage, rejection_reason, COUNT(*) as count
-                FROM sfr_rejection_log
-                WHERE backtest_run_id = $1
-                GROUP BY rejection_stage, rejection_reason
-                ORDER BY count DESC
-                """,
-                backtest_run_id,
-            )
+            # Get rejection analysis (disabled - sfr_rejection_log table removed)
+            # rejections = await conn.fetch(
+            #     """
+            #     SELECT rejection_stage, rejection_reason, COUNT(*) as count
+            #     FROM sfr_rejection_log
+            #     WHERE backtest_run_id = $1
+            #     GROUP BY rejection_stage, rejection_reason
+            #     ORDER BY count DESC
+            #     """,
+            #     backtest_run_id,
+            # )
+            # Note: sfr_rejection_log table removed - using in-memory rejection tracking
+            rejections = []
 
             return {
                 "summary": dict(summary) if summary else {},
-                "vix_analysis": [dict(row) for row in vix_performance],
                 "rejection_analysis": [dict(row) for row in rejections],
             }
 
@@ -2010,24 +2269,19 @@ class SFRBacktestConfigs:
         )
 
     @classmethod
-    def low_vix_config(cls) -> SFRBacktestConfig:
-        """Configuration optimized for low VIX environments."""
+    def conservative_config(cls) -> SFRBacktestConfig:
+        """Configuration optimized for conservative trading."""
         return SFRBacktestConfig(
             profit_target=0.50,
             cost_limit=150.0,
-            vix_regime_filter=VixRegime.LOW,
-            max_vix_level=20.0,
-            exclude_vix_spikes=True,
         )
 
     @classmethod
-    def high_vix_config(cls) -> SFRBacktestConfig:
-        """Configuration optimized for high VIX environments."""
+    def aggressive_config(cls) -> SFRBacktestConfig:
+        """Configuration optimized for aggressive trading."""
         return SFRBacktestConfig(
             profit_target=1.00,
             cost_limit=250.0,
-            vix_regime_filter=VixRegime.HIGH,
-            min_vix_level=25.0,
             slippage_model=SlippageModel.IMPACT,
             base_slippage_bps=5,
         )

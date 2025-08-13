@@ -1,0 +1,141 @@
+# Daily Options Data Collection Schedule for Israel Timezone
+# Phase 1: Local Laptop Implementation
+# Created: 2025-08-11
+
+# Timezone configuration - handles DST automatically
+timezone: Asia/Jerusalem
+
+# Symbols to collect (Phase 1 limited scope)
+symbols:
+  - SPY
+  - PLTR
+  - TSLA
+
+# Collection schedule aligned with US market hours
+schedule:
+  # Pre-market collection (currently disabled for Phase 1)
+  pre_market:
+    enabled: false
+    time_et: "06:30"
+    time_local: "13:30"  # 1:30 PM IST (winter)
+    time_local_dst: "14:30"  # 2:30 PM IDT (summer)
+    purpose: "Collect pre-market options data"
+
+  # End of day collection - PRIMARY
+  end_of_day:
+    enabled: true
+    time_et: "16:45"  # 45 minutes after market close
+    time_local: "23:45"  # 11:45 PM IST (winter)
+    time_local_dst: "00:45"  # 12:45 AM IDT (summer)
+    purpose: "Primary daily options data collection"
+    retry_attempts: 3
+    retry_delay_minutes: 10
+
+  # Friday expiry check
+  friday_expiry_check:
+    enabled: true
+    time_et: "15:00"  # 1 hour before market close
+    time_local: "22:00"  # 10:00 PM IST (winter)
+    time_local_dst: "23:00"  # 11:00 PM IDT (summer)
+    day_of_week: 5  # Friday
+    purpose: "Collect expiring options data on Friday"
+    retry_attempts: 2
+    retry_delay_minutes: 5
+
+  # Morning check for gap detection
+  morning_check:
+    enabled: true
+    time_local: "08:00"  # 8:00 AM Israel time
+    purpose: "Check for overnight data gaps and system health"
+    actions:
+      - check_collection_status
+      - detect_data_gaps
+      - generate_health_report
+
+# Collection parameters
+collection:
+  # Options chain filtering
+  expiry_range_days: 60
+  strike_range_percent: 0.15  # ±15% from current price
+
+  # Data quality thresholds
+  min_bid_ask_spread: 0.01
+  max_bid_ask_spread_percent: 10.0
+  min_volume: 0
+  min_open_interest: 0
+
+  # Performance settings
+  batch_size: 20  # Contracts per batch
+  request_throttle_ms: 500  # Delay between IB requests
+  flush_interval_seconds: 30
+  max_contracts_per_symbol: 200  # Limit for Phase 1
+
+# Database configuration
+database:
+  host: localhost
+  port: 5433
+  database: options_arbitrage
+  user: trading_user
+  password: secure_trading_password
+  pool_size: 10
+
+# IB Gateway configuration
+ib_gateway:
+  host: 127.0.0.1
+  port: 7497  # Paper trading port
+  client_id: 999  # Dedicated ID for daily collector
+  timeout_seconds: 30
+  reconnect_attempts: 3
+  reconnect_delay_seconds: 60
+
+# Logging configuration
+logging:
+  level: INFO
+  file_path: logs/daily_collector.log
+  max_file_size_mb: 100
+  backup_count: 7
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # Separate error log
+  error_file_path: logs/daily_collector_error.log
+
+  # Collection metrics log
+  metrics_file_path: logs/collection_metrics.log
+
+# Monitoring and alerts
+monitoring:
+  # Health check thresholds
+  max_hours_without_collection: 48
+  min_success_rate_percent: 80
+  max_error_count_per_run: 10
+
+  # Data quality thresholds
+  min_data_quality_score: 0.7
+  max_data_gaps_allowed: 5
+
+  # Storage monitoring
+  min_free_space_gb: 10
+
+  # Email alerts (disabled for Phase 1)
+  email_alerts_enabled: false
+
+# Backfill configuration
+backfill:
+  enabled: true
+  max_days_to_backfill: 7
+  backfill_on_gaps: true
+  backfill_time: "09:00"  # 9:00 AM Israel time
+
+# Phase 1 specific settings
+phase1:
+  test_mode: false
+  dry_run: false
+  verbose_logging: true
+  save_debug_snapshots: true
+  debug_snapshot_path: logs/debug_snapshots/
+
+  # Success criteria tracking
+  track_metrics: true
+  metrics_report_daily: true
+  target_completeness_percent: 95
+  target_uptime_percent: 98
