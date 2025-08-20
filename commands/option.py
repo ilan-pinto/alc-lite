@@ -160,6 +160,8 @@ class OptionScan:
         warning=False,
         error=False,
         finviz_url=None,
+        max_combinations=10,
+        max_strike_difference=5,
     ):
         # Configure logging level based on CLI flags
         _configure_logging_level(debug=debug, warning=warning, error=error)
@@ -212,6 +214,8 @@ class OptionScan:
                     volume_limit=volume_limit,
                     cost_limit=cost_limit,
                     quantity=quantity,
+                    max_combinations=max_combinations,
+                    max_strike_difference=max_strike_difference,
                 )
             )
 

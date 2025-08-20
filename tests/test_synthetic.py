@@ -317,7 +317,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     put_contract = MagicMock(conId=3)
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",  # Future date within valid range
+            expiry="20250918",  # Future date within valid range (30 days from now)
             call_contract=call_contract,
             put_contract=put_contract,
             call_strike=100.0,
@@ -400,14 +400,14 @@ async def test_rejection_reasons_are_logged_during_scan():
     stock_contract = Stock("AAPL", "SMART", "USD")
     stock_contract.conId = 1001  # Set contract ID
 
-    call_contract = Option("AAPL", "20250830", 150, "C", "SMART")
+    call_contract = Option("AAPL", "20250918", 150, "C", "SMART")
     call_contract.conId = 1002  # Set contract ID
 
-    put_contract = Option("AAPL", "20250830", 140, "P", "SMART")
+    put_contract = Option("AAPL", "20250918", 140, "P", "SMART")
     put_contract.conId = 1003  # Set contract ID
 
     expiry_option = ExpiryOption(
-        expiry="20250830",
+        expiry="20250918",
         call_contract=call_contract,
         put_contract=put_contract,
         call_strike=150,

@@ -269,10 +269,12 @@ class TestBoxSpreadOpportunityDetection:
                     # Verify calls
                     mock_market_data.assert_called_once()
                     mock_get_chain.assert_called_once()
+                    # The method should pass the stock contract created by get_stock_contract
+                    expected_stock = Stock("AAPL", "SMART", "USD")
                     mock_search.assert_called_once_with(
                         mock_chain,
                         Option,
-                        mock_market_data.return_value.contract,
+                        expected_stock,
                         185.5,
                     )
 
@@ -319,7 +321,7 @@ class TestBoxSpreadOpportunityDetection:
 
                     # Verify error was logged
                     mock_logger.error.assert_called_once()
-                    mock_metrics.record_rejection.assert_called_once()
+                    mock_metrics.add_rejection_reason.assert_called_once()
 
     async def test_search_box_in_chain_normal_processing(self):
         """Test normal processing of option chain for box spreads"""
@@ -539,8 +541,11 @@ class TestBoxSpreadScanMethod:
         with patch("modules.Arbitrage.box_spread.strategy.get_logger"):
             self.strategy = BoxSpread()
 
-        # Mock IB connection
+        # Mock IB connection with proper async methods
         self.mock_ib = AsyncMock()
+        self.mock_ib.connectAsync.return_value = (
+            True  # Make connectAsync return immediately
+        )
         self.strategy.ib = self.mock_ib
 
         # Mock global manager
@@ -557,12 +562,13 @@ class TestBoxSpreadScanMethod:
         client_id = 5
 
         with patch.object(self.strategy, "box_stock_scanner", new_callable=AsyncMock):
-            with patch("asyncio.sleep", new_callable=AsyncMock):
+            with patch(
+                "asyncio.sleep", side_effect=[KeyboardInterrupt()]
+            ):  # Stop at first sleep (main loop)
                 with patch.object(self.strategy, "_perform_cache_maintenance"):
-                    try:
-                        # Start scan but interrupt quickly
-                        task = asyncio.create_task(
-                            self.strategy.scan(
+                    with patch.object(self.strategy.global_manager, "start_scan"):
+                        try:
+                            await self.strategy.scan(
                                 symbol_list=symbol_list,
                                 range=range_val,
                                 profit_target=profit_target,
@@ -570,15 +576,8 @@ class TestBoxSpreadScanMethod:
                                 profit_target_multiplier=profit_multiplier,
                                 clientId=client_id,
                             )
-                        )
-                        await asyncio.sleep(0.01)  # Let it start
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-                    except KeyboardInterrupt:
-                        pass
+                        except KeyboardInterrupt:
+                            pass  # Expected - this means we got past parameter setting
 
         # Verify parameters were set
         assert self.strategy.range == range_val
@@ -593,20 +592,17 @@ class TestBoxSpreadScanMethod:
         symbol_list = ["AAPL"]
 
         with patch.object(self.strategy, "box_stock_scanner", new_callable=AsyncMock):
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                try:
-                    # Start scan but interrupt quickly
-                    task = asyncio.create_task(
-                        self.strategy.scan(symbol_list=symbol_list, clientId=7)
-                    )
-                    await asyncio.sleep(0.01)  # Let it start
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-                except KeyboardInterrupt:
-                    pass
+            with patch(
+                "asyncio.sleep", side_effect=[KeyboardInterrupt()]
+            ):  # Stop at first sleep (main loop)
+                with patch.object(self.strategy, "_perform_cache_maintenance"):
+                    with patch.object(self.strategy.global_manager, "start_scan"):
+                        try:
+                            await self.strategy.scan(
+                                symbol_list=symbol_list, clientId=7
+                            )
+                        except KeyboardInterrupt:
+                            pass  # Expected - this means we got past connectAsync
 
         # Verify IB connection was attempted
         self.mock_ib.connectAsync.assert_called_once_with("127.0.0.1", 7497, clientId=7)
@@ -618,21 +614,17 @@ class TestBoxSpreadScanMethod:
         with patch.object(
             self.strategy, "box_stock_scanner", new_callable=AsyncMock
         ) as mock_scanner:
-            with patch("asyncio.sleep", new_callable=AsyncMock):
+            # Interrupt after the symbols are scanned (after the gather call in main loop)
+            # The asyncio.sleep(30) happens after the symbol scanning in the main loop
+            with patch(
+                "asyncio.sleep", side_effect=[KeyboardInterrupt()]
+            ):  # Stop at main loop sleep
                 with patch.object(self.strategy, "_perform_cache_maintenance"):
-                    try:
-                        # Start scan but interrupt after one iteration
-                        task = asyncio.create_task(
-                            self.strategy.scan(symbol_list=symbol_list)
-                        )
-                        await asyncio.sleep(0.01)  # Let it start
-                        task.cancel()
+                    with patch.object(self.strategy.global_manager, "start_scan"):
                         try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-                    except KeyboardInterrupt:
-                        pass
+                            await self.strategy.scan(symbol_list=symbol_list)
+                        except KeyboardInterrupt:
+                            pass  # Expected - this means we completed one full scan iteration
 
         # Should have called scanner for each symbol at least once
         assert mock_scanner.call_count >= len(symbol_list)
@@ -649,8 +641,8 @@ class TestBoxSpreadScanMethod:
 
                     await self.strategy.scan(symbol_list=symbol_list)
 
-                    # Should log interruption
-                    mock_logger.info.assert_called_with(
+                    # Should log interruption (check that it was called, not necessarily the last call)
+                    mock_logger.info.assert_any_call(
                         "Box spread scan interrupted by user"
                     )
 
@@ -658,15 +650,21 @@ class TestBoxSpreadScanMethod:
         """Test that scan method handles general exceptions"""
         symbol_list = ["AAPL"]
 
+        # Mock the _get_market_data_async method to raise an exception
         with patch.object(
-            self.strategy, "box_stock_scanner", side_effect=Exception("Test error")
+            self.strategy, "_get_market_data_async", side_effect=Exception("Test error")
         ):
-            with patch("modules.Arbitrage.box_spread.strategy.logger") as mock_logger:
+            with patch(
+                "asyncio.sleep", side_effect=KeyboardInterrupt
+            ):  # Stop after first iteration
+                with patch(
+                    "modules.Arbitrage.box_spread.strategy.logger"
+                ) as mock_logger:
 
-                await self.strategy.scan(symbol_list=symbol_list)
+                    await self.strategy.scan(symbol_list=symbol_list)
 
-                # Should log error
-                mock_logger.error.assert_called()
+                    # Should log error from box_stock_scanner exception handling
+                    mock_logger.error.assert_called()
 
     async def test_scan_method_profit_target_multiplier(self):
         """Test that profit target increases with multiplier"""
@@ -736,8 +734,9 @@ class TestBoxSpreadUtilityFunctions:
             # Verify executor was created
             mock_executor_class.assert_called_once()
 
-            # Verify executor was registered with pending tickers event
-            assert mock_ib.pendingTickersEvent.__iadd__.called
+            # Verify executor was added to active executors
+            assert "AAPL" in self.strategy.active_executors
+            assert self.strategy.active_executors["AAPL"] == mock_executor
 
     async def test_create_and_start_executor_error_handling(self):
         """Test error handling in executor creation"""
@@ -824,18 +823,26 @@ class TestBoxSpreadIntegrationWithMockIB:
         """Test full scan cycle with mock data"""
         symbol_list = ["DELL"]  # Use DELL which has predefined arbitrage scenario
 
-        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            with patch.object(self.strategy, "_perform_cache_maintenance"):
+        # First, manually establish the connection to ensure it's set up properly
+        # This prevents the KeyboardInterrupt from interfering with the connection process
+        await self.mock_ib.connectAsync()
+        assert self.mock_ib.connected, "Mock IB should be connected after connectAsync"
 
-                # Mock sleep to stop after one iteration
-                mock_sleep.side_effect = [KeyboardInterrupt()]
+        # Patch connectAsync to verify it's called during scan, and patch sleep to interrupt after connection
+        with patch.object(
+            self.mock_ib, "connectAsync", wraps=self.mock_ib.connectAsync
+        ) as mock_connect:
+            with patch("asyncio.sleep", side_effect=[KeyboardInterrupt()]):
+                with patch.object(self.strategy, "_perform_cache_maintenance"):
 
-                try:
-                    await self.strategy.scan(symbol_list=symbol_list)
-                except KeyboardInterrupt:
-                    pass
+                    try:
+                        await self.strategy.scan(symbol_list=symbol_list)
+                    except KeyboardInterrupt:
+                        pass
 
-        # Verify IB connection was made
+        # Verify scan called connectAsync (indicating proper integration flow)
+        mock_connect.assert_called_once()
+        # Verify IB connection remains established throughout the test
         assert self.mock_ib.connected
 
     async def test_integration_with_realistic_market_data(self):

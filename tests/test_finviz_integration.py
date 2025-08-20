@@ -395,6 +395,8 @@ class TestCLIFinvizIntegration:
             warning=False,
             error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111&f=cap_largeover",
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -427,6 +429,8 @@ class TestCLIFinvizIntegration:
             warning=False,
             error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -501,6 +505,8 @@ class TestCLIFinvizIntegration:
             warning=False,
             error=False,
             finviz_url=escaped_url,  # URL passed as-is to function, cleaning happens inside
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -577,6 +583,8 @@ class TestCLIFinvizIntegration:
             warning=False,
             error=False,
             finviz_url="https://finviz.com/screener.ashx?v=111",
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration

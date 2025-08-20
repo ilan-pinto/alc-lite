@@ -11,6 +11,16 @@ from ib_async import IB, Contract, Order, Ticker
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
 from .common import get_logger
+from .data_collection_metrics import (
+    CollectionPhase,
+    ContractPrioritizer,
+    ContractPriority,
+    DataCollectionMetrics,
+    DataVelocityTracker,
+    ProgressiveTimeoutConfig,
+    log_phase_transition,
+    should_continue_waiting,
+)
 from .metrics import RejectionReason, metrics_collector
 
 # Configure logging will be done in main
@@ -109,6 +119,22 @@ class SFRExecutor(BaseExecutor):
         self.data_timeout = data_timeout
         self.data_collection_start = time.time()
 
+        # Progressive collection components
+        self.phase1_checked = False
+        self.phase2_checked = False
+        self.current_phase = CollectionPhase.INITIALIZING
+        self.priority_tiers = {}
+        self.velocity_tracker = DataVelocityTracker()
+        self.collection_metrics = DataCollectionMetrics(
+            symbol=symbol, start_time=self.data_collection_start
+        )
+
+        # Determine market hours for timeout configuration
+        self.timeout_config = ProgressiveTimeoutConfig.create_for_market_conditions(
+            is_market_hours=self._is_market_hours(),
+            total_contracts=len(self.all_contracts),
+        )
+
     def find_stock_position_in_strikes(
         self, stock_price: float, valid_strikes: List[float]
     ) -> int:
@@ -146,14 +172,29 @@ class SFRExecutor(BaseExecutor):
         try:
             expiry_date = datetime.strptime(expiry_option.expiry, "%Y%m%d")
             days_to_expiry = (expiry_date - datetime.now()).days
+
+            # DEBUG: Log expiry calculations for AAPL
+            if expiry_option.call_strike == 184.5 and expiry_option.put_strike == 183.5:
+                logger.warning(f"[AAPL DEBUG] Expiry check:")
+                logger.warning(
+                    f"  expiry_date={expiry_date}, current_date={datetime.now()}"
+                )
+                logger.warning(f"  days_to_expiry={days_to_expiry}")
+                logger.warning(
+                    f"  expiry_check: {days_to_expiry} < 15 or {days_to_expiry} > 50 = {days_to_expiry < 15 or days_to_expiry > 50}"
+                )
+
             if days_to_expiry < 15 or days_to_expiry > 50:
                 return False, "expiry_out_of_range"
         except ValueError:
             return False, "invalid_expiry_format"
 
         # Quick moneyness check - re-enabled with optimized thresholds
+        if stock_price <= 0:
+            return False, "invalid_stock_price"
         call_moneyness = expiry_option.call_strike / stock_price
         put_moneyness = expiry_option.put_strike / stock_price
+
         # More flexible thresholds to capture more opportunities
         if (
             call_moneyness < 0.90  # Allow deeper ITM calls
@@ -164,6 +205,136 @@ class SFRExecutor(BaseExecutor):
             return False, "poor_moneyness"
 
         return True, None
+
+    def _is_market_hours(self) -> bool:
+        """Check if current time is during market hours (9:30 AM - 4:00 PM ET)"""
+        from datetime import datetime, timedelta, timezone
+
+        # Get current time in ET
+        et_tz = timezone(timedelta(hours=-5))  # EST (adjust for DST if needed)
+        current_et = datetime.now(et_tz)
+
+        # Check if it's a weekday
+        if current_et.weekday() >= 5:  # Saturday=5, Sunday=6
+            return False
+
+        # Check if time is between 9:30 AM and 4:00 PM ET
+        market_open = current_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = current_et.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        return market_open <= current_et <= market_close
+
+    def _is_valid_price(self, value) -> bool:
+        """Check if a price value is valid (not None, not empty array, not NaN)"""
+        if value is None:
+            return False
+        if hasattr(value, "__len__") and len(value) == 0:
+            return False
+        try:
+            return not np.isnan(value)
+        except (TypeError, ValueError):
+            return False
+
+    def _calculate_data_quality_score(
+        self, stock_ticker, call_ticker, put_ticker
+    ) -> float:
+        """Calculate a quality score (0-1) based on data completeness and freshness"""
+        score = 0.0
+
+        # Stock data quality (30% weight)
+        if stock_ticker:
+            stock_score = 0.0
+            if hasattr(stock_ticker, "bid") and self._is_valid_price(stock_ticker.bid):
+                stock_score += 0.1
+            if hasattr(stock_ticker, "ask") and self._is_valid_price(stock_ticker.ask):
+                stock_score += 0.1
+            if hasattr(stock_ticker, "last") and self._is_valid_price(
+                stock_ticker.last
+            ):
+                stock_score += 0.05
+            if hasattr(stock_ticker, "volume") and stock_ticker.volume > 0:
+                stock_score += 0.05
+            score += stock_score
+
+        # Call option data quality (35% weight)
+        if call_ticker:
+            call_score = 0.0
+            if hasattr(call_ticker, "bid") and self._is_valid_price(call_ticker.bid):
+                call_score += 0.1
+            if hasattr(call_ticker, "ask") and self._is_valid_price(call_ticker.ask):
+                call_score += 0.1
+            if hasattr(call_ticker, "last") and self._is_valid_price(call_ticker.last):
+                call_score += 0.05
+            if hasattr(call_ticker, "volume") and call_ticker.volume > 0:
+                call_score += 0.05
+            # Bid-ask spread quality
+            if (
+                hasattr(call_ticker, "bid")
+                and hasattr(call_ticker, "ask")
+                and self._is_valid_price(call_ticker.bid)
+                and self._is_valid_price(call_ticker.ask)
+            ):
+                spread = abs(call_ticker.ask - call_ticker.bid)
+                if spread < 5.0:  # Reasonable spread
+                    call_score += 0.05
+            score += call_score
+
+        # Put option data quality (35% weight)
+        if put_ticker:
+            put_score = 0.0
+            if hasattr(put_ticker, "bid") and self._is_valid_price(put_ticker.bid):
+                put_score += 0.1
+            if hasattr(put_ticker, "ask") and self._is_valid_price(put_ticker.ask):
+                put_score += 0.1
+            if hasattr(put_ticker, "last") and self._is_valid_price(put_ticker.last):
+                put_score += 0.05
+            if hasattr(put_ticker, "volume") and put_ticker.volume > 0:
+                put_score += 0.05
+            # Bid-ask spread quality
+            if (
+                hasattr(put_ticker, "bid")
+                and hasattr(put_ticker, "ask")
+                and self._is_valid_price(put_ticker.bid)
+                and self._is_valid_price(put_ticker.ask)
+            ):
+                spread = abs(put_ticker.ask - put_ticker.bid)
+                if spread < 5.0:  # Reasonable spread
+                    put_score += 0.05
+            score += put_score
+
+        return min(score, 1.0)  # Cap at 1.0
+
+    def initialize_contract_priorities(self, stock_price: float):
+        """Initialize contract priority tiers based on moneyness"""
+        self.priority_tiers = ContractPrioritizer.categorize_by_moneyness(
+            self.expiry_options, stock_price
+        )
+
+        # Update metrics with expected contract counts
+        for priority in [
+            ContractPriority.CRITICAL,
+            ContractPriority.IMPORTANT,
+            ContractPriority.OPTIONAL,
+        ]:
+            count = (
+                len(self.priority_tiers[priority]) * 2
+            )  # 2 contracts per expiry (call + put)
+            self.collection_metrics.contracts_expected[priority.value] = count
+
+        logger.info(
+            f"[{self.symbol}] Contract priorities initialized: "
+            f"Critical={self.collection_metrics.contracts_expected['critical']}, "
+            f"Important={self.collection_metrics.contracts_expected['important']}, "
+            f"Optional={self.collection_metrics.contracts_expected['optional']}"
+        )
+
+    def get_contract_priority(self, contract) -> ContractPriority:
+        """Get the priority of a specific contract"""
+        return ContractPrioritizer.get_contract_priority(
+            contract,
+            self.expiry_options,
+            self.last_stock_price if hasattr(self, "last_stock_price") else 0,
+        )
 
     def check_conditions(
         self,
@@ -183,15 +354,17 @@ class SFRExecutor(BaseExecutor):
         # For conversion arbitrage: min_profit = net_credit - spread
         # We want min_profit > 0, so net_credit > spread
         if (
-            spread >= net_credit
-        ):  # Reject if spread >= net_credit (no arbitrage opportunity)
+            net_credit <= spread
+        ):  # Reject if net_credit <= spread (no arbitrage opportunity)
             logger.info(
-                f"[{symbol}] spread[{spread}] >= net_credit[{net_credit}] - no arbitrage opportunity"
+                f"[{symbol}] net_credit[{net_credit}] <= spread[{spread}] - no arbitrage opportunity"
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
-        elif min_profit <= 0:  # Direct check for positive profit
-            logger.info(f"[{symbol}] min_profit[{min_profit}] <= 0 - not profitable")
+        elif min_profit < 0.05:  # Ensure minimum profit threshold (5 cents)
+            logger.info(
+                f"[{symbol}] min_profit[{min_profit}] < 0.05 - below minimum threshold"
+            )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
         elif net_credit < 0:
@@ -216,201 +389,313 @@ class SFRExecutor(BaseExecutor):
 
     async def executor(self, event: Event) -> None:
         """
-        Main executor method that processes market data events for all contracts.
-        This method is called once per symbol and handles all expiries for that symbol.
+        Progressive data collection executor with 3-phase timeout strategy.
+        This method makes decisions as soon as sufficient data is available.
         """
         if not self.is_active:
             return
 
         try:
-            # Update contract_ticker with new data
+            # Update contract_ticker with new data and track metrics
             for tick in event:
                 ticker: Ticker = tick
                 contract = ticker.contract
 
-                # Update ticker data with volume-based filtering
-                # Accept high volume contracts without warnings
-                if ticker.volume > 50:  # High volume threshold
-                    contract_ticker[contract.conId] = ticker
-                elif ticker.volume > 10:  # Medium volume threshold
-                    contract_ticker[contract.conId] = ticker
-                elif ticker.volume >= 1 and (
+                # Update ticker data with volume-based filtering and priority tracking
+                if ticker.volume >= 1 and (
                     ticker.bid > 0 or ticker.ask > 0 or ticker.close > 0
                 ):
-                    # Accept low volume contracts if they have valid price data
-                    # Only log warning for very low volume (< 5) to reduce noise
                     contract_ticker[contract.conId] = ticker
+
+                    # Track data arrival by priority
+                    priority = self.get_contract_priority(contract)
+                    self.collection_metrics.contracts_received[priority.value] += 1
+
+                    # Record first data arrival time
+                    if self.collection_metrics.time_to_first_data is None:
+                        elapsed = time.time() - self.data_collection_start
+                        self.collection_metrics.time_to_first_data = elapsed
+
                     if ticker.volume < 5:
-                        logger.debug(  # Changed from warning to debug to reduce noise
-                            f"[{self.symbol}] Very low volume ({ticker.volume}) for contract {contract.conId}"
+                        logger.debug(
+                            f"[{self.symbol}] Low volume ({ticker.volume}) for {contract.conId}"
                         )
                 else:
                     logger.debug(
                         f"Skipping contract {contract.conId}: no valid data or volume"
                     )
 
-            # Check for timeout with adaptive timeout based on contract count
+            # Update velocity tracker
+            total_received = self.collection_metrics.get_total_received()
+            self.velocity_tracker.add_data_point(total_received)
+
+            # Progressive phase checking
             elapsed_time = time.time() - self.data_collection_start
-            adaptive_timeout = min(
-                self.data_timeout + (len(self.all_contracts) * 0.1), 60.0
-            )
-            if elapsed_time > adaptive_timeout:
-                missing_contracts = [
-                    c
-                    for c in self.all_contracts
-                    if contract_ticker.get(c.conId) is None
-                ]
-                logger.warning(
-                    f"[{self.symbol}] Data collection timeout after {elapsed_time:.1f}s (adaptive limit: {adaptive_timeout:.1f}s). "
-                    f"Missing data for {len(missing_contracts)} contracts out of {len(self.all_contracts)}"
-                )
-                # Log details of missing contracts
-                for c in missing_contracts[:5]:  # Log first 5 missing
-                    logger.info(
-                        f"  Missing: {c.symbol} {c.right} {c.strike} {c.lastTradeDateOrContractMonth}"
-                    )
 
-                # Deactivate after timeout
-                self.deactivate()
-                # Finish scan with timeout error
-                metrics_collector.finish_scan(
-                    success=False, error_message="Data collection timeout"
-                )
-                return
+            # Initialize contract priorities on first stock data
+            if not self.priority_tiers and self.has_stock_data():
+                stock_ticker = contract_ticker.get(self.stock_contract.conId)
+                if stock_ticker:
+                    stock_price = self.get_stock_midpoint(stock_ticker)
+                    if stock_price is not None and stock_price > 0:
+                        self.last_stock_price = stock_price
+                        self.initialize_contract_priorities(stock_price)
 
-            # Check if we have data for all contracts
-            if all(
-                contract_ticker.get(c.conId) is not None for c in self.all_contracts
+            # Phase 1: Check critical contracts (after 0.5s)
+            if (
+                elapsed_time >= self.timeout_config.phase_1_timeout
+                and not self.phase1_checked
+                and self.priority_tiers
             ):
-                # Check if still active before proceeding
-                if not self.is_active:
-                    return
 
-                logger.info(
-                    f"[{self.symbol}] Fetched ticker for {len(self.all_contracts)} contracts"
+                self.phase1_checked = True
+                self.current_phase = CollectionPhase.PHASE_1_CRITICAL
+                log_phase_transition(
+                    self.symbol,
+                    CollectionPhase.INITIALIZING,
+                    self.current_phase,
+                    self.collection_metrics,
                 )
-                execution_time = time.time() - self.start_time
-                logger.info(f"time to execution: {execution_time} sec")
-                metrics_collector.record_execution_time(execution_time)
 
-                # Process all expiries
-                best_opportunity = None
-                best_profit = 0
-
-                # TODO: Implement enhanced selection criteria
-                # - Risk-reward ratio: max_profit / abs(min_profit)
-                # - Time decay: favor closer expirations
-                # - Liquidity: favor higher volume options
-                # - Market spread: favor tighter bid-ask spreads
-                # Example: score = min_profit * 0.5 + (max_profit/abs(min_profit)) * 0.3 + volume_score * 0.2
-
-                for expiry_option in self.expiry_options:
-                    opportunity = self.calc_price_and_build_order_for_expiry(
-                        expiry_option
+                if self.has_sufficient_critical_data():
+                    opportunity = await self.evaluate_with_available_data(
+                        ContractPriority.CRITICAL
                     )
                     if (
-                        opportunity and opportunity[2] > best_profit
-                    ):  # opportunity[2] is min_profit
-                        best_opportunity = opportunity
-                        best_profit = opportunity[2]
-
-                # TODO: Enhanced selection criteria could consider:
-                # - Risk-reward ratio: max_profit / abs(min_profit)
-                # - Time decay: favor closer expirations
-                # - Liquidity: favor higher volume options
-                # - Market spread: favor tighter bid-ask spreads
-                # Example: score = min_profit * 0.5 + (max_profit/abs(min_profit)) * 0.3 + volume_score * 0.2
-
-                # Execute the best opportunity
-                if best_opportunity:
-                    conversion_contract, order, _, trade_details = best_opportunity
-                    if conversion_contract and order:
-                        # Log trade details right before placing the order
+                        opportunity
+                        and opportunity["guaranteed_profit"]
+                        >= self.timeout_config.phase_1_profit_threshold
+                    ):
                         logger.info(
-                            f"[{self.symbol}] About to place trade for expiry: {trade_details['expiry']}"
+                            f"[{self.symbol}] Phase 1 execution: profit={opportunity['guaranteed_profit']:.2f}"
                         )
-                        self._log_trade_details(
-                            trade_details["call_strike"],
-                            trade_details["call_price"],
-                            trade_details["put_strike"],
-                            trade_details["put_price"],
-                            trade_details["stock_price"],
-                            trade_details["net_credit"],
-                            trade_details["min_profit"],
-                            trade_details["max_profit"],
-                            trade_details["min_roi"],
-                        )
+                        await self.execute_opportunity(opportunity)
+                        return
 
-                        self.is_active = (
-                            False  # Deactivate to prevent multiple executions
-                        )
-                        _ = await self.order_manager.place_order(
-                            conversion_contract, order
-                        )
-                        logger.info(f"Executed best opportunity for {self.symbol}")
-                        metrics_collector.record_opportunity_found()
-                        # Finish scan successfully when an order is placed
-                        metrics_collector.finish_scan(success=True)
-                        # Deactivate immediately after order placement
-                        self.deactivate()
+            # Phase 2: Check important contracts (after 1.5s)
+            if (
+                elapsed_time >= self.timeout_config.phase_2_timeout
+                and not self.phase2_checked
+                and self.priority_tiers
+            ):
 
-                else:
-                    logger.info(f"No suitable opportunities found for {self.symbol}")
-                    self.deactivate()
-                    # Finish scan successfully even if no opportunities found
-                    metrics_collector.finish_scan(success=True)
+                self.phase2_checked = True
+                self.current_phase = CollectionPhase.PHASE_2_IMPORTANT
+                log_phase_transition(
+                    self.symbol,
+                    CollectionPhase.PHASE_1_CRITICAL,
+                    self.current_phase,
+                    self.collection_metrics,
+                )
 
-            else:
-                # Still waiting for data from some contracts
-                missing_contracts = [
-                    c
-                    for c in self.all_contracts
-                    if contract_ticker.get(c.conId) is None
-                ]
-                # Only log debug message every 5 seconds to reduce noise
-                if int(elapsed_time) % 5 == 0:
-                    logger.debug(
-                        f"[{self.symbol}] Still waiting for data from {len(missing_contracts)} contracts "
-                        f"(elapsed: {elapsed_time:.1f}s)"
+                if self.has_sufficient_important_data():
+                    opportunity = await self.evaluate_with_available_data(
+                        ContractPriority.IMPORTANT
+                    )
+                    if (
+                        opportunity
+                        and opportunity["guaranteed_profit"]
+                        >= self.timeout_config.phase_2_profit_threshold
+                    ):
+                        logger.info(
+                            f"[{self.symbol}] Phase 2 execution: profit={opportunity['guaranteed_profit']:.2f}"
+                        )
+                        await self.execute_opportunity(opportunity)
+                        return
+
+            # Phase 3: Final check with all available data (after 3.0s)
+            if elapsed_time >= self.timeout_config.phase_3_timeout:
+                self.current_phase = CollectionPhase.PHASE_3_FINAL
+                log_phase_transition(
+                    self.symbol,
+                    CollectionPhase.PHASE_2_IMPORTANT,
+                    self.current_phase,
+                    self.collection_metrics,
+                )
+
+                if self.has_minimum_viable_data():
+                    opportunity = await self.evaluate_with_available_data(
+                        ContractPriority.OPTIONAL
+                    )
+                    if (
+                        opportunity
+                        and opportunity["guaranteed_profit"]
+                        >= self.timeout_config.phase_3_profit_threshold
+                    ):
+                        logger.info(
+                            f"[{self.symbol}] Phase 3 execution: profit={opportunity['guaranteed_profit']:.2f}"
+                        )
+                        await self.execute_opportunity(opportunity)
+                        return
+
+                # No profitable opportunity found
+                logger.info(
+                    f"[{self.symbol}] No profitable opportunity after {elapsed_time:.1f}s"
+                )
+                self.finish_collection_without_execution("no_profitable_opportunity")
+                return
+
+            # Check if we should stop waiting based on data collection conditions
+            if elapsed_time > 1.0:
+                should_continue, stop_reason = should_continue_waiting(
+                    self.collection_metrics, self.timeout_config, self.velocity_tracker
+                )
+                if not should_continue:
+                    # Before finishing without execution, try to evaluate opportunities with available data
+                    logger.info(
+                        f"[{self.symbol}] Data collection complete early ({stop_reason}), evaluating opportunities..."
                     )
 
+                    if self.has_minimum_viable_data():
+                        opportunity = await self.evaluate_with_available_data(
+                            ContractPriority.OPTIONAL  # Use all available data since collection is complete
+                        )
+                        if (
+                            opportunity
+                            and opportunity["guaranteed_profit"]
+                            >= 0.10  # Use minimum profit threshold
+                        ):
+                            logger.info(
+                                f"[{self.symbol}] Early completion execution: profit={opportunity['guaranteed_profit']:.2f}"
+                            )
+                            await self.execute_opportunity(opportunity)
+                            return
+
+                    # Map stop reasons to user-friendly messages
+                    reason_messages = {
+                        "data_overflow": "sufficient data collected (overflow detected)",
+                        "data_burst_sufficient": "sufficient data collected (burst pattern)",
+                        "critical_threshold_met": "critical data threshold achieved",
+                        "hard_timeout": "collection timeout reached",
+                        "poor_velocity_sufficient_data": "poor data velocity with sufficient data",
+                        "poor_velocity_decent_data": "poor data velocity with decent data",
+                        "poor_velocity_limited_data": "poor data velocity with limited data",
+                        "estimated_completion_too_long": "estimated completion time too long",
+                    }
+
+                    user_message = reason_messages.get(
+                        stop_reason, f"collection stopped ({stop_reason})"
+                    )
+                    logger.info(
+                        f"[{self.symbol}] No opportunities found - stopping early due to: {user_message}"
+                    )
+                    self.finish_collection_without_execution(stop_reason)
+                    return
+
         except Exception as e:
-            logger.error(f"Error in executor: {str(e)}")
-            self.deactivate()
-            # Finish scan with error
-            metrics_collector.finish_scan(success=False, error_message=str(e))
+            logger.error(f"Error in progressive executor: {str(e)}")
+            self.finish_collection_without_execution(f"error: {str(e)}")
 
     def calc_price_and_build_order_for_expiry(
-        self, expiry_option: ExpiryOption
+        self,
+        expiry_option: ExpiryOption,
+        priority_filter: Optional[ContractPriority] = None,
     ) -> Optional[Tuple[Contract, Order, float, Dict]]:
         """
         Calculate price and build order for a specific expiry option.
+        Priority filter allows evaluation with partial data - only evaluates contracts
+        of specified priority or higher.
         Returns tuple of (contract, order, min_profit, trade_details) or None if no opportunity.
         """
         try:
+            # DEBUG: Log AAPL evaluation entry
+            if (
+                self.symbol == "AAPL"
+                and expiry_option.call_strike == 184.5
+                and expiry_option.put_strike == 183.5
+            ):
+                logger.warning(
+                    f"[AAPL DEBUG] calc_price_and_build_order_for_expiry called for C{expiry_option.call_strike}/P{expiry_option.put_strike}"
+                )
+
+            # Track entry into evaluation funnel
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "evaluated"
+            )
+
             # Fast pre-filtering to eliminate non-viable opportunities early
             stock_ticker = contract_ticker.get(self.stock_contract.conId)
             if not stock_ticker:
                 return None
 
-            stock_price = (
-                stock_ticker.ask
-                if not np.isnan(stock_ticker.ask)
-                else stock_ticker.close
+            # Track stock ticker availability
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "stock_ticker_available"
             )
 
-            viable, reason = self.quick_viability_check(expiry_option, stock_price)
+            # Apply priority filtering if specified (for partial data collection)
+            if priority_filter:
+                stock_price = self.get_stock_midpoint(
+                    stock_ticker
+                )  # Fallback internally handled
+                if stock_price is None:
+                    return None
+
+                contract_priority = ContractPrioritizer.get_contract_priority(
+                    expiry_option.call_contract, self.expiry_options, stock_price
+                )
+
+                # Skip if contract doesn't meet priority threshold
+                priority_order = {
+                    ContractPriority.CRITICAL: 0,
+                    ContractPriority.IMPORTANT: 1,
+                    ContractPriority.OPTIONAL: 2,
+                }
+
+                if priority_order[contract_priority] > priority_order[priority_filter]:
+                    logger.debug(
+                        f"[{self.symbol}] Skipping {expiry_option.expiry} - priority {contract_priority.value} "
+                        f"not meeting filter {priority_filter.value}"
+                    )
+                    return None
+
+            # Track passing priority filter
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "passed_priority_filter"
+            )
+
+            # STAGE 1: Use midpoint for opportunity detection
+            stock_fair = stock_ticker.midpoint()
+
+            # Fallback if midpoint not available
+            if (
+                stock_fair is None
+                or (hasattr(stock_fair, "__len__") and len(stock_fair) == 0)
+                or np.isnan(stock_fair)
+            ):
+                stock_fair = (
+                    stock_ticker.last
+                    if not np.isnan(stock_ticker.last)
+                    else stock_ticker.close
+                )
+
+            viable, reason = self.quick_viability_check(expiry_option, stock_fair)
             if not viable:
                 logger.debug(
                     f"[{self.symbol}] Quick rejection for {expiry_option.expiry}: {reason}"
                 )
                 return None
 
+            # Track passing viability check
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "passed_viability_check"
+            )
+
             # Get option data
             call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
             put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
 
             if not call_ticker or not put_ticker:
+                # In progressive mode, missing data might be acceptable for lower priority contracts
+                if priority_filter and priority_filter in [
+                    ContractPriority.IMPORTANT,
+                    ContractPriority.OPTIONAL,
+                ]:
+                    logger.debug(
+                        f"[{self.symbol}] Missing option data for {expiry_option.expiry} - skipping due to partial collection"
+                    )
+                    return None
+
                 metrics_collector.add_rejection_reason(
                     RejectionReason.MISSING_MARKET_DATA,
                     {
@@ -425,15 +710,57 @@ class SFRExecutor(BaseExecutor):
                 )
                 return None
 
-            # Get validated prices for individual legs
-            call_price = (
-                call_ticker.bid if not np.isnan(call_ticker.bid) else call_ticker.close
-            )
-            put_price = (
-                put_ticker.ask if not np.isnan(put_ticker.ask) else put_ticker.close
+            # Track option data availability
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "option_data_available"
             )
 
-            if np.isnan(call_price) or np.isnan(put_price):
+            # Calculate data quality score for better decision making in partial mode
+            data_quality_score = self._calculate_data_quality_score(
+                stock_ticker, call_ticker, put_ticker
+            )
+
+            # In partial data mode, require higher quality for execution
+            min_quality_threshold = 0.8 if priority_filter else 0.6
+            if data_quality_score < min_quality_threshold:
+                logger.debug(
+                    f"[{self.symbol}] Data quality {data_quality_score:.2f} below threshold "
+                    f"{min_quality_threshold} for {expiry_option.expiry}"
+                )
+                return None
+
+            # Track passing data quality check
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "passed_data_quality"
+            )
+
+            # Get midpoint prices for theoretical calculation
+            call_fair = call_ticker.midpoint()
+            put_fair = put_ticker.midpoint()
+
+            # Fallback if midpoints not available
+            if (
+                call_fair is None
+                or (hasattr(call_fair, "__len__") and len(call_fair) == 0)
+                or np.isnan(call_fair)
+            ):
+                call_fair = (
+                    call_ticker.last
+                    if not np.isnan(call_ticker.last)
+                    else call_ticker.close
+                )
+            if (
+                put_fair is None
+                or (hasattr(put_fair, "__len__") and len(put_fair) == 0)
+                or np.isnan(put_fair)
+            ):
+                put_fair = (
+                    put_ticker.last
+                    if not np.isnan(put_ticker.last)
+                    else put_ticker.close
+                )
+
+            if np.isnan(call_fair) or np.isnan(put_fair):
                 metrics_collector.add_rejection_reason(
                     RejectionReason.INVALID_CONTRACT_DATA,
                     {
@@ -442,11 +769,144 @@ class SFRExecutor(BaseExecutor):
                         "expiry": expiry_option.expiry,
                         "call_strike": expiry_option.call_strike,
                         "put_strike": expiry_option.put_strike,
-                        "call_price_invalid": np.isnan(call_price),
-                        "put_price_invalid": np.isnan(put_price),
+                        "call_price_invalid": np.isnan(call_fair),
+                        "put_price_invalid": np.isnan(put_fair),
                     },
                 )
                 return None
+
+            # Track valid prices
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "prices_valid"
+            )
+
+            # Calculate theoretical arbitrage with fair values
+            theoretical_net_credit = call_fair - put_fair
+            theoretical_spread = stock_fair - expiry_option.put_strike
+            theoretical_profit = theoretical_net_credit - theoretical_spread
+
+            # DEBUG: Log exact values for AAPL test scenario
+            if (
+                self.symbol == "AAPL"
+                and expiry_option.call_strike == 184.5
+                and expiry_option.put_strike == 183.5
+            ):
+                logger.warning(f"[AAPL DEBUG] Theoretical calculation:")
+                logger.warning(
+                    f"  call_fair={call_fair:.4f}, put_fair={put_fair:.4f}, stock_fair={stock_fair:.4f}"
+                )
+                logger.warning(
+                    f"  call_strike={expiry_option.call_strike}, put_strike={expiry_option.put_strike}"
+                )
+                logger.warning(f"  theoretical_net_credit={theoretical_net_credit:.4f}")
+                logger.warning(f"  theoretical_spread={theoretical_spread:.4f}")
+                logger.warning(f"  theoretical_profit={theoretical_profit:.4f}")
+
+            # Track ALL theoretical profit calculations (positive and negative)
+            metrics_collector.record_profit_calculation(
+                self.symbol, expiry_option.expiry, theoretical_profit
+            )
+
+            # Quick reject if no theoretical opportunity
+            if theoretical_profit < 0.20:  # 20 cents minimum theoretical
+                logger.warning(
+                    f"[{self.symbol}] No theoretical arbitrage for {expiry_option.expiry}: "
+                    f"profit=${theoretical_profit:.2f}"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.ARBITRAGE_CONDITION_NOT_MET,
+                    {
+                        "symbol": self.symbol,
+                        "theoretical_profit": theoretical_profit,
+                        "theoretical_net_credit": theoretical_net_credit,
+                        "theoretical_spread": theoretical_spread,
+                        "stage": "theoretical_evaluation",
+                    },
+                )
+                return None
+
+            # Track positive theoretical profit
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "theoretical_profit_positive"
+            )
+
+            # STAGE 2: Execution validation using actual prices
+            # These are the prices we'll actually pay/receive
+            call_exec = (
+                call_ticker.bid if not np.isnan(call_ticker.bid) else call_ticker.close
+            )
+            put_exec = (
+                put_ticker.ask if not np.isnan(put_ticker.ask) else put_ticker.close
+            )
+            stock_exec = (
+                stock_ticker.ask
+                if not np.isnan(stock_ticker.ask)
+                else stock_ticker.close
+            )
+
+            if np.isnan(call_exec) or np.isnan(put_exec) or np.isnan(stock_exec):
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INVALID_CONTRACT_DATA,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "execution_prices",
+                        "expiry": expiry_option.expiry,
+                        "call_strike": expiry_option.call_strike,
+                        "put_strike": expiry_option.put_strike,
+                        "call_exec_invalid": np.isnan(call_exec),
+                        "put_exec_invalid": np.isnan(put_exec),
+                        "stock_exec_invalid": np.isnan(stock_exec),
+                    },
+                )
+                return None
+
+            # Calculate guaranteed profit with execution prices
+            guaranteed_net_credit = call_exec - put_exec
+            guaranteed_spread = stock_exec - expiry_option.put_strike
+            guaranteed_profit = guaranteed_net_credit - guaranteed_spread
+
+            # DEBUG: Log exact values for AAPL test scenario
+            if (
+                self.symbol == "AAPL"
+                and expiry_option.call_strike == 184.5
+                and expiry_option.put_strike == 183.5
+            ):
+                logger.warning(f"[AAPL DEBUG] Guaranteed calculation:")
+                logger.warning(
+                    f"  call_exec={call_exec:.4f}, put_exec={put_exec:.4f}, stock_exec={stock_exec:.4f}"
+                )
+                logger.warning(f"  guaranteed_net_credit={guaranteed_net_credit:.4f}")
+                logger.warning(f"  guaranteed_spread={guaranteed_spread:.4f}")
+                logger.warning(f"  guaranteed_profit={guaranteed_profit:.4f}")
+
+            # Track guaranteed profit calculation
+            metrics_collector.record_profit_calculation(
+                self.symbol, expiry_option.expiry, theoretical_profit, guaranteed_profit
+            )
+
+            # Must have guaranteed profit after execution
+            if guaranteed_profit < 0.10:  # 10 cents minimum guaranteed
+                logger.info(
+                    f"[{self.symbol}] Theoretical profit ${theoretical_profit:.2f} "
+                    f"but guaranteed only ${guaranteed_profit:.2f} - rejecting"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.ARBITRAGE_CONDITION_NOT_MET,
+                    {
+                        "symbol": self.symbol,
+                        "theoretical_profit": theoretical_profit,
+                        "guaranteed_profit": guaranteed_profit,
+                        "stock_fair": stock_fair,
+                        "stock_exec": stock_exec,
+                        "stage": "execution_validation",
+                    },
+                )
+                return None
+
+            # Track positive guaranteed profit
+            metrics_collector.record_funnel_stage(
+                self.symbol, expiry_option.expiry, "guaranteed_profit_positive"
+            )
 
             # Check bid-ask spread for both call and put contracts to prevent crazy price ranges
             call_bid_ask_spread = (
@@ -496,10 +956,15 @@ class SFRExecutor(BaseExecutor):
                 )
                 return None
 
-            # Calculate net credit
-            net_credit = call_price - put_price
-            stock_price = round(stock_price, 2)
+            # Use guaranteed execution prices for final calculations
+            net_credit = guaranteed_net_credit
+            stock_price = stock_exec
+            call_price = call_exec
+            put_price = put_exec
+
+            # Round values for display
             net_credit = round(net_credit, 2)
+            stock_price = round(stock_price, 2)
             call_price = round(call_price, 2)
             put_price = round(put_price, 2)
 
@@ -520,23 +985,29 @@ class SFRExecutor(BaseExecutor):
                 )
                 return None
 
+            # Use guaranteed profit that we already calculated
             spread = stock_price - expiry_option.put_strike
-            min_profit = net_credit - spread
+            min_profit = guaranteed_profit  # Already calculated and validated above
             max_profit = (
                 expiry_option.call_strike - expiry_option.put_strike
             ) + net_credit
-            min_roi = (min_profit / (stock_price + net_credit)) * 100
+            min_roi = (
+                (min_profit / (stock_price + net_credit)) * 100
+                if (stock_price + net_credit) > 0
+                else 0
+            )
 
             # Calculate precise combo limit price based on target leg prices
             combo_limit_price = self.calculate_combo_limit_price(
                 stock_price=stock_price,
                 call_price=call_price,
                 put_price=put_price,
-                buffer_percent=0.00,  # 1.5% buffer for better execution
+                buffer_percent=0.01,  # 1% buffer for realistic execution
             )
 
             logger.info(
-                f"[{self.symbol}] Expiry: {expiry_option.expiry} min_profit:{min_profit:.2f}, max_profit:{max_profit:.2f}, min_roi:{min_roi:.2f}%"
+                f"[{self.symbol}] Expiry: {expiry_option.expiry} theoretical_profit:{theoretical_profit:.2f}, "
+                f"guaranteed_profit:{min_profit:.2f}, max_profit:{max_profit:.2f}, min_roi:{min_roi:.2f}%"
             )
 
             conditions_met, rejection_reason = self.check_conditions(
@@ -612,6 +1083,221 @@ class SFRExecutor(BaseExecutor):
             logger.error(f"Error in calc_price_and_build_order_for_expiry: {str(e)}")
             return None
 
+    def has_stock_data(self) -> bool:
+        """Check if we have stock data available"""
+        return contract_ticker.get(self.stock_contract.conId) is not None
+
+    def get_stock_midpoint(self, stock_ticker) -> Optional[float]:
+        """Get stock midpoint price, with fallbacks"""
+        try:
+            midpoint = stock_ticker.midpoint()
+            if midpoint is not None and not np.isnan(midpoint) and midpoint > 0:
+                return midpoint
+        except (ZeroDivisionError, TypeError, AttributeError):
+            pass
+
+        # Fallback to last or close
+        if hasattr(stock_ticker, "last") and not np.isnan(stock_ticker.last):
+            return stock_ticker.last
+        if hasattr(stock_ticker, "close") and not np.isnan(stock_ticker.close):
+            return stock_ticker.close
+
+        return None
+
+    def has_sufficient_critical_data(self) -> bool:
+        """Check if we have sufficient critical contract data"""
+        if not self.priority_tiers:
+            return False
+
+        critical_received = self.collection_metrics.contracts_received["critical"]
+        critical_expected = self.collection_metrics.contracts_expected["critical"]
+
+        if critical_expected == 0 or critical_expected <= 0:
+            return False
+
+        percentage = critical_received / critical_expected
+        return percentage >= self.timeout_config.critical_threshold
+
+    def has_sufficient_important_data(self) -> bool:
+        """Check if we have sufficient critical + important contract data"""
+        if not self.priority_tiers:
+            return False
+
+        critical_received = self.collection_metrics.contracts_received["critical"]
+        critical_expected = self.collection_metrics.contracts_expected["critical"]
+        important_received = self.collection_metrics.contracts_received["important"]
+        important_expected = self.collection_metrics.contracts_expected["important"]
+
+        total_received = critical_received + important_received
+        total_expected = critical_expected + important_expected
+
+        if total_expected == 0 or total_expected <= 0:
+            return False
+
+        percentage = total_received / total_expected
+        return percentage >= self.timeout_config.important_threshold
+
+    def has_minimum_viable_data(self) -> bool:
+        """Check if we have minimum viable data to make any decision"""
+        # Need stock data
+        if not self.has_stock_data():
+            return False
+
+        # Need at least 1 option pair with recent data (relaxed for testing scenarios)
+        viable_pairs = 0
+
+        for expiry_option in self.expiry_options:
+            call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
+            put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
+
+            if call_ticker and put_ticker:
+                # Check data freshness (assuming we have timestamp or volume > 0 indicates fresh data)
+                if (
+                    hasattr(call_ticker, "volume")
+                    and call_ticker.volume > 0
+                    and hasattr(put_ticker, "volume")
+                    and put_ticker.volume > 0
+                ):
+                    viable_pairs += 1
+
+        return viable_pairs >= 1  # Allow evaluation with single expiry for testing
+
+    async def evaluate_with_available_data(
+        self, max_priority: ContractPriority
+    ) -> Optional[Dict]:
+        """Evaluate opportunities with currently available data up to specified priority"""
+        best_opportunity = None
+        best_profit = 0
+
+        # Determine which expiry options to consider based on priority
+        eligible_options = []
+        for priority in [
+            ContractPriority.CRITICAL,
+            ContractPriority.IMPORTANT,
+            ContractPriority.OPTIONAL,
+        ]:
+            if priority in self.priority_tiers:
+                eligible_options.extend(self.priority_tiers[priority])
+            if priority == max_priority:
+                break
+
+        for expiry_option in eligible_options:
+            # DEBUG: Check AAPL data availability
+            if (
+                self.symbol == "AAPL"
+                and expiry_option.call_strike == 184.5
+                and expiry_option.put_strike == 183.5
+            ):
+                has_data = self.has_data_for_option_pair(expiry_option)
+                logger.warning(
+                    f"[AAPL DEBUG] evaluate_with_available_data: has_data_for_option_pair={has_data}"
+                )
+
+            # Skip if we don't have data for this option pair
+            if not self.has_data_for_option_pair(expiry_option):
+                continue
+
+            try:
+                # Use enhanced calculation method with priority filtering
+                opportunity_result = self.calc_price_and_build_order_for_expiry(
+                    expiry_option, max_priority
+                )
+
+                if (
+                    opportunity_result and opportunity_result[2] > best_profit
+                ):  # opportunity_result[2] is min_profit
+                    best_opportunity = {
+                        "contract": opportunity_result[0],
+                        "order": opportunity_result[1],
+                        "guaranteed_profit": opportunity_result[2],
+                        "trade_details": opportunity_result[3],
+                        "expiry_option": expiry_option,
+                    }
+                    best_profit = opportunity_result[2]
+
+            except Exception as e:
+                logger.debug(f"Error evaluating {expiry_option.expiry}: {str(e)}")
+                continue
+
+        return best_opportunity
+
+    def has_data_for_option_pair(self, expiry_option: ExpiryOption) -> bool:
+        """Check if we have data for both call and put contracts"""
+        call_data = contract_ticker.get(expiry_option.call_contract.conId)
+        put_data = contract_ticker.get(expiry_option.put_contract.conId)
+        return call_data is not None and put_data is not None
+
+    async def execute_opportunity(self, opportunity: Dict):
+        """Execute a trading opportunity"""
+        try:
+            self.collection_metrics.decision_confidence = (
+                self.collection_metrics.get_completion_percentage()
+            )
+            self.collection_metrics.opportunity_found = True
+            self.collection_metrics.time_to_decision = (
+                time.time() - self.data_collection_start
+            )
+            self.collection_metrics.final_phase = self.current_phase
+
+            # Log trade details
+            trade_details = opportunity["trade_details"]
+            logger.info(
+                f"[{self.symbol}] Executing opportunity for expiry: {trade_details['expiry']}"
+            )
+
+            self._log_trade_details(
+                trade_details["call_strike"],
+                trade_details["call_price"],
+                trade_details["put_strike"],
+                trade_details["put_price"],
+                trade_details["stock_price"],
+                trade_details["net_credit"],
+                trade_details["min_profit"],
+                trade_details["max_profit"],
+                trade_details["min_roi"],
+            )
+
+            # Place the order
+            self.is_active = False  # Prevent multiple executions
+            result = await self.order_manager.place_order(
+                opportunity["contract"], opportunity["order"]
+            )
+
+            if result:
+                self.collection_metrics.execution_triggered = True
+                logger.info(f"[{self.symbol}] Order placed successfully")
+                metrics_collector.record_opportunity_found(self.symbol)
+                metrics_collector.finish_scan(success=True)
+            else:
+                logger.warning(f"[{self.symbol}] Order placement failed")
+                metrics_collector.finish_scan(
+                    success=False, error_message="Order placement failed"
+                )
+
+            self.deactivate()
+
+        except Exception as e:
+            logger.error(f"Error executing opportunity: {str(e)}")
+            self.finish_collection_without_execution(f"execution_error: {str(e)}")
+
+    def finish_collection_without_execution(self, reason: str):
+        """Finish collection without executing any trades"""
+        self.collection_metrics.time_to_decision = (
+            time.time() - self.data_collection_start
+        )
+        self.collection_metrics.final_phase = self.current_phase
+
+        logger.info(f"[{self.symbol}] Collection finished without execution: {reason}")
+        logger.info(
+            f"[{self.symbol}] Final data: {self.collection_metrics.get_completion_percentage():.1f}% "
+            f"({self.collection_metrics.get_total_received()}/{self.collection_metrics.get_total_expected()})"
+        )
+
+        self.deactivate()
+        metrics_collector.finish_scan(
+            success=True
+        )  # No opportunity is still a successful scan
+
     def deactivate(self):
         """Deactivate the executor and properly clean up market data subscriptions"""
         if self.is_active:
@@ -647,6 +1333,9 @@ class SFR(ArbitrageClass):
 
     def __init__(self, log_file: str = None):
         super().__init__(log_file=log_file)
+        # Default strike selection parameters for backward compatibility with tests
+        self.max_combinations = 10
+        self.max_strike_difference = 5
 
     def cleanup_inactive_executors(self):
         """Enhanced cleanup that properly cancels market data subscriptions"""
@@ -678,6 +1367,8 @@ class SFR(ArbitrageClass):
         profit_target=0.50,
         volume_limit=100,
         quantity=1,
+        max_combinations=10,
+        max_strike_difference=5,
     ):
         """
         scan for SFR and execute order
@@ -697,6 +1388,8 @@ class SFR(ArbitrageClass):
         self.volume_limit = volume_limit
         self.cost_limit = cost_limit
         self.quantity = quantity
+        self.max_combinations = max_combinations
+        self.max_strike_difference = max_strike_difference
 
         await self.ib.connectAsync("127.0.0.1", 7497, clientId=2)
         self.ib.orderStatusEvent += self.onFill
@@ -803,6 +1496,12 @@ class SFR(ArbitrageClass):
         self.profit_target = profit_target
         self.cost_limit = cost_limit
 
+        # Ensure strike selection parameters have defaults (for backward compatibility)
+        if not hasattr(self, "max_combinations"):
+            self.max_combinations = 10
+        if not hasattr(self, "max_strike_difference"):
+            self.max_strike_difference = 5
+
         try:
             _, _, stock = self._get_stock_contract(symbol)
 
@@ -876,19 +1575,19 @@ class SFR(ArbitrageClass):
             )
 
             # Adaptive strike ranges based on position (not dollar amounts)
-            # Call candidates: stock position ± 1 (for high premium around ATM)
-            call_start = max(0, stock_position - 1)
-            call_end = min(len(sorted_strikes), stock_position + 2)
+            # Call candidates: stock position ± 3 (expanded for more opportunities)
+            call_start = max(0, stock_position - 3)
+            call_end = min(len(sorted_strikes), stock_position + 4)
             call_candidates = sorted_strikes[call_start:call_end]
 
-            # Put candidates: at/below stock position (for protective puts)
-            put_candidates = sorted_strikes[
-                : stock_position + 2
-            ]  # Include slightly above for flexibility
+            # Put candidates: stock position -2 to +2 (expanded range for flexibility)
+            put_start = max(0, stock_position - 2)
+            put_end = min(len(sorted_strikes), stock_position + 3)
+            put_candidates = sorted_strikes[put_start:put_end]
 
-            # Generate combinations prioritizing 1-strike differences
-            priority_combinations = []  # Strike difference = 1 (highest priority)
-            secondary_combinations = []  # Strike difference > 1
+            # Generate combinations with expanded strike differences
+            priority_combinations = []  # Strike difference = 1-2 (highest priority)
+            secondary_combinations = []  # Strike difference = 3-5 (lower priority)
 
             for call_strike in call_candidates:
                 for put_strike in put_candidates:
@@ -901,20 +1600,35 @@ class SFR(ArbitrageClass):
 
                         combination = (call_strike, put_strike, strike_diff)
 
-                        if strike_diff == 1:
-                            # 1-strike difference: highest probability of trade
+                        if strike_diff in [1, 2]:
+                            # 1-2 strike difference: highest probability of trade
                             priority_combinations.append(combination)
-                        elif strike_diff <= 3:
-                            # 2-3 strike difference: secondary options
+                        elif strike_diff <= self.max_strike_difference:
+                            # 3+ strike difference: configurable secondary options
                             secondary_combinations.append(combination)
 
-            # Sort by strike difference (1 > 2 > 3) for optimal trade probability
+            # Sort by strike difference (lower differences have higher priority) for optimal trade probability
             priority_combinations.sort(key=lambda x: x[2])
             secondary_combinations.sort(key=lambda x: x[2])
 
-            # Combine and limit to 4 best combinations
+            # Combine and limit to configurable number of best combinations
             all_combinations = priority_combinations + secondary_combinations
-            valid_strike_pairs = [(call, put) for call, put, _ in all_combinations[:4]]
+            valid_strike_pairs = [
+                (call, put)
+                for call, put, _ in all_combinations[: self.max_combinations]
+            ]
+
+            # Track strike selection effectiveness
+            total_strikes = len(chain.strikes)
+            combinations_generated = len(all_combinations)
+            combinations_tested = len(valid_strike_pairs)
+            metrics_collector.record_strike_effectiveness(
+                symbol,
+                total_strikes,
+                len(valid_strikes),
+                combinations_generated,
+                combinations_tested,
+            )
 
             logger.info(
                 f"[{symbol}] Testing {len(valid_strike_pairs)} conversion-optimized strike combinations "
@@ -922,7 +1636,11 @@ class SFR(ArbitrageClass):
             )
             if priority_combinations:
                 logger.info(
-                    f"[{symbol}] Found {len(priority_combinations)} high-probability 1-strike difference combinations"
+                    f"[{symbol}] Found {len(priority_combinations)} high-probability 1-2 strike difference combinations"
+                )
+            if secondary_combinations:
+                logger.info(
+                    f"[{symbol}] Found {len(secondary_combinations)} secondary 3-{self.max_strike_difference} strike difference combinations"
                 )
 
             # Parallel qualification of all contracts
@@ -935,7 +1653,9 @@ class SFR(ArbitrageClass):
             all_contracts = [stock]
 
             # Limit expiry options to avoid too many low volume contracts
-            max_expiry_options = 8  # Reasonable limit to balance opportunity vs noise
+            max_expiry_options = (
+                12  # Expanded limit to accommodate more strike combinations
+            )
 
             for expiry in valid_expiries:
                 if len(expiry_options) >= max_expiry_options:
@@ -1025,7 +1745,11 @@ class SFR(ArbitrageClass):
 
             # Clean up any stale data in contract_ticker for this symbol's contracts
             for contract in all_contracts:
-                if contract.conId in contract_ticker:
+                if (
+                    hasattr(contract, "conId")
+                    and contract.conId
+                    and contract.conId in contract_ticker
+                ):
                     del contract_ticker[contract.conId]
                     logger.debug(f"Cleaned up stale data for contract {contract.conId}")
 

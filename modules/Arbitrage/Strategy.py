@@ -672,6 +672,18 @@ class ArbitrageClass:
             )
             return False
 
+    def _get_contract_key(self, contract) -> str:
+        """Generate a deterministic key for a contract based on its content"""
+        try:
+            symbol = getattr(contract, "symbol", "").upper()
+            expiry = getattr(contract, "lastTradeDateOrContractMonth", "")
+            strike = getattr(contract, "strike", 0)
+            right = getattr(contract, "right", "")
+            return f"{symbol}_{expiry}_{strike}_{right}"
+        except Exception:
+            # Fallback to id() if contract doesn't have expected attributes
+            return str(id(contract))
+
     async def parallel_qualify_all_contracts(
         self,
         symbol: str,
@@ -700,43 +712,137 @@ class ArbitrageClass:
         if not all_options_to_qualify:
             return {}
 
-        # Single parallel qualification for ALL contracts
+        # Log input contracts for debugging
         logger.debug(
-            f"[{symbol}] Qualifying {len(all_options_to_qualify)} contracts in parallel"
+            f"[{symbol}] Qualifying {len(all_options_to_qualify)} contracts in parallel:"
         )
+
+        # Group contracts by type for logging
+        calls = [
+            c for c in all_options_to_qualify if hasattr(c, "right") and c.right == "C"
+        ]
+        puts = [
+            c for c in all_options_to_qualify if hasattr(c, "right") and c.right == "P"
+        ]
+
+        logger.debug(
+            f"[{symbol}] Input contracts: {len(calls)} calls, {len(puts)} puts across {len(valid_expiries)} expiries"
+        )
+
+        # Single parallel qualification for ALL contracts
         qualified_contracts = await self.qualify_contracts_cached(
             *all_options_to_qualify
         )
 
         # Map qualified contracts back to their original contracts
         qualified_map = {}
+        matched_count = 0
+        none_count = 0
+
         for qualified_contract in qualified_contracts:
+            # Skip None contracts (failed qualification)
+            if qualified_contract is None:
+                none_count += 1
+                continue
+
             # Find matching original contract by symbol, expiry, strike, right
+            matched = False
             for original_contract in all_options_to_qualify:
-                if (
-                    qualified_contract.symbol == original_contract.symbol
-                    and qualified_contract.lastTradeDateOrContractMonth
-                    == original_contract.lastTradeDateOrContractMonth
-                    and qualified_contract.strike == original_contract.strike
-                    and qualified_contract.right == original_contract.right
-                ):
-                    qualified_map[id(original_contract)] = qualified_contract
-                    break
+                try:
+                    # Safely compare all attributes with proper null checks
+                    if (
+                        hasattr(qualified_contract, "symbol")
+                        and hasattr(original_contract, "symbol")
+                        and qualified_contract.symbol.upper()
+                        == original_contract.symbol.upper()
+                        and hasattr(qualified_contract, "lastTradeDateOrContractMonth")
+                        and hasattr(original_contract, "lastTradeDateOrContractMonth")
+                        and qualified_contract.lastTradeDateOrContractMonth
+                        == original_contract.lastTradeDateOrContractMonth
+                        and hasattr(qualified_contract, "strike")
+                        and hasattr(original_contract, "strike")
+                        and abs(qualified_contract.strike - original_contract.strike)
+                        < 0.01  # Float comparison tolerance
+                        and hasattr(qualified_contract, "right")
+                        and hasattr(original_contract, "right")
+                        and qualified_contract.right == original_contract.right
+                    ):
+                        # Use content-based key instead of memory address
+                        contract_key = self._get_contract_key(original_contract)
+                        qualified_map[contract_key] = qualified_contract
+                        matched_count += 1
+                        matched = True
+                        break
+                except (AttributeError, TypeError) as e:
+                    logger.debug(f"[{symbol}] Error comparing contracts: {e}")
+                    continue
+
+            if not matched:
+                logger.debug(
+                    f"[{symbol}] No match found for qualified contract: {qualified_contract.symbol} "
+                    f"{qualified_contract.lastTradeDateOrContractMonth} {qualified_contract.strike} {qualified_contract.right}"
+                )
+
+        logger.debug(
+            f"[{symbol}] Contract qualification results: {len(qualified_contracts)} returned, "
+            f"{none_count} None, {matched_count} matched, {len(qualified_map)} in final map"
+        )
+
+        # Log the keys in qualified_map for debugging
+        if qualified_map:
+            logger.debug(
+                f"[{symbol}] Qualified contract keys: {list(qualified_map.keys())}"
+            )
 
         # Build final result mapping
         result = {}
+        missing_calls = 0
+        missing_puts = 0
+        successful_pairs = 0
+
         for key, contract_info in expiry_contract_map.items():
-            call_qualified = qualified_map.get(id(contract_info["call_original"]))
-            put_qualified = qualified_map.get(id(contract_info["put_original"]))
+            # Use content-based keys instead of memory addresses
+            call_key = self._get_contract_key(contract_info["call_original"])
+            put_key = self._get_contract_key(contract_info["put_original"])
+            call_qualified = qualified_map.get(call_key)
+            put_qualified = qualified_map.get(put_key)
 
             if call_qualified and put_qualified:
-                result[key] = {
-                    "call_contract": call_qualified,
-                    "put_contract": put_qualified,
-                    "expiry": contract_info["expiry"],
-                    "call_strike": contract_info["call_strike"],
-                    "put_strike": contract_info["put_strike"],
-                }
+                # Validate that both contracts have conId (are properly qualified)
+                if hasattr(call_qualified, "conId") and hasattr(put_qualified, "conId"):
+                    result[key] = {
+                        "call_contract": call_qualified,
+                        "put_contract": put_qualified,
+                        "expiry": contract_info["expiry"],
+                        "call_strike": contract_info["call_strike"],
+                        "put_strike": contract_info["put_strike"],
+                    }
+                    successful_pairs += 1
+                else:
+                    logger.debug(
+                        f"[{symbol}] Skipping pair {key}: qualified contracts missing conId "
+                        f"(call conId: {getattr(call_qualified, 'conId', 'missing')}, "
+                        f"put conId: {getattr(put_qualified, 'conId', 'missing')})"
+                    )
+            else:
+                if not call_qualified:
+                    missing_calls += 1
+                    logger.debug(
+                        f"[{symbol}] Missing call contract for {key}: "
+                        f"{contract_info['call_strike']} {contract_info['expiry']} (key: {call_key})"
+                    )
+                if not put_qualified:
+                    missing_puts += 1
+                    logger.debug(
+                        f"[{symbol}] Missing put contract for {key}: "
+                        f"{contract_info['put_strike']} {contract_info['expiry']} (key: {put_key})"
+                    )
+
+        logger.debug(
+            f"[{symbol}] Final result: {successful_pairs} successful pairs, "
+            f"{missing_calls} missing calls, {missing_puts} missing puts, "
+            f"out of {len(expiry_contract_map)} attempted combinations"
+        )
 
         logger.debug(
             f"[{symbol}] Successfully qualified {len(result)} contract pairs from {len(expiry_contract_map)} attempted"

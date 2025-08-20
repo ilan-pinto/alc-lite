@@ -81,7 +81,9 @@ class BoxExecutor:
                 # Update global contract_ticker for compatibility
                 if self._is_valid_ticker_data(ticker):
                     contract_ticker[contract.conId] = ticker
-                    self.required_tickers[contract.conId] = ticker
+                    # Only update if this contract is part of our box spread
+                    if contract.conId in self.required_tickers:
+                        self.required_tickers[contract.conId] = ticker
 
                 elif self._should_cancel_due_to_poor_liquidity(ticker):
                     logger.warning(

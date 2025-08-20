@@ -61,20 +61,28 @@ class TestBoxSpreadEndToEndWorkflow:
         """Test complete workflow for single symbol"""
         symbol_list = ["DELL"]  # Use DELL which has predefined arbitrage scenario
 
-        # Mock the scan to run only one iteration
-        with patch("asyncio.sleep", side_effect=[KeyboardInterrupt()]):
-            try:
-                await self.strategy.scan(
-                    symbol_list=symbol_list,
-                    range=0.1,
-                    profit_target=0.01,
-                    max_spread=10.0,
-                    clientId=1,
-                )
-            except KeyboardInterrupt:
-                pass
+        # Pre-establish connection to avoid KeyboardInterrupt interference
+        await self.mock_ib.connectAsync()
+        assert self.mock_ib.connected, "Mock IB should be connected before scan"
 
-        # Verify IB connection was established
+        # Mock the scan to run only one iteration
+        with patch.object(
+            self.mock_ib, "connectAsync", wraps=self.mock_ib.connectAsync
+        ) as mock_connect:
+            with patch("asyncio.sleep", side_effect=[KeyboardInterrupt()]):
+                try:
+                    await self.strategy.scan(
+                        symbol_list=symbol_list,
+                        range=0.1,
+                        profit_target=0.01,
+                        max_spread=10.0,
+                        clientId=1,
+                    )
+                except KeyboardInterrupt:
+                    pass
+
+        # Verify scan called connectAsync and connection remains established
+        mock_connect.assert_called_once()
         assert self.mock_ib.connected
 
         # Verify global manager was started
@@ -84,17 +92,24 @@ class TestBoxSpreadEndToEndWorkflow:
         """Test complete workflow for multiple symbols"""
         symbol_list = ["AAPL", "MSFT", "TSLA"]
 
-        with patch("asyncio.sleep", side_effect=[KeyboardInterrupt()]):
-            try:
-                await self.strategy.scan(
-                    symbol_list=symbol_list,
-                    range=0.15,
-                    profit_target=0.02,
-                    max_spread=25.0,
-                    clientId=2,
-                )
-            except KeyboardInterrupt:
-                pass
+        # Pre-establish connection to avoid KeyboardInterrupt interference
+        await self.mock_ib.connectAsync()
+        assert self.mock_ib.connected, "Mock IB should be connected before scan"
+
+        with patch.object(
+            self.mock_ib, "connectAsync", wraps=self.mock_ib.connectAsync
+        ):
+            with patch("asyncio.sleep", side_effect=[KeyboardInterrupt()]):
+                try:
+                    await self.strategy.scan(
+                        symbol_list=symbol_list,
+                        range=0.15,
+                        profit_target=0.02,
+                        max_spread=25.0,
+                        clientId=2,
+                    )
+                except KeyboardInterrupt:
+                    pass
 
         # Verify connection and configuration
         assert self.mock_ib.connected

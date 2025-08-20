@@ -1408,16 +1408,26 @@ class TestArbitrageIntegration:
                 # The executor needs data for ALL its contracts (stock + all options)
                 complete_tickers = []
 
-                # First, add the stock ticker with the correct conId
+                # First, add the stock ticker with a unique conId for this symbol
                 for ticker_key, ticker in symbol_data.items():
                     if (
                         hasattr(ticker.contract, "right")
                         and ticker.contract.right is None
                     ):
                         # This is the stock ticker
-                        # Update conId to match what the executor expects
-                        ticker.contract.conId = executor.stock_contract.conId
+                        # Generate a unique conId based on symbol to prevent conflicts
+                        symbol_hash = hash(symbol)
+                        unique_stock_conid = (
+                            abs(symbol_hash) % 1000000
+                        )  # Ensure positive and reasonable size
+
+                        # Update both the ticker's contract and the executor's stock contract to use this unique conId
+                        ticker.contract.conId = unique_stock_conid
+                        executor.stock_contract.conId = unique_stock_conid
                         complete_tickers.append(ticker)
+                        print(
+                            f"  📊 Stock {symbol}: assigned unique conId {unique_stock_conid}"
+                        )
                         break
 
                 # Then add option tickers, matching conIds with executor's option contracts
@@ -1453,6 +1463,20 @@ class TestArbitrageIntegration:
                         f"Firing market data for {symbol}: {len(complete_tickers)} tickers"
                     )
                     await sfr.master_executor(complete_tickers)
+
+                    # CRITICAL: Manually populate the global contract_ticker for testing
+                    # The test environment doesn't automatically populate this global dictionary
+                    # IMPORTANT: Accumulate tickers instead of overwriting to prevent cross-symbol contamination
+                    from modules.Arbitrage.SFR import contract_ticker
+
+                    symbol_ticker_count = 0
+                    for ticker in complete_tickers:
+                        if hasattr(ticker.contract, "conId"):
+                            contract_ticker[ticker.contract.conId] = ticker
+                            symbol_ticker_count += 1
+                    print(
+                        f"   Added {symbol_ticker_count} tickers for {symbol} (total global: {len(contract_ticker)})"
+                    )
                 else:
                     print(
                         f"⚠️ Warning: Missing ticker data for some contracts in {symbol}"

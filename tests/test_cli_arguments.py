@@ -70,6 +70,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -100,6 +102,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -122,6 +126,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -144,6 +150,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -462,6 +470,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -532,6 +542,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -600,6 +612,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -668,6 +682,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration
@@ -742,6 +758,8 @@ class TestCLIArguments:
             warning=False,
             error=False,
             finviz_url=None,
+            max_combinations=10,
+            max_strike_difference=5,
         )
 
     @pytest.mark.integration

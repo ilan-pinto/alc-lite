@@ -24,6 +24,8 @@ class MockTicker:
         close: float = 0.0,
         volume: int = 100,
         last: float = None,
+        bidSize: int = None,
+        askSize: int = None,
     ):
         self.contract = contract
         self.bid = bid
@@ -36,6 +38,11 @@ class MockTicker:
             else (bid + ask) / 2 if bid > 0 and ask > 0 else close
         )
         self.time = datetime.now()
+
+        # Add size attributes required by BoxExecutor
+        # Default to reasonable sizes if not specified
+        self.bidSize = bidSize if bidSize is not None else max(10, volume // 100)
+        self.askSize = askSize if askSize is not None else max(10, volume // 100)
 
     def midpoint(self):
         """Calculate midpoint price"""

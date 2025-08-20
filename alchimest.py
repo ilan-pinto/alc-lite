@@ -131,6 +131,20 @@ def main() -> None:
         required=False,
         help="Finviz screener URL to extract ticker symbols from (wrap in quotes)",
     )
+    parser_sfr.add_argument(
+        "--max-combinations",
+        type=int,
+        default=10,
+        required=False,
+        help="Maximum number of strike combinations to test per symbol (default: 10)",
+    )
+    parser_sfr.add_argument(
+        "--max-strike-difference",
+        type=int,
+        default=5,
+        required=False,
+        help="Maximum strike difference to consider (default: 5)",
+    )
 
     # Synthetic conversion (synthetic) sub-command
     parser_syn = subparsers.add_parser(
@@ -584,6 +598,8 @@ def main() -> None:
             warning=args.warning,
             error=args.error,
             finviz_url=args.fin,
+            max_combinations=args.max_combinations,
+            max_strike_difference=args.max_strike_difference,
         )
 
     elif args.command == "syn":

@@ -280,9 +280,14 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     # Create mock contracts with specific conIds
     call_contract = MagicMock(conId=2)
     put_contract = MagicMock(conId=3)
+    from datetime import datetime, timedelta
+
+    future_date = datetime.now() + timedelta(days=30)
+    valid_expiry = future_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",  # Future date within valid range
+            expiry=valid_expiry,  # Future date within valid range (30 days out)
             call_contract=call_contract,
             put_contract=put_contract,
             call_strike=100.0,
@@ -300,13 +305,26 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
         start_time=0.0,
         quantity=1,
     )
+    # Create mock tickers with midpoint() method
+    # Make this a profitable arbitrage opportunity
+    stock_ticker = MagicMock(ask=96.0, close=95.5, volume=1000, last=95.8)
+    stock_ticker.midpoint.return_value = (
+        95.8  # Stock below put strike for profitable conversion
+    )
+
+    call_ticker = MagicMock(bid=5.0, close=5.0, ask=5.5, volume=500, last=5.2)
+    call_ticker.midpoint.return_value = 5.25  # Call premium
+
+    put_ticker = MagicMock(ask=1.0, close=1.0, bid=0.8, volume=500, last=0.9)
+    put_ticker.midpoint.return_value = 0.9  # Lower put premium for profitable spread
+
     # Patch contract_ticker in the SFR module with stock and option data
     monkeypatch.setattr(
         "modules.Arbitrage.SFR.contract_ticker",
         {
-            1: MagicMock(ask=100.0, close=99.0, volume=1000),  # Stock ticker
-            2: MagicMock(bid=5.0, close=5.0, ask=5.5, volume=500),  # Call ticker
-            3: MagicMock(ask=3.0, close=3.0, bid=2.5, volume=500),  # Put ticker
+            1: stock_ticker,  # Stock ticker
+            2: call_ticker,  # Call ticker
+            3: put_ticker,  # Put ticker
         },
     )
     # Mock check_conditions to return (True, None) for successful execution
