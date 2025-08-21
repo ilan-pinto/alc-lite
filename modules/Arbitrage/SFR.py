@@ -173,17 +173,6 @@ class SFRExecutor(BaseExecutor):
             expiry_date = datetime.strptime(expiry_option.expiry, "%Y%m%d")
             days_to_expiry = (expiry_date - datetime.now()).days
 
-            # DEBUG: Log expiry calculations for AAPL
-            if expiry_option.call_strike == 184.5 and expiry_option.put_strike == 183.5:
-                logger.warning(f"[AAPL DEBUG] Expiry check:")
-                logger.warning(
-                    f"  expiry_date={expiry_date}, current_date={datetime.now()}"
-                )
-                logger.warning(f"  days_to_expiry={days_to_expiry}")
-                logger.warning(
-                    f"  expiry_check: {days_to_expiry} < 15 or {days_to_expiry} > 50 = {days_to_expiry < 15 or days_to_expiry > 50}"
-                )
-
             if days_to_expiry < 15 or days_to_expiry > 50:
                 return False, "expiry_out_of_range"
         except ValueError:
@@ -598,17 +587,11 @@ class SFRExecutor(BaseExecutor):
         Returns tuple of (contract, order, min_profit, trade_details) or None if no opportunity.
         """
         try:
-            # DEBUG: Log AAPL evaluation entry
-            if (
-                self.symbol == "AAPL"
-                and expiry_option.call_strike == 184.5
-                and expiry_option.put_strike == 183.5
-            ):
-                logger.warning(
-                    f"[AAPL DEBUG] calc_price_and_build_order_for_expiry called for C{expiry_option.call_strike}/P{expiry_option.put_strike}"
-                )
 
             # Track entry into evaluation funnel
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: evaluated (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "evaluated"
             )
@@ -616,9 +599,21 @@ class SFRExecutor(BaseExecutor):
             # Fast pre-filtering to eliminate non-viable opportunities early
             stock_ticker = contract_ticker.get(self.stock_contract.conId)
             if not stock_ticker:
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.MISSING_MARKET_DATA,
+                    {
+                        "symbol": self.symbol,
+                        "contract_type": "stock",
+                        "expiry": expiry_option.expiry,
+                        "stage": "stock_ticker_check",
+                    },
+                )
                 return None
 
             # Track stock ticker availability
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: stock_ticker_available (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "stock_ticker_available"
             )
@@ -629,6 +624,15 @@ class SFRExecutor(BaseExecutor):
                     stock_ticker
                 )  # Fallback internally handled
                 if stock_price is None:
+                    metrics_collector.add_rejection_reason(
+                        RejectionReason.INVALID_CONTRACT_DATA,
+                        {
+                            "symbol": self.symbol,
+                            "contract_type": "stock_price",
+                            "expiry": expiry_option.expiry,
+                            "stage": "stock_price_validation",
+                        },
+                    )
                     return None
 
                 contract_priority = ContractPrioritizer.get_contract_priority(
@@ -650,6 +654,9 @@ class SFRExecutor(BaseExecutor):
                     return None
 
             # Track passing priority filter
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: passed_priority_filter (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "passed_priority_filter"
             )
@@ -674,9 +681,32 @@ class SFRExecutor(BaseExecutor):
                 logger.debug(
                     f"[{self.symbol}] Quick rejection for {expiry_option.expiry}: {reason}"
                 )
+                # Map viability reasons to appropriate rejection reasons
+                rejection_reason_map = {
+                    "invalid_strike_spread": RejectionReason.INVALID_STRIKE_COMBINATION,
+                    "expiry_out_of_range": RejectionReason.NO_VALID_EXPIRIES,
+                    "invalid_expiry_format": RejectionReason.INVALID_CONTRACT_DATA,
+                    "invalid_stock_price": RejectionReason.INVALID_CONTRACT_DATA,
+                    "poor_moneyness": RejectionReason.INVALID_STRIKE_COMBINATION,
+                }
+                rejection_reason = rejection_reason_map.get(
+                    reason, RejectionReason.INVALID_CONTRACT_DATA
+                )
+                metrics_collector.add_rejection_reason(
+                    rejection_reason,
+                    {
+                        "symbol": self.symbol,
+                        "expiry": expiry_option.expiry,
+                        "viability_reason": reason,
+                        "stage": "quick_viability_check",
+                    },
+                )
                 return None
 
             # Track passing viability check
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: passed_viability_check (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "passed_viability_check"
             )
@@ -711,6 +741,9 @@ class SFRExecutor(BaseExecutor):
                 return None
 
             # Track option data availability
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: option_data_available (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "option_data_available"
             )
@@ -730,6 +763,9 @@ class SFRExecutor(BaseExecutor):
                 return None
 
             # Track passing data quality check
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: passed_data_quality (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "passed_data_quality"
             )
@@ -776,6 +812,9 @@ class SFRExecutor(BaseExecutor):
                 return None
 
             # Track valid prices
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: prices_valid (expiry: {expiry_option.expiry})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "prices_valid"
             )
@@ -784,23 +823,6 @@ class SFRExecutor(BaseExecutor):
             theoretical_net_credit = call_fair - put_fair
             theoretical_spread = stock_fair - expiry_option.put_strike
             theoretical_profit = theoretical_net_credit - theoretical_spread
-
-            # DEBUG: Log exact values for AAPL test scenario
-            if (
-                self.symbol == "AAPL"
-                and expiry_option.call_strike == 184.5
-                and expiry_option.put_strike == 183.5
-            ):
-                logger.warning(f"[AAPL DEBUG] Theoretical calculation:")
-                logger.warning(
-                    f"  call_fair={call_fair:.4f}, put_fair={put_fair:.4f}, stock_fair={stock_fair:.4f}"
-                )
-                logger.warning(
-                    f"  call_strike={expiry_option.call_strike}, put_strike={expiry_option.put_strike}"
-                )
-                logger.warning(f"  theoretical_net_credit={theoretical_net_credit:.4f}")
-                logger.warning(f"  theoretical_spread={theoretical_spread:.4f}")
-                logger.warning(f"  theoretical_profit={theoretical_profit:.4f}")
 
             # Track ALL theoretical profit calculations (positive and negative)
             metrics_collector.record_profit_calculation(
@@ -826,6 +848,9 @@ class SFRExecutor(BaseExecutor):
                 return None
 
             # Track positive theoretical profit
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: theoretical_profit_positive (expiry: {expiry_option.expiry}, profit: ${theoretical_profit:.2f})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "theoretical_profit_positive"
             )
@@ -865,20 +890,6 @@ class SFRExecutor(BaseExecutor):
             guaranteed_spread = stock_exec - expiry_option.put_strike
             guaranteed_profit = guaranteed_net_credit - guaranteed_spread
 
-            # DEBUG: Log exact values for AAPL test scenario
-            if (
-                self.symbol == "AAPL"
-                and expiry_option.call_strike == 184.5
-                and expiry_option.put_strike == 183.5
-            ):
-                logger.warning(f"[AAPL DEBUG] Guaranteed calculation:")
-                logger.warning(
-                    f"  call_exec={call_exec:.4f}, put_exec={put_exec:.4f}, stock_exec={stock_exec:.4f}"
-                )
-                logger.warning(f"  guaranteed_net_credit={guaranteed_net_credit:.4f}")
-                logger.warning(f"  guaranteed_spread={guaranteed_spread:.4f}")
-                logger.warning(f"  guaranteed_profit={guaranteed_profit:.4f}")
-
             # Track guaranteed profit calculation
             metrics_collector.record_profit_calculation(
                 self.symbol, expiry_option.expiry, theoretical_profit, guaranteed_profit
@@ -904,6 +915,9 @@ class SFRExecutor(BaseExecutor):
                 return None
 
             # Track positive guaranteed profit
+            logger.info(
+                f"[Funnel] [{self.symbol}] Stage: guaranteed_profit_positive (expiry: {expiry_option.expiry}, profit: ${guaranteed_profit:.2f})"
+            )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "guaranteed_profit_positive"
             )
@@ -1182,16 +1196,6 @@ class SFRExecutor(BaseExecutor):
                 break
 
         for expiry_option in eligible_options:
-            # DEBUG: Check AAPL data availability
-            if (
-                self.symbol == "AAPL"
-                and expiry_option.call_strike == 184.5
-                and expiry_option.put_strike == 183.5
-            ):
-                has_data = self.has_data_for_option_pair(expiry_option)
-                logger.warning(
-                    f"[AAPL DEBUG] evaluate_with_available_data: has_data_for_option_pair={has_data}"
-                )
 
             # Skip if we don't have data for this option pair
             if not self.has_data_for_option_pair(expiry_option):
@@ -1317,11 +1321,34 @@ class SFRExecutor(BaseExecutor):
                         f"Error cancelling market data for contract {contract.conId}: {str(e)}"
                     )
 
+            # Log funnel summary before deactivating
+            self.log_funnel_summary()
+
             # Call parent deactivate method
             super().deactivate()
             logger.debug(
                 f"[{self.symbol}] Executor deactivated and cleaned up {len(self.all_contracts)} contracts"
             )
+
+    def log_funnel_summary(self):
+        """Log concise funnel analysis summary"""
+        funnel_analysis = metrics_collector.get_funnel_analysis()
+
+        if funnel_analysis["total_opportunities"] == 0:
+            logger.info(f"[Funnel Summary] {self.symbol}: No opportunities evaluated")
+            return
+
+        funnel_stages = funnel_analysis["funnel_stages"]
+        total = funnel_stages.get("evaluated", 0)
+        theoretical_positive = funnel_stages.get("theoretical_profit_positive", 0)
+        guaranteed_positive = funnel_stages.get("guaranteed_profit_positive", 0)
+        executed = funnel_stages.get("executed", 0)
+
+        # Single line summary with key metrics
+        logger.info(
+            f"[Funnel Summary] {self.symbol}: {total} evaluated → "
+            f"{theoretical_positive} theoretical → {guaranteed_positive} viable → {executed} executed"
+        )
 
 
 class SFR(ArbitrageClass):
@@ -1753,24 +1780,11 @@ class SFR(ArbitrageClass):
                     del contract_ticker[contract.conId]
                     logger.debug(f"Cleaned up stale data for contract {contract.conId}")
 
-            # Request market data for all contracts with detailed logging
+            # Request market data for all contracts
             logger.info(
-                f"[{symbol}] Requesting market data for {len(all_contracts)} contracts:"
+                f"[{symbol}] Requesting market data for {len(all_contracts)} contracts "
+                f"({len(expiry_options)} expiry options)"
             )
-
-            # Log stock contract
-            logger.info(f"  Stock: {stock.symbol} (conId: {stock.conId})")
-
-            # Log option contracts
-            for expiry_option in expiry_options:
-                logger.info(
-                    f"  Call: {expiry_option.call_contract.symbol} {expiry_option.call_strike} "
-                    f"{expiry_option.expiry} (conId: {expiry_option.call_contract.conId})"
-                )
-                logger.info(
-                    f"  Put: {expiry_option.put_contract.symbol} {expiry_option.put_strike} "
-                    f"{expiry_option.expiry} (conId: {expiry_option.put_contract.conId})"
-                )
 
             # Request market data for all contracts in parallel
             data_collection_start = time.time()

@@ -127,15 +127,22 @@ def configure_logging(
 
     # Add file handler if log file is specified
     if log_file:
-        file_handler = logging.FileHandler(log_file, mode="a")
+        from logging.handlers import RotatingFileHandler
+
+        # Use rotating file handler to manage log file size (10MB max, 5 backups)
+        file_handler = RotatingFileHandler(
+            log_file, mode="a", maxBytes=10485760, backupCount=5
+        )
         file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
 
-        # Apply the same filter to file handler as console handler
+        # File handler uses more inclusive filters to capture important information
+        # Always include WARNING+ messages for rejections, plus INFO for funnel tracking
         if filter_type == "info":
-            file_handler.addFilter(InfoOnlyFilter())
+            # For INFO console filter, file should capture INFO + WARNING + ERROR + CRITICAL
+            file_handler.addFilter(InfoWarningErrorCriticalFilter())
         elif filter_type == "warning":
             file_handler.addFilter(InfoWarningFilter())
         elif filter_type == "error":
