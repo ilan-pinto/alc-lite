@@ -130,8 +130,9 @@ def configure_logging(
         from logging.handlers import RotatingFileHandler
 
         # Use rotating file handler to manage log file size (10MB max, 5 backups)
+        # delay=False ensures immediate file creation and writes
         file_handler = RotatingFileHandler(
-            log_file, mode="a", maxBytes=10485760, backupCount=5
+            log_file, mode="a", maxBytes=10485760, backupCount=5, delay=False
         )
         file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
         file_handler.setFormatter(
@@ -149,6 +150,8 @@ def configure_logging(
             file_handler.addFilter(InfoWarningErrorCriticalFilter())
         # No filter for "none" type (debug mode)
 
+        # Ensure immediate flushing for reliable log writing
+        file_handler.flush()
         handlers.append(file_handler)
 
     logging.basicConfig(

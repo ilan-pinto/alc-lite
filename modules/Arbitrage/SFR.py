@@ -291,7 +291,84 @@ class SFRExecutor(BaseExecutor):
                     put_score += 0.05
             score += put_score
 
-        return min(score, 1.0)  # Cap at 1.0
+        # Log details for low quality scores
+        final_score = min(score, 1.0)
+        if (
+            final_score < 0.6
+        ):  # Log breakdown for scores that might cause evaluation failures
+            stock_score = 0.0  # Need to recalculate for logging
+            call_score = 0.0
+            put_score = 0.0
+
+            # Recalculate component scores for logging
+            if stock_ticker:
+                if hasattr(stock_ticker, "bid") and self._is_valid_price(
+                    stock_ticker.bid
+                ):
+                    stock_score += 0.1
+                if hasattr(stock_ticker, "ask") and self._is_valid_price(
+                    stock_ticker.ask
+                ):
+                    stock_score += 0.1
+                if hasattr(stock_ticker, "last") and self._is_valid_price(
+                    stock_ticker.last
+                ):
+                    stock_score += 0.05
+                if hasattr(stock_ticker, "volume") and stock_ticker.volume > 0:
+                    stock_score += 0.05
+
+            if call_ticker:
+                if hasattr(call_ticker, "bid") and self._is_valid_price(
+                    call_ticker.bid
+                ):
+                    call_score += 0.1
+                if hasattr(call_ticker, "ask") and self._is_valid_price(
+                    call_ticker.ask
+                ):
+                    call_score += 0.1
+                if hasattr(call_ticker, "last") and self._is_valid_price(
+                    call_ticker.last
+                ):
+                    call_score += 0.05
+                if hasattr(call_ticker, "volume") and call_ticker.volume > 0:
+                    call_score += 0.05
+                if (
+                    hasattr(call_ticker, "bid")
+                    and hasattr(call_ticker, "ask")
+                    and self._is_valid_price(call_ticker.bid)
+                    and self._is_valid_price(call_ticker.ask)
+                ):
+                    spread = abs(call_ticker.ask - call_ticker.bid)
+                    if spread < 5.0:
+                        call_score += 0.05
+
+            if put_ticker:
+                if hasattr(put_ticker, "bid") and self._is_valid_price(put_ticker.bid):
+                    put_score += 0.1
+                if hasattr(put_ticker, "ask") and self._is_valid_price(put_ticker.ask):
+                    put_score += 0.1
+                if hasattr(put_ticker, "last") and self._is_valid_price(
+                    put_ticker.last
+                ):
+                    put_score += 0.05
+                if hasattr(put_ticker, "volume") and put_ticker.volume > 0:
+                    put_score += 0.05
+                if (
+                    hasattr(put_ticker, "bid")
+                    and hasattr(put_ticker, "ask")
+                    and self._is_valid_price(put_ticker.bid)
+                    and self._is_valid_price(put_ticker.ask)
+                ):
+                    spread = abs(put_ticker.ask - put_ticker.bid)
+                    if spread < 5.0:
+                        put_score += 0.05
+
+            logger.debug(
+                f"[{self.symbol}] Low data quality score: {final_score:.2f} "
+                f"(stock={stock_score:.2f}, call={call_score:.2f}, put={put_score:.2f})"
+            )
+
+        return final_score
 
     def initialize_contract_priorities(self, stock_price: float):
         """Initialize contract priority tiers based on moneyness"""
@@ -535,7 +612,12 @@ class SFRExecutor(BaseExecutor):
                         f"[{self.symbol}] Data collection complete early ({stop_reason}), evaluating opportunities..."
                     )
 
-                    if self.has_minimum_viable_data():
+                    # Always evaluate if we have data overflow OR minimum viable data
+                    should_evaluate = (
+                        self.has_minimum_viable_data() or stop_reason == "data_overflow"
+                    )
+
+                    if should_evaluate:
                         opportunity = await self.evaluate_with_available_data(
                             ContractPriority.OPTIONAL  # Use all available data since collection is complete
                         )
@@ -549,6 +631,18 @@ class SFRExecutor(BaseExecutor):
                             )
                             await self.execute_opportunity(opportunity)
                             return
+
+                        # Log evaluation result even if no opportunity found
+                        if not opportunity:
+                            logger.info(
+                                f"[{self.symbol}] Evaluation complete - no profitable opportunities found "
+                                f"(completion: {self.collection_metrics.get_completion_percentage():.1f}%)"
+                            )
+                    else:
+                        logger.warning(
+                            f"[{self.symbol}] Skipping evaluation - insufficient viable data "
+                            f"({self.collection_metrics.get_completion_percentage():.1f}% collected)"
+                        )
 
                     # Map stop reasons to user-friendly messages
                     reason_messages = {
@@ -756,10 +850,24 @@ class SFRExecutor(BaseExecutor):
             # In partial data mode, require higher quality for execution
             min_quality_threshold = 0.8 if priority_filter else 0.6
             if data_quality_score < min_quality_threshold:
-                logger.debug(
+                logger.info(  # Change from debug to info for better visibility
                     f"[{self.symbol}] Data quality {data_quality_score:.2f} below threshold "
-                    f"{min_quality_threshold} for {expiry_option.expiry}"
+                    f"{min_quality_threshold} for {expiry_option.expiry} "
+                    f"(call_strike={expiry_option.call_strike}, put_strike={expiry_option.put_strike})"
                 )
+                # Log what's missing
+                if call_ticker:
+                    logger.debug(
+                        f"  Call data: bid={getattr(call_ticker, 'bid', 'N/A')}, "
+                        f"ask={getattr(call_ticker, 'ask', 'N/A')}, "
+                        f"volume={getattr(call_ticker, 'volume', 'N/A')}"
+                    )
+                if put_ticker:
+                    logger.debug(
+                        f"  Put data: bid={getattr(put_ticker, 'bid', 'N/A')}, "
+                        f"ask={getattr(put_ticker, 'ask', 'N/A')}, "
+                        f"volume={getattr(put_ticker, 'volume', 'N/A')}"
+                    )
                 return None
 
             # Track passing data quality check
@@ -769,6 +877,21 @@ class SFRExecutor(BaseExecutor):
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "passed_data_quality"
             )
+
+            # Check volume for execution viability (but don't block evaluation)
+            call_volume = getattr(call_ticker, "volume", 0)
+            put_volume = getattr(put_ticker, "volume", 0)
+
+            if call_volume == 0 or put_volume == 0:
+                logger.warning(
+                    f"[{self.symbol}] Low/zero volume detected for {expiry_option.expiry} "
+                    f"(call_vol={call_volume}, put_vol={put_volume}) - continuing evaluation for logging"
+                )
+                # Don't return None here - continue to calculate and log the opportunity
+                # but mark it as non-executable
+                low_volume_warning = True
+            else:
+                low_volume_warning = False
 
             # Get midpoint prices for theoretical calculation
             call_fair = call_ticker.midpoint()
@@ -1037,6 +1160,26 @@ class SFRExecutor(BaseExecutor):
             )
 
             if conditions_met:
+                # Check if this opportunity is executable (has volume)
+                if low_volume_warning:
+                    logger.warning(
+                        f"[{self.symbol}] Found profitable opportunity for {expiry_option.expiry} "
+                        f"but cannot execute due to zero volume (call_vol={call_volume}, put_vol={put_volume})"
+                    )
+                    metrics_collector.add_rejection_reason(
+                        RejectionReason.INSUFFICIENT_LIQUIDITY,
+                        {
+                            "symbol": self.symbol,
+                            "expiry": expiry_option.expiry,
+                            "call_volume": call_volume,
+                            "put_volume": put_volume,
+                            "theoretical_profit": theoretical_profit,
+                            "guaranteed_profit": min_profit,
+                        },
+                    )
+                    # Return None to skip this opportunity and continue to next expiry
+                    return None
+
                 # Build order with precise limit price and target leg prices
                 conversion_contract, order = self.build_order(
                     self.symbol,
@@ -1157,7 +1300,14 @@ class SFRExecutor(BaseExecutor):
         if not self.has_stock_data():
             return False
 
-        # Need at least 1 option pair with recent data (relaxed for testing scenarios)
+        # Special case: If we have data overflow, we definitely have viable data
+        if self.collection_metrics.get_completion_percentage() > 200:
+            logger.debug(
+                f"[{self.symbol}] Data overflow detected ({self.collection_metrics.get_completion_percentage():.1f}%), assuming viable data"
+            )
+            return True
+
+        # Need at least 1 option pair with valid bid/ask spreads
         viable_pairs = 0
 
         for expiry_option in self.expiry_options:
@@ -1165,13 +1315,21 @@ class SFRExecutor(BaseExecutor):
             put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
 
             if call_ticker and put_ticker:
-                # Check data freshness (assuming we have timestamp or volume > 0 indicates fresh data)
-                if (
-                    hasattr(call_ticker, "volume")
-                    and call_ticker.volume > 0
-                    and hasattr(put_ticker, "volume")
-                    and put_ticker.volume > 0
-                ):
+                # Check for valid bid/ask spreads (not volume)
+                call_has_prices = (
+                    hasattr(call_ticker, "bid")
+                    and call_ticker.bid > 0
+                    and hasattr(call_ticker, "ask")
+                    and call_ticker.ask > 0
+                )
+                put_has_prices = (
+                    hasattr(put_ticker, "bid")
+                    and put_ticker.bid > 0
+                    and hasattr(put_ticker, "ask")
+                    and put_ticker.ask > 0
+                )
+
+                if call_has_prices and put_has_prices:
                     viable_pairs += 1
 
         return viable_pairs >= 1  # Allow evaluation with single expiry for testing
@@ -1180,6 +1338,11 @@ class SFRExecutor(BaseExecutor):
         self, max_priority: ContractPriority
     ) -> Optional[Dict]:
         """Evaluate opportunities with currently available data up to specified priority"""
+        logger.info(
+            f"[{self.symbol}] Starting evaluation with {len(self.expiry_options)} expiry options, "
+            f"max_priority={max_priority.value}"
+        )
+
         best_opportunity = None
         best_profit = 0
 
@@ -1195,10 +1358,20 @@ class SFRExecutor(BaseExecutor):
             if priority == max_priority:
                 break
 
+        logger.info(
+            f"[{self.symbol}] Eligible options for evaluation: {len(eligible_options)} "
+            f"(Critical={len(self.priority_tiers.get(ContractPriority.CRITICAL, []))}, "
+            f"Important={len(self.priority_tiers.get(ContractPriority.IMPORTANT, []))}, "
+            f"Optional={len(self.priority_tiers.get(ContractPriority.OPTIONAL, []))})"
+        )
+
         for expiry_option in eligible_options:
 
             # Skip if we don't have data for this option pair
             if not self.has_data_for_option_pair(expiry_option):
+                logger.debug(
+                    f"[{self.symbol}] Skipping {expiry_option.expiry} - missing data for option pair"
+                )
                 continue
 
             try:
@@ -1223,12 +1396,31 @@ class SFRExecutor(BaseExecutor):
                 logger.debug(f"Error evaluating {expiry_option.expiry}: {str(e)}")
                 continue
 
+        # Log summary if no opportunity found
+        if not best_opportunity:
+            logger.info(
+                f"[{self.symbol}] Evaluation complete: examined {len(eligible_options)} options, "
+                f"no profitable opportunities found"
+            )
+
         return best_opportunity
 
     def has_data_for_option_pair(self, expiry_option: ExpiryOption) -> bool:
         """Check if we have data for both call and put contracts"""
         call_data = contract_ticker.get(expiry_option.call_contract.conId)
         put_data = contract_ticker.get(expiry_option.put_contract.conId)
+
+        if not call_data:
+            logger.debug(
+                f"[{self.symbol}] No call data for {expiry_option.expiry} "
+                f"strike={expiry_option.call_strike}"
+            )
+        if not put_data:
+            logger.debug(
+                f"[{self.symbol}] No put data for {expiry_option.expiry} "
+                f"strike={expiry_option.put_strike}"
+            )
+
         return call_data is not None and put_data is not None
 
     async def execute_opportunity(self, opportunity: Dict):
@@ -1302,6 +1494,14 @@ class SFRExecutor(BaseExecutor):
             success=True
         )  # No opportunity is still a successful scan
 
+    def _flush_all_handlers(self):
+        """Flush all logging handlers to ensure messages are written to files"""
+        import logging
+
+        for handler in logging.getLogger().handlers:
+            if hasattr(handler, "flush"):
+                handler.flush()
+
     def deactivate(self):
         """Deactivate the executor and properly clean up market data subscriptions"""
         if self.is_active:
@@ -1323,6 +1523,9 @@ class SFRExecutor(BaseExecutor):
 
             # Log funnel summary before deactivating
             self.log_funnel_summary()
+
+            # Ensure all log messages are written to file
+            self._flush_all_handlers()
 
             # Call parent deactivate method
             super().deactivate()

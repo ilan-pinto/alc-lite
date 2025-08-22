@@ -13,27 +13,27 @@ from modules.finviz_scraper import scrape_tickers_from_finviz
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging_level(debug=False, warning=False, error=False):
+def _configure_logging_level(debug=False, warning=False, error=False, log_file=None):
     """Configure logging level based on CLI flags"""
     from modules.Arbitrage.common import configure_logging
 
     if debug:
         # Debug mode: show all levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        configure_logging(debug=True, use_info_filter=False)
+        configure_logging(debug=True, use_info_filter=False, log_file=log_file)
         logger.debug("Debug logging enabled - all levels shown")
     elif error:
         # Error mode: show INFO, WARNING, ERROR, CRITICAL (but not DEBUG)
-        configure_logging(error=True, use_info_filter=False)
+        configure_logging(error=True, use_info_filter=False, log_file=log_file)
         logger.info(
             "Error logging enabled - INFO, WARNING, ERROR and CRITICAL messages will be shown"
         )
     elif warning:
         # Warning mode: show INFO and WARNING (original behavior)
-        configure_logging(warning=True, use_info_filter=False)
+        configure_logging(warning=True, use_info_filter=False, log_file=log_file)
         logger.info("Warning logging enabled - INFO and WARNING messages will be shown")
     else:
         # Default: INFO only (original behavior)
-        configure_logging(use_info_filter=True)
+        configure_logging(use_info_filter=True, log_file=log_file)
 
 
 class OptionScan:
@@ -164,7 +164,9 @@ class OptionScan:
         max_strike_difference=5,
     ):
         # Configure logging level based on CLI flags
-        _configure_logging_level(debug=debug, warning=warning, error=error)
+        _configure_logging_level(
+            debug=debug, warning=warning, error=error, log_file=log_file
+        )
 
         sfr = SFR(log_file=log_file)
         default_list = [
@@ -261,7 +263,9 @@ class OptionScan:
         )
 
         # Configure logging level based on CLI flags
-        _configure_logging_level(debug=debug, warning=warning, error=error)
+        _configure_logging_level(
+            debug=debug, warning=warning, error=error, log_file=log_file
+        )
 
         # Create Syn instance with scoring configuration
         syn = Syn(log_file=log_file, scoring_config=scoring_config)
@@ -371,7 +375,9 @@ class OptionScan:
             )
         """
         # Configure logging level based on CLI flags
-        _configure_logging_level(debug=debug, warning=warning, error=error)
+        _configure_logging_level(
+            debug=debug, warning=warning, error=error, log_file=log_file
+        )
 
         # Create CalendarSpread instance with configuration
         from modules.Arbitrage.CalendarSpread import CalendarSpreadConfig
@@ -517,7 +523,9 @@ class OptionScan:
             finviz_url: Optional Finviz screener URL
         """
         # Configure logging level
-        _configure_logging_level(debug=debug, warning=warning, error=error)
+        _configure_logging_level(
+            debug=debug, warning=warning, error=error, log_file=log_file
+        )
 
         # Import box spread strategy
         from modules.Arbitrage.box_spread import BoxSpread

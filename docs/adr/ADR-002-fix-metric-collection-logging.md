@@ -98,7 +98,9 @@ logger.info(f"[Funnel] [{self.symbol}] Stage: evaluated (expiry: {expiry_option.
 - [x] Funnel summary simplified to single-line format
 - [x] Contract logging reduced from detailed per-contract to summary format
 - [x] No loss of critical debugging information
-- [ ] Performance impact testing (to be verified in next run)
+- [x] Performance impact testing (verified - no significant impact)
+- [x] Empty log file issue resolved with `delay=False` and explicit flush calls
+- [x] `_flush_all_handlers()` method implemented for proper cleanup
 
 ## Rollback Plan
 If issues arise:

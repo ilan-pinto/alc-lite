@@ -282,9 +282,9 @@ def should_continue_waiting(
         return False, "hard_timeout"
 
     # AGGRESSIVE: Stop immediately if we have massive data overflow
-    if completion_pct >= 500:  # 5x expected data is definitely enough
+    if completion_pct >= 3500:  # Only stop at extreme overflow (35x expected data)
         logger.info(
-            f"Data overflow detected: {completion_pct:.0f}% completion - stopping immediately"
+            f"[{metrics.symbol}] Data overflow detected: {completion_pct:.0f}% completion - stopping immediately"
         )
         return False, "data_overflow"
 
