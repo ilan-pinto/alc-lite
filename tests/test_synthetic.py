@@ -338,13 +338,19 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
         quantity=1,
         global_manager=GlobalOpportunityManager(),
     )
-    # Patch contract_ticker in the Synthetic module with stock and option data
+    # Patch contract_ticker in the Synthetic module with stock and option data using composite keys
     monkeypatch.setattr(
         "modules.Arbitrage.Synthetic.contract_ticker",
         {
-            1: MagicMock(ask=100.0, close=99.0, volume=1000),  # Stock ticker
-            2: MagicMock(bid=5.0, close=5.0, ask=5.5, volume=500),  # Call ticker
-            3: MagicMock(ask=3.0, close=3.0, bid=2.5, volume=500),  # Put ticker
+            ("TEST", 1): MagicMock(
+                ask=100.0, close=99.0, volume=1000
+            ),  # Stock ticker with composite key
+            ("TEST", 2): MagicMock(
+                bid=5.0, close=5.0, ask=5.5, volume=500
+            ),  # Call ticker with composite key
+            ("TEST", 3): MagicMock(
+                ask=3.0, close=3.0, bid=2.5, volume=500
+            ),  # Put ticker with composite key
         },
     )
     # Mock check_conditions to return (True, None) for successful execution
@@ -446,7 +452,7 @@ async def test_rejection_reasons_are_logged_during_scan():
     stock_ticker.ask = 145.0
     stock_ticker.close = 145.0
     stock_ticker.volume = 1000
-    Synthetic.contract_ticker[stock_contract.conId] = stock_ticker
+    Synthetic.contract_ticker[("AAPL", stock_contract.conId)] = stock_ticker
 
     # Mock call ticker with bid-ask spread too wide (should trigger rejection)
     call_ticker = Mock()
@@ -454,7 +460,7 @@ async def test_rejection_reasons_are_logged_during_scan():
     call_ticker.ask = 25.0  # Wide spread of 20 > 15 threshold
     call_ticker.close = 10.0
     call_ticker.volume = 100
-    Synthetic.contract_ticker[call_contract.conId] = call_ticker
+    Synthetic.contract_ticker[("AAPL", call_contract.conId)] = call_ticker
 
     # Mock put ticker with valid data
     put_ticker = Mock()
@@ -462,7 +468,7 @@ async def test_rejection_reasons_are_logged_during_scan():
     put_ticker.ask = 9.0
     put_ticker.close = 8.5
     put_ticker.volume = 100
-    Synthetic.contract_ticker[put_contract.conId] = put_ticker
+    Synthetic.contract_ticker[("AAPL", put_contract.conId)] = put_ticker
 
     # Capture logs to verify rejection reasons are logged
     import sys

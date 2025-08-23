@@ -33,6 +33,22 @@ logger = get_logger()
 contract_ticker = {}
 
 
+def get_symbol_contract_count(symbol):
+    """Get count of contracts for a specific symbol"""
+    return sum(1 for k in contract_ticker.keys() if k[0] == symbol)
+
+
+def debug_contract_ticker_state():
+    """Debug helper to show contract_ticker state by symbol"""
+    by_symbol = {}
+    for (symbol, conId), _ in contract_ticker.items():
+        if symbol not in by_symbol:
+            by_symbol[symbol] = 0
+        by_symbol[symbol] += 1
+    logger.debug(f"Contract ticker state: {by_symbol}")
+    return by_symbol
+
+
 class CalendarSpread(ArbitrageClass):
     """
     Calendar Spread arbitrage strategy class.

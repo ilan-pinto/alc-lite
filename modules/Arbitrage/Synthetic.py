@@ -19,6 +19,23 @@ from .metrics import RejectionReason, metrics_collector
 # Global contract_ticker for use in SynExecutor and patching in tests
 contract_ticker = {}
 
+
+def get_symbol_contract_count(symbol):
+    """Get count of contracts for a specific symbol"""
+    return sum(1 for k in contract_ticker.keys() if k[0] == symbol)
+
+
+def debug_contract_ticker_state():
+    """Debug helper to show contract_ticker state by symbol"""
+    by_symbol = {}
+    for (symbol, conId), _ in contract_ticker.items():
+        if symbol not in by_symbol:
+            by_symbol[symbol] = 0
+        by_symbol[symbol] += 1
+    logger.debug(f"Contract ticker state: {by_symbol}")
+    return by_symbol
+
+
 # Configure logging will be done in main
 logger = get_logger()
 
@@ -629,6 +646,25 @@ class SynExecutor(BaseExecutor):
         self.data_collection_start = time.time()
         self.global_manager = global_manager
 
+    def _get_ticker(self, conId):
+        """Get ticker for this symbol's contract using composite key"""
+        return contract_ticker.get((self.symbol, conId))
+
+    def _set_ticker(self, conId, ticker):
+        """Set ticker for this symbol's contract using composite key"""
+        contract_ticker[(self.symbol, conId)] = ticker
+
+    def _clear_symbol_tickers(self):
+        """Clear all tickers for this symbol from global dictionary"""
+        keys = [k for k in contract_ticker.keys() if k[0] == self.symbol]
+        count = len(keys)
+        for key in keys:
+            del contract_ticker[key]
+        logger.debug(
+            f"[{self.symbol}] Cleared {count} contract tickers from global dictionary"
+        )
+        return count
+
     def quick_viability_check(
         self, expiry_option: ExpiryOption, stock_price: float
     ) -> Tuple[bool, Optional[str]]:
@@ -737,12 +773,12 @@ class SynExecutor(BaseExecutor):
                 # Update ticker data - be more lenient with volume requirements
                 # Accept any ticker with valid price data, log warning for low volume
                 if ticker.volume > 10:
-                    contract_ticker[contract.conId] = ticker
+                    self._set_ticker(contract.conId, ticker)
                 elif ticker.volume >= 0 and (
                     ticker.bid > 0 or ticker.ask > 0 or ticker.close > 0
                 ):
                     # Accept low volume contracts if they have valid price data
-                    contract_ticker[contract.conId] = ticker
+                    self._set_ticker(contract.conId, ticker)
                     logger.warning(
                         f"[{self.symbol}] Low volume ({ticker.volume}) for contract {contract.conId}, "
                         f"but accepting due to valid price data"
@@ -757,9 +793,7 @@ class SynExecutor(BaseExecutor):
             )
             if elapsed_time > adaptive_timeout:
                 missing_contracts = [
-                    c
-                    for c in self.all_contracts
-                    if contract_ticker.get(c.conId) is None
+                    c for c in self.all_contracts if self._get_ticker(c.conId) is None
                 ]
                 logger.warning(
                     f"[{self.symbol}] Data collection timeout after {elapsed_time:.1f}s (adaptive limit: {adaptive_timeout:.1f}s). "
@@ -780,9 +814,7 @@ class SynExecutor(BaseExecutor):
                 return
 
             # Check if we have data for all contracts
-            if all(
-                contract_ticker.get(c.conId) is not None for c in self.all_contracts
-            ):
+            if all(self._get_ticker(c.conId) is not None for c in self.all_contracts):
                 # Check if still active before proceeding
                 if not self.is_active:
                     return
@@ -805,12 +837,10 @@ class SynExecutor(BaseExecutor):
                         conversion_contract, order, _, trade_details = opportunity
 
                         # Get ticker data for scoring
-                        call_ticker = contract_ticker.get(
+                        call_ticker = self._get_ticker(
                             expiry_option.call_contract.conId
                         )
-                        put_ticker = contract_ticker.get(
-                            expiry_option.put_contract.conId
-                        )
+                        put_ticker = self._get_ticker(expiry_option.put_contract.conId)
 
                         if call_ticker and put_ticker:
                             # Report opportunity to global manager instead of executing
@@ -855,9 +885,7 @@ class SynExecutor(BaseExecutor):
             else:
                 # Still waiting for data from some contracts
                 missing_contracts = [
-                    c
-                    for c in self.all_contracts
-                    if contract_ticker.get(c.conId) is None
+                    c for c in self.all_contracts if self._get_ticker(c.conId) is None
                 ]
                 # Only log debug message every 5 seconds to reduce noise
                 if int(elapsed_time) % 5 == 0:
@@ -881,7 +909,7 @@ class SynExecutor(BaseExecutor):
         """
         try:
             # Fast pre-filtering to eliminate non-viable opportunities early
-            stock_ticker = contract_ticker.get(self.stock_contract.conId)
+            stock_ticker = self._get_ticker(self.stock_contract.conId)
             if not stock_ticker:
                 return None
 
@@ -899,8 +927,8 @@ class SynExecutor(BaseExecutor):
                 return None
 
             # Get option data
-            call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
-            put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
+            call_ticker = self._get_ticker(expiry_option.call_contract.conId)
+            put_ticker = self._get_ticker(expiry_option.put_contract.conId)
 
             if not call_ticker or not put_ticker:
                 metrics_collector.add_rejection_reason(
@@ -1475,10 +1503,11 @@ class Syn(ArbitrageClass):
             self.active_executors[symbol] = syn_executor
 
             # Clean up any stale data in contract_ticker for this symbol's contracts
-            for contract in all_contracts:
-                if contract.conId in contract_ticker:
-                    del contract_ticker[contract.conId]
-                    logger.debug(f"Cleaned up stale data for contract {contract.conId}")
+            cleared_count = syn_executor._clear_symbol_tickers()
+            if cleared_count > 0:
+                logger.debug(
+                    f"[{symbol}] Cleaned up {cleared_count} stale ticker entries"
+                )
 
             # Request market data for all contracts with detailed logging
             logger.info(

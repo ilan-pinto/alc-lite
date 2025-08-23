@@ -318,13 +318,13 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     put_ticker = MagicMock(ask=1.0, close=1.0, bid=0.8, volume=500, last=0.9)
     put_ticker.midpoint.return_value = 0.9  # Lower put premium for profitable spread
 
-    # Patch contract_ticker in the SFR module with stock and option data
+    # Patch contract_ticker in the SFR module with stock and option data using composite keys
     monkeypatch.setattr(
         "modules.Arbitrage.SFR.contract_ticker",
         {
-            1: stock_ticker,  # Stock ticker
-            2: call_ticker,  # Call ticker
-            3: put_ticker,  # Put ticker
+            ("TEST", 1): stock_ticker,  # Stock ticker with composite key
+            ("TEST", 2): call_ticker,  # Call ticker with composite key
+            ("TEST", 3): put_ticker,  # Put ticker with composite key
         },
     )
     # Mock check_conditions to return (True, None) for successful execution

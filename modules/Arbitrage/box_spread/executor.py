@@ -25,6 +25,22 @@ logger = get_logger()
 contract_ticker = {}
 
 
+def get_symbol_contract_count(symbol):
+    """Get count of contracts for a specific symbol"""
+    return sum(1 for k in contract_ticker.keys() if k[0] == symbol)
+
+
+def debug_contract_ticker_state():
+    """Debug helper to show contract_ticker state by symbol"""
+    by_symbol = {}
+    for (symbol, conId), _ in contract_ticker.items():
+        if symbol not in by_symbol:
+            by_symbol[symbol] = 0
+        by_symbol[symbol] += 1
+    logger.debug(f"Contract ticker state: {by_symbol}")
+    return by_symbol
+
+
 class BoxExecutor:
     """
     Executes box spread arbitrage opportunities.
@@ -63,6 +79,25 @@ class BoxExecutor:
 
         logger.info(f"BoxExecutor initialized for {opportunity.symbol} box spread")
 
+    def _get_ticker(self, conId):
+        """Get ticker for this symbol's contract using composite key"""
+        return contract_ticker.get((self.opportunity.symbol, conId))
+
+    def _set_ticker(self, conId, ticker):
+        """Set ticker for this symbol's contract using composite key"""
+        contract_ticker[(self.opportunity.symbol, conId)] = ticker
+
+    def _clear_symbol_tickers(self):
+        """Clear all tickers for this symbol from global dictionary"""
+        keys = [k for k in contract_ticker.keys() if k[0] == self.opportunity.symbol]
+        count = len(keys)
+        for key in keys:
+            del contract_ticker[key]
+        logger.debug(
+            f"[{self.opportunity.symbol}] Cleared {count} contract tickers from global dictionary"
+        )
+        return count
+
     async def executor(self, event) -> None:
         """
         Main executor method that processes market data events.
@@ -80,7 +115,7 @@ class BoxExecutor:
 
                 # Update global contract_ticker for compatibility
                 if self._is_valid_ticker_data(ticker):
-                    contract_ticker[contract.conId] = ticker
+                    self._set_ticker(contract.conId, ticker)
                     # Only update if this contract is part of our box spread
                     if contract.conId in self.required_tickers:
                         self.required_tickers[contract.conId] = ticker
@@ -432,9 +467,11 @@ class BoxExecutor:
                 self.ib.cancelMktData(contract)
 
             # Clear from global contract_ticker
-            for contract in self.contracts:
-                if contract.conId in contract_ticker:
-                    del contract_ticker[contract.conId]
+            cleared_count = self._clear_symbol_tickers()
+            if cleared_count > 0:
+                logger.debug(
+                    f"[{self.opportunity.symbol}] Cleared {cleared_count} contract ticker entries during cleanup"
+                )
 
             logger.debug("Box spread execution cleanup completed")
 

@@ -30,6 +30,22 @@ logger = get_logger()
 contract_ticker = {}
 
 
+def get_symbol_contract_count(symbol):
+    """Get count of contracts for a specific symbol"""
+    return sum(1 for k in contract_ticker.keys() if k[0] == symbol)
+
+
+def debug_contract_ticker_state():
+    """Debug helper to show contract_ticker state by symbol"""
+    by_symbol = {}
+    for (symbol, conId), _ in contract_ticker.items():
+        if symbol not in by_symbol:
+            by_symbol[symbol] = 0
+        by_symbol[symbol] += 1
+    logger.debug(f"Contract ticker state: {by_symbol}")
+    return by_symbol
+
+
 @dataclass
 class ExpiryOption:
     """Data class to hold option contract information for a specific expiry"""
@@ -118,6 +134,12 @@ class SFRExecutor(BaseExecutor):
         self.is_active = True
         self.data_timeout = data_timeout
         self.data_collection_start = time.time()
+
+        # Create set of valid contract IDs for fast symbol filtering
+        self.valid_contract_ids = {c.conId for c in self.all_contracts}
+        logger.debug(
+            f"[{symbol}] Initialized with {len(self.valid_contract_ids)} valid contracts"
+        )
 
         # Progressive collection components
         self.phase1_checked = False
@@ -385,6 +407,11 @@ class SFRExecutor(BaseExecutor):
             count = (
                 len(self.priority_tiers[priority]) * 2
             )  # 2 contracts per expiry (call + put)
+
+            # Add stock contract to critical priority (most important for pricing)
+            if priority == ContractPriority.CRITICAL:
+                count += 1  # Include the stock contract
+
             self.collection_metrics.contracts_expected[priority.value] = count
 
         logger.info(
@@ -401,6 +428,25 @@ class SFRExecutor(BaseExecutor):
             self.expiry_options,
             self.last_stock_price if hasattr(self, "last_stock_price") else 0,
         )
+
+    def _get_ticker(self, conId):
+        """Get ticker for this symbol's contract using composite key"""
+        return contract_ticker.get((self.symbol, conId))
+
+    def _set_ticker(self, conId, ticker):
+        """Set ticker for this symbol's contract using composite key"""
+        contract_ticker[(self.symbol, conId)] = ticker
+
+    def _clear_symbol_tickers(self):
+        """Clear all tickers for this symbol from global dictionary"""
+        keys = [k for k in contract_ticker.keys() if k[0] == self.symbol]
+        count = len(keys)
+        for key in keys:
+            del contract_ticker[key]
+        logger.debug(
+            f"[{self.symbol}] Cleared {count} contract tickers from global dictionary"
+        )
+        return count
 
     def check_conditions(
         self,
@@ -463,15 +509,28 @@ class SFRExecutor(BaseExecutor):
 
         try:
             # Update contract_ticker with new data and track metrics
+            logger.debug(
+                f"[{self.symbol}] Processing ticker event with {len(event)} contracts"
+            )
+            valid_processed = 0
+            skipped_contracts = 0
+
             for tick in event:
                 ticker: Ticker = tick
                 contract = ticker.contract
+
+                # CRITICAL: Only process contracts that belong to this symbol
+                if contract.conId not in self.valid_contract_ids:
+                    skipped_contracts += 1
+                    continue  # Skip contracts from other symbols
+
+                valid_processed += 1
 
                 # Update ticker data with volume-based filtering and priority tracking
                 if ticker.volume >= 1 and (
                     ticker.bid > 0 or ticker.ask > 0 or ticker.close > 0
                 ):
-                    contract_ticker[contract.conId] = ticker
+                    self._set_ticker(contract.conId, ticker)
 
                     # Track data arrival by priority
                     priority = self.get_contract_priority(contract)
@@ -500,7 +559,7 @@ class SFRExecutor(BaseExecutor):
 
             # Initialize contract priorities on first stock data
             if not self.priority_tiers and self.has_stock_data():
-                stock_ticker = contract_ticker.get(self.stock_contract.conId)
+                stock_ticker = self._get_ticker(self.stock_contract.conId)
                 if stock_ticker:
                     stock_price = self.get_stock_midpoint(stock_ticker)
                     if stock_price is not None and stock_price > 0:
@@ -691,7 +750,7 @@ class SFRExecutor(BaseExecutor):
             )
 
             # Fast pre-filtering to eliminate non-viable opportunities early
-            stock_ticker = contract_ticker.get(self.stock_contract.conId)
+            stock_ticker = self._get_ticker(self.stock_contract.conId)
             if not stock_ticker:
                 metrics_collector.add_rejection_reason(
                     RejectionReason.MISSING_MARKET_DATA,
@@ -806,8 +865,8 @@ class SFRExecutor(BaseExecutor):
             )
 
             # Get option data
-            call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
-            put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
+            call_ticker = self._get_ticker(expiry_option.call_contract.conId)
+            put_ticker = self._get_ticker(expiry_option.put_contract.conId)
 
             if not call_ticker or not put_ticker:
                 # In progressive mode, missing data might be acceptable for lower priority contracts
@@ -1242,7 +1301,7 @@ class SFRExecutor(BaseExecutor):
 
     def has_stock_data(self) -> bool:
         """Check if we have stock data available"""
-        return contract_ticker.get(self.stock_contract.conId) is not None
+        return self._get_ticker(self.stock_contract.conId) is not None
 
     def get_stock_midpoint(self, stock_ticker) -> Optional[float]:
         """Get stock midpoint price, with fallbacks"""
@@ -1311,8 +1370,8 @@ class SFRExecutor(BaseExecutor):
         viable_pairs = 0
 
         for expiry_option in self.expiry_options:
-            call_ticker = contract_ticker.get(expiry_option.call_contract.conId)
-            put_ticker = contract_ticker.get(expiry_option.put_contract.conId)
+            call_ticker = self._get_ticker(expiry_option.call_contract.conId)
+            put_ticker = self._get_ticker(expiry_option.put_contract.conId)
 
             if call_ticker and put_ticker:
                 # Check for valid bid/ask spreads (not volume)
@@ -1407,8 +1466,8 @@ class SFRExecutor(BaseExecutor):
 
     def has_data_for_option_pair(self, expiry_option: ExpiryOption) -> bool:
         """Check if we have data for both call and put contracts"""
-        call_data = contract_ticker.get(expiry_option.call_contract.conId)
-        put_data = contract_ticker.get(expiry_option.put_contract.conId)
+        call_data = self._get_ticker(expiry_option.call_contract.conId)
+        put_data = self._get_ticker(expiry_option.put_contract.conId)
 
         if not call_data:
             logger.debug(
@@ -1513,13 +1572,13 @@ class SFRExecutor(BaseExecutor):
             for contract in self.all_contracts:
                 try:
                     self.ib.cancelMktData(contract)
-                    # Clean up from global contract_ticker
-                    if contract.conId in contract_ticker:
-                        del contract_ticker[contract.conId]
                 except Exception as e:
                     logger.debug(
                         f"Error cancelling market data for contract {contract.conId}: {str(e)}"
                     )
+
+            # Clean up all symbol-specific tickers from global dictionary
+            self._clear_symbol_tickers()
 
             # Log funnel summary before deactivating
             self.log_funnel_summary()
@@ -1973,15 +2032,8 @@ class SFR(ArbitrageClass):
             # Store executor and request market data for all contracts
             self.active_executors[symbol] = srf_executor
 
-            # Clean up any stale data in contract_ticker for this symbol's contracts
-            for contract in all_contracts:
-                if (
-                    hasattr(contract, "conId")
-                    and contract.conId
-                    and contract.conId in contract_ticker
-                ):
-                    del contract_ticker[contract.conId]
-                    logger.debug(f"Cleaned up stale data for contract {contract.conId}")
+            # Clean up any stale data in contract_ticker for this symbol
+            srf_executor._clear_symbol_tickers()
 
             # Request market data for all contracts
             logger.info(

@@ -176,6 +176,10 @@ class ContractPrioritizer:
         contract, expiry_options, stock_price: float
     ) -> ContractPriority:
         """Get priority for a specific contract"""
+        # Check if this is a stock contract (no lastTradeDateOrContractMonth)
+        if hasattr(contract, "secType") and contract.secType == "STK":
+            return ContractPriority.CRITICAL  # Stock price is critical for arbitrage
+
         priority_map = ContractPrioritizer.categorize_by_moneyness(
             expiry_options, stock_price
         )
@@ -282,7 +286,7 @@ def should_continue_waiting(
         return False, "hard_timeout"
 
     # AGGRESSIVE: Stop immediately if we have massive data overflow
-    if completion_pct >= 3500:  # Only stop at extreme overflow (35x expected data)
+    if completion_pct >= 120:  # Only stop at extreme overflow (35x expected data)
         logger.info(
             f"[{metrics.symbol}] Data overflow detected: {completion_pct:.0f}% completion - stopping immediately"
         )

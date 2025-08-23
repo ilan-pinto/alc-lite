@@ -1472,7 +1472,8 @@ class TestArbitrageIntegration:
                     symbol_ticker_count = 0
                     for ticker in complete_tickers:
                         if hasattr(ticker.contract, "conId"):
-                            contract_ticker[ticker.contract.conId] = ticker
+                            # Use composite key (symbol, conId) as expected by SFR executor
+                            contract_ticker[(symbol, ticker.contract.conId)] = ticker
                             symbol_ticker_count += 1
                     print(
                         f"   Added {symbol_ticker_count} tickers for {symbol} (total global: {len(contract_ticker)})"
