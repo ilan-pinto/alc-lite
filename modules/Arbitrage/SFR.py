@@ -1731,7 +1731,7 @@ class SFR(ArbitrageClass):
 
                 # Reset for next iteration
                 contract_ticker = {}
-                await asyncio.sleep(5)  # Reduced wait time for faster cycles
+                await asyncio.sleep(2)  # Reduced wait time for faster cycles
         except Exception as e:
             logger.error(f"Error in scan loop: {str(e)}")
         finally:
@@ -1830,7 +1830,7 @@ class SFR(ArbitrageClass):
 
             # Prepare for parallel contract qualification
             valid_expiries = self.filter_expirations_within_range(
-                chain.expirations, 19, 45
+                chain.expirations, 15, 45
             )
 
             if len(valid_expiries) == 0:
@@ -2026,7 +2026,7 @@ class SFR(ArbitrageClass):
                 cost_limit=self.cost_limit,
                 start_time=time.time(),
                 quantity=quantity,
-                data_timeout=45.0,  # Give more time for data collection
+                data_timeout=5.0,  # Give more time for data collection
             )
 
             # Store executor and request market data for all contracts
