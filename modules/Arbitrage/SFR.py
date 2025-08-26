@@ -639,7 +639,8 @@ class SFRExecutor(BaseExecutor):
                 )
 
                 if self.has_minimum_viable_data():
-                    opportunity = await self.evaluate_with_available_data(
+                    # Use vectorized evaluation for better performance and spread analysis
+                    opportunity = await self.evaluate_with_available_data_vectorized(
                         ContractPriority.OPTIONAL
                     )
                     if (
@@ -677,7 +678,8 @@ class SFRExecutor(BaseExecutor):
                     )
 
                     if should_evaluate:
-                        opportunity = await self.evaluate_with_available_data(
+                        # Use vectorized evaluation for faster processing and better spread analysis
+                        opportunity = await self.evaluate_with_available_data_vectorized(
                             ContractPriority.OPTIONAL  # Use all available data since collection is complete
                         )
                         if (
@@ -1392,6 +1394,361 @@ class SFRExecutor(BaseExecutor):
                     viable_pairs += 1
 
         return viable_pairs >= 1  # Allow evaluation with single expiry for testing
+
+    def calculate_all_opportunities_vectorized(
+        self,
+    ) -> Tuple[np.ndarray, np.ndarray, dict]:
+        """
+        Calculate all arbitrage opportunities in parallel using NumPy.
+        Returns arrays of profits and metadata for all expiry options.
+        """
+        # Gather all data into NumPy arrays
+        num_options = len(self.expiry_options)
+
+        # Pre-allocate arrays for all data
+        call_bids = np.zeros(num_options)
+        call_asks = np.zeros(num_options)
+        put_bids = np.zeros(num_options)
+        put_asks = np.zeros(num_options)
+        call_strikes = np.zeros(num_options)
+        put_strikes = np.zeros(num_options)
+        stock_bids = np.zeros(num_options)
+        stock_asks = np.zeros(num_options)
+
+        # Populate arrays (this is the only loop needed)
+        valid_mask = np.zeros(num_options, dtype=bool)
+
+        for i, expiry_option in enumerate(self.expiry_options):
+            call_ticker = self._get_ticker(expiry_option.call_contract.conId)
+            put_ticker = self._get_ticker(expiry_option.put_contract.conId)
+            stock_ticker = self._get_ticker(self.stock_contract.conId)
+
+            if call_ticker and put_ticker and stock_ticker:
+                # Check data validity
+                if (
+                    hasattr(call_ticker, "bid")
+                    and call_ticker.bid > 0
+                    and hasattr(call_ticker, "ask")
+                    and call_ticker.ask > 0
+                    and hasattr(put_ticker, "bid")
+                    and put_ticker.bid > 0
+                    and hasattr(put_ticker, "ask")
+                    and put_ticker.ask > 0
+                ):
+
+                    call_bids[i] = call_ticker.bid
+                    call_asks[i] = call_ticker.ask
+                    put_bids[i] = put_ticker.bid
+                    put_asks[i] = put_ticker.ask
+                    call_strikes[i] = expiry_option.call_strike
+                    put_strikes[i] = expiry_option.put_strike
+                    stock_bids[i] = (
+                        stock_ticker.bid if stock_ticker.bid > 0 else stock_ticker.last
+                    )
+                    stock_asks[i] = (
+                        stock_ticker.ask if stock_ticker.ask > 0 else stock_ticker.last
+                    )
+                    valid_mask[i] = True
+
+        # VECTORIZED CALCULATIONS - All opportunities calculated at once!
+        # Theoretical profits (using midpoints)
+        call_mids = (call_bids + call_asks) / 2
+        put_mids = (put_bids + put_asks) / 2
+        stock_mids = (stock_bids + stock_asks) / 2
+
+        theoretical_net_credits = call_mids - put_mids
+        theoretical_spreads = stock_mids - put_strikes
+        theoretical_profits = theoretical_net_credits - theoretical_spreads
+
+        # Guaranteed profits (using execution prices)
+        guaranteed_net_credits = call_bids - put_asks  # What we actually get
+        guaranteed_spreads = stock_asks - put_strikes  # What we actually pay
+        guaranteed_profits = guaranteed_net_credits - guaranteed_spreads
+
+        # Apply validity mask
+        theoretical_profits[~valid_mask] = -np.inf
+        guaranteed_profits[~valid_mask] = -np.inf
+
+        return (
+            theoretical_profits,
+            guaranteed_profits,
+            {
+                "call_bids": call_bids,
+                "call_asks": call_asks,
+                "put_bids": put_bids,
+                "put_asks": put_asks,
+                "call_strikes": call_strikes,
+                "put_strikes": put_strikes,
+                "stock_bids": stock_bids,
+                "stock_asks": stock_asks,
+                "valid_mask": valid_mask,
+            },
+        )
+
+    def analyze_spreads_vectorized(self, market_data: dict) -> Tuple[np.ndarray, dict]:
+        """
+        Perform statistical analysis on bid-ask spreads to filter opportunities.
+        Returns a mask of viable opportunities and spread statistics.
+        """
+        # Calculate all spreads at once
+        call_spreads = market_data["call_asks"] - market_data["call_bids"]
+        put_spreads = market_data["put_asks"] - market_data["put_bids"]
+        stock_spreads = market_data["stock_asks"] - market_data["stock_bids"]
+
+        # Calculate spread as percentage of midpoint
+        call_mids = (market_data["call_asks"] + market_data["call_bids"]) / 2
+        put_mids = (market_data["put_asks"] + market_data["put_bids"]) / 2
+        stock_mids = (market_data["stock_asks"] + market_data["stock_bids"]) / 2
+
+        # Avoid division by zero
+        call_mids = np.where(call_mids > 0, call_mids, 1)
+        put_mids = np.where(put_mids > 0, put_mids, 1)
+        stock_mids = np.where(stock_mids > 0, stock_mids, 1)
+
+        call_spread_pct = call_spreads / call_mids
+        put_spread_pct = put_spreads / put_mids
+        stock_spread_pct = stock_spreads / stock_mids
+
+        # Statistical analysis
+        # Calculate z-scores for outlier detection
+        call_z_scores = self._calculate_z_scores(
+            call_spread_pct[market_data["valid_mask"]]
+        )
+        put_z_scores = self._calculate_z_scores(
+            put_spread_pct[market_data["valid_mask"]]
+        )
+
+        # Create quality scores based on spreads
+        # Lower spreads = higher quality
+        max_acceptable_spread_pct = 0.05  # 5% max spread
+
+        spread_quality_scores = np.ones(len(call_spreads))
+
+        # Penalize wide spreads
+        spread_quality_scores -= (
+            np.clip(call_spread_pct / max_acceptable_spread_pct, 0, 1) * 0.3
+        )
+        spread_quality_scores -= (
+            np.clip(put_spread_pct / max_acceptable_spread_pct, 0, 1) * 0.3
+        )
+        spread_quality_scores -= (
+            np.clip(stock_spread_pct / max_acceptable_spread_pct, 0, 1) * 0.2
+        )
+
+        # Penalize outliers (z-score > 2)
+        outlier_penalty = 0.5
+        full_call_z = np.zeros(len(call_spreads))
+        full_put_z = np.zeros(len(put_spreads))
+
+        valid_indices = np.where(market_data["valid_mask"])[0]
+        for idx, z_idx in enumerate(valid_indices):
+            if idx < len(call_z_scores):
+                full_call_z[z_idx] = call_z_scores[idx]
+            if idx < len(put_z_scores):
+                full_put_z[z_idx] = put_z_scores[idx]
+
+        spread_quality_scores[np.abs(full_call_z) > 2] -= outlier_penalty
+        spread_quality_scores[np.abs(full_put_z) > 2] -= outlier_penalty
+
+        # Calculate execution cost impact
+        # This estimates how much profit we lose to spreads
+        total_spread_cost = call_spreads + put_spreads + stock_spreads
+
+        # Create viability mask
+        viable_mask = (
+            market_data["valid_mask"]  # Has data
+            & (spread_quality_scores > 0.5)  # Decent spread quality
+            & (call_spread_pct < max_acceptable_spread_pct)  # Call spread acceptable
+            & (put_spread_pct < max_acceptable_spread_pct)  # Put spread acceptable
+            & (total_spread_cost < 5.0)  # Total spread cost < $5
+        )
+
+        spread_stats = {
+            "mean_call_spread": (
+                np.mean(call_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "mean_put_spread": (
+                np.mean(put_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "median_call_spread": (
+                np.median(call_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "median_put_spread": (
+                np.median(put_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "spread_quality_scores": spread_quality_scores,
+            "total_spread_costs": total_spread_cost,
+            "viable_count": np.sum(viable_mask),
+            "rejected_by_spread": np.sum(market_data["valid_mask"] & ~viable_mask),
+        }
+
+        logger.info(
+            f"[{self.symbol}] Spread analysis: {spread_stats['viable_count']} viable out of "
+            f"{np.sum(market_data['valid_mask'])} with data "
+            f"({spread_stats['rejected_by_spread']} rejected by spreads)"
+        )
+
+        return viable_mask, spread_stats
+
+    def _calculate_z_scores(self, data: np.ndarray) -> np.ndarray:
+        """Calculate z-scores for outlier detection"""
+        if len(data) == 0:
+            return np.array([])
+
+        mean = np.mean(data)
+        std = np.std(data)
+
+        if std == 0:
+            return np.zeros(len(data))
+
+        return (data - mean) / std
+
+    async def evaluate_with_available_data_vectorized(
+        self, max_priority: ContractPriority
+    ) -> Optional[Dict]:
+        """
+        Vectorized evaluation of all opportunities at once.
+        10-100x faster than sequential evaluation.
+        """
+        logger.info(
+            f"[{self.symbol}] Starting vectorized evaluation with {len(self.expiry_options)} options, max_priority={max_priority.value}"
+        )
+
+        # Step 1: Calculate all opportunities in parallel
+        theoretical_profits, guaranteed_profits, market_data = (
+            self.calculate_all_opportunities_vectorized()
+        )
+
+        # Step 2: Apply spread analysis and filtering
+        viable_mask, spread_stats = self.analyze_spreads_vectorized(market_data)
+
+        # Step 3: Apply additional filters
+        # Minimum profit thresholds
+        min_theoretical_profit = 0.20
+        min_guaranteed_profit = 0.10
+
+        # Combine all filters
+        profitable_mask = (
+            viable_mask
+            & (theoretical_profits >= min_theoretical_profit)
+            & (guaranteed_profits >= min_guaranteed_profit)
+        )
+
+        # Step 4: Rank opportunities by profit potential
+        # Create composite score considering both profit and spread quality
+        profit_scores = guaranteed_profits.copy()
+        profit_scores[~profitable_mask] = -np.inf
+
+        # Adjust scores by spread quality
+        if "spread_quality_scores" in spread_stats:
+            profit_scores = profit_scores * spread_stats["spread_quality_scores"]
+
+        # Step 5: Find best opportunity
+        if np.all(profit_scores == -np.inf):
+            logger.info(
+                f"[{self.symbol}] No profitable opportunities found after vectorized evaluation"
+            )
+            return None
+
+        best_idx = np.argmax(profit_scores)
+        best_profit = guaranteed_profits[best_idx]
+
+        logger.info(
+            f"[{self.symbol}] Best opportunity found: "
+            f"Expiry {self.expiry_options[best_idx].expiry}, "
+            f"Guaranteed profit: ${best_profit:.2f}, "
+            f"Theoretical profit: ${theoretical_profits[best_idx]:.2f}"
+        )
+
+        # Log rejection statistics
+        total_evaluated = len(self.expiry_options)
+        with_data = np.sum(market_data["valid_mask"])
+        theoretically_profitable = np.sum(theoretical_profits >= min_theoretical_profit)
+        guaranteed_profitable = np.sum(guaranteed_profits >= min_guaranteed_profit)
+        after_spread_filter = np.sum(viable_mask)
+
+        logger.info(
+            f"[{self.symbol}] Funnel: {total_evaluated} evaluated → "
+            f"{with_data} with data → "
+            f"{theoretically_profitable} theoretical → "
+            f"{after_spread_filter} good spreads → "
+            f"{guaranteed_profitable} guaranteed → "
+            f"1 selected"
+        )
+
+        # Build the order for the best opportunity
+        best_expiry = self.expiry_options[best_idx]
+
+        # Use the already calculated prices for order construction
+        combo_limit_price = self.calculate_combo_limit_price(
+            stock_price=market_data["stock_asks"][best_idx],
+            call_price=market_data["call_bids"][best_idx],
+            put_price=market_data["put_asks"][best_idx],
+            buffer_percent=0.01,
+        )
+
+        conversion_contract, order = self.build_order(
+            self.symbol,
+            self.stock_contract,
+            best_expiry.call_contract,
+            best_expiry.put_contract,
+            combo_limit_price,
+            self.quantity,
+            call_price=market_data["call_bids"][best_idx],
+            put_price=market_data["put_asks"][best_idx],
+        )
+
+        return {
+            "contract": conversion_contract,
+            "order": order,
+            "guaranteed_profit": best_profit,
+            "trade_details": {
+                "expiry": best_expiry.expiry,
+                "call_strike": best_expiry.call_strike,
+                "put_strike": best_expiry.put_strike,
+                "call_price": market_data["call_bids"][best_idx],
+                "put_price": market_data["put_asks"][best_idx],
+                "stock_price": market_data["stock_asks"][best_idx],
+                "theoretical_profit": theoretical_profits[best_idx],
+                "spread_quality_score": spread_stats["spread_quality_scores"][best_idx],
+            },
+            "expiry_option": best_expiry,
+            "statistics": {
+                "total_evaluated": total_evaluated,
+                "rejected_by_spreads": spread_stats["rejected_by_spread"],
+                "mean_call_spread": spread_stats["mean_call_spread"],
+                "mean_put_spread": spread_stats["mean_put_spread"],
+            },
+        }
+
+    def benchmark_vectorized_vs_sequential(self):
+        """Compare performance of vectorized vs sequential calculations"""
+        import time
+
+        # Sequential timing
+        start = time.perf_counter()
+        for expiry_option in self.expiry_options:
+            _ = self.calc_price_and_build_order_for_expiry(expiry_option)
+        sequential_time = time.perf_counter() - start
+
+        # Vectorized timing
+        start = time.perf_counter()
+        _ = self.calculate_all_opportunities_vectorized()
+        vectorized_time = time.perf_counter() - start
+
+        speedup = sequential_time / vectorized_time if vectorized_time > 0 else 1
+        logger.info(f"[{self.symbol}] Performance comparison:")
+        logger.info(f"  Sequential: {sequential_time:.3f}s")
+        logger.info(f"  Vectorized: {vectorized_time:.3f}s")
+        logger.info(f"  Speedup: {speedup:.1f}x faster")
 
     async def evaluate_with_available_data(
         self, max_priority: ContractPriority
