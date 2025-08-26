@@ -2143,6 +2143,25 @@ class SFR(ArbitrageClass):
         # Stock price is above all strikes
         return len(sorted_strikes) - 1
 
+    def get_dynamic_strike_width(self, stock_price: float) -> float:
+        """
+        Get dynamic strike width based on stock price.
+
+        Args:
+            stock_price: Current stock price
+
+        Returns:
+            - 2.5 for stocks < $100
+            - 5.0 for stocks $100-500
+            - 10.0 for stocks > $500
+        """
+        if stock_price < 100:
+            return 2.5
+        elif stock_price <= 500:
+            return 5.0
+        else:
+            return 10.0
+
     async def scan_sfr(self, symbol, quantity=1, profit_target=0.50, cost_limit=120.0):
         """
         Scan for SFR opportunities for a specific symbol.
