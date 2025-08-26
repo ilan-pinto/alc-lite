@@ -473,9 +473,9 @@ class SFRExecutor(BaseExecutor):
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
-        elif min_profit < 0.05:  # Ensure minimum profit threshold (5 cents)
+        elif min_profit < 0.03:  # Lowered minimum profit threshold to 3 cents
             logger.info(
-                f"[{symbol}] min_profit[{min_profit}] < 0.05 - below minimum threshold"
+                f"[{symbol}] min_profit[{min_profit:.2f}] < 0.03 - below minimum threshold"
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
@@ -1014,7 +1014,7 @@ class SFRExecutor(BaseExecutor):
             )
 
             # Quick reject if no theoretical opportunity
-            if theoretical_profit < 0.20:  # 20 cents minimum theoretical
+            if theoretical_profit < 0.10:  # Lowered to 10 cents minimum theoretical
                 logger.warning(
                     f"[{self.symbol}] No theoretical arbitrage for {expiry_option.expiry}: "
                     f"profit=${theoretical_profit:.2f}"
@@ -1080,7 +1080,7 @@ class SFRExecutor(BaseExecutor):
             )
 
             # Must have guaranteed profit after execution
-            if guaranteed_profit < 0.10:  # 10 cents minimum guaranteed
+            if guaranteed_profit < 0.05:  # Lowered to 5 cents minimum guaranteed
                 logger.info(
                     f"[{self.symbol}] Theoretical profit ${theoretical_profit:.2f} "
                     f"but guaranteed only ${guaranteed_profit:.2f} - rejecting"
@@ -1395,6 +1395,25 @@ class SFRExecutor(BaseExecutor):
 
         return viable_pairs >= 1  # Allow evaluation with single expiry for testing
 
+    def get_dynamic_strike_width(self, stock_price: float) -> float:
+        """
+        Get dynamic strike width based on stock price.
+
+        Args:
+            stock_price: Current stock price
+
+        Returns:
+            - 2.5 for stocks < $100
+            - 5.0 for stocks $100-500
+            - 10.0 for stocks > $500
+        """
+        if stock_price < 100:
+            return 2.5
+        elif stock_price <= 500:
+            return 5.0
+        else:
+            return 10.0
+
     def calculate_all_opportunities_vectorized(
         self,
     ) -> Tuple[np.ndarray, np.ndarray, dict]:
@@ -1631,9 +1650,9 @@ class SFRExecutor(BaseExecutor):
         viable_mask, spread_stats = self.analyze_spreads_vectorized(market_data)
 
         # Step 3: Apply additional filters
-        # Minimum profit thresholds
-        min_theoretical_profit = 0.20
-        min_guaranteed_profit = 0.10
+        # Minimum profit thresholds (lowered for more opportunities)
+        min_theoretical_profit = 0.10  # Lowered from 0.20 to capture more opportunities
+        min_guaranteed_profit = 0.05  # Lowered from 0.10 for more executable trades
 
         # Combine all filters
         profitable_mask = (
@@ -2165,10 +2184,40 @@ class SFR(ArbitrageClass):
             # Request options chain
             chain = await self._get_chain(stock, exchange="SMART")
 
-            # Define parameters for the options (expiry and strike price)
-            valid_strikes = [
-                s for s in chain.strikes if s <= stock_price and s > stock_price - 25
-            ]  # Example strike price
+            # Get dynamic strike width based on stock price
+            strike_width = self.get_dynamic_strike_width(stock_price)
+
+            # Filter strikes intelligently based on price level
+            # For lower priced stocks, use tighter range
+            # For higher priced stocks, allow wider range
+            if stock_price < 100:
+                # For stocks < $100: look for strikes within $15 of stock price
+                valid_strikes = [
+                    s
+                    for s in chain.strikes
+                    if abs(s - stock_price) <= 15
+                    and s % strike_width == 0  # Ensure strikes follow proper width
+                ]
+            elif stock_price <= 500:
+                # For stocks $100-500: look for strikes within $30 of stock price
+                valid_strikes = [
+                    s
+                    for s in chain.strikes
+                    if abs(s - stock_price) <= 30
+                    and s % strike_width == 0  # Ensure strikes follow proper width
+                ]
+            else:
+                # For stocks > $500: look for strikes within $50 of stock price
+                valid_strikes = [
+                    s
+                    for s in chain.strikes
+                    if abs(s - stock_price) <= 50
+                    and s % strike_width == 0  # Ensure strikes follow proper width
+                ]
+
+            logger.info(
+                f"[{symbol}] Using strike width ${strike_width:.1f} for stock price ${stock_price:.2f}"
+            )
 
             if len(valid_strikes) < 2:
                 logger.info(
@@ -2279,6 +2328,12 @@ class SFR(ArbitrageClass):
             logger.info(
                 f"[{symbol}] Testing {len(valid_strike_pairs)} conversion-optimized strike combinations "
                 f"(stock position: {stock_position}, price: ${stock_price:.2f})"
+            )
+
+            # Log configuration being used for better visibility
+            logger.info(
+                f"[{symbol}] Configuration: strike_width=${strike_width:.1f}, "
+                f"min_theoretical=$0.10, min_guaranteed=$0.05, min_absolute=$0.03"
             )
             if priority_combinations:
                 logger.info(
