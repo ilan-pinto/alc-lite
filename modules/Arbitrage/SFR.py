@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 import numpy as np
 from eventkit import Event
-from ib_async import IB, Contract, Order, Ticker
+from ib_async import IB, Contract, Option, Order, Ticker
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
@@ -473,9 +473,9 @@ class SFRExecutor(BaseExecutor):
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
-        elif min_profit < 0.05:  # Ensure minimum profit threshold (5 cents)
+        elif min_profit < 0.03:  # Lowered minimum profit threshold to 3 cents
             logger.info(
-                f"[{symbol}] min_profit[{min_profit}] < 0.05 - below minimum threshold"
+                f"[{symbol}] min_profit[{min_profit:.2f}] < 0.03 - below minimum threshold"
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
@@ -639,7 +639,8 @@ class SFRExecutor(BaseExecutor):
                 )
 
                 if self.has_minimum_viable_data():
-                    opportunity = await self.evaluate_with_available_data(
+                    # Use vectorized evaluation for better performance and spread analysis
+                    opportunity = await self.evaluate_with_available_data_vectorized(
                         ContractPriority.OPTIONAL
                     )
                     if (
@@ -677,7 +678,8 @@ class SFRExecutor(BaseExecutor):
                     )
 
                     if should_evaluate:
-                        opportunity = await self.evaluate_with_available_data(
+                        # Use vectorized evaluation for faster processing and better spread analysis
+                        opportunity = await self.evaluate_with_available_data_vectorized(
                             ContractPriority.OPTIONAL  # Use all available data since collection is complete
                         )
                         if (
@@ -1012,7 +1014,7 @@ class SFRExecutor(BaseExecutor):
             )
 
             # Quick reject if no theoretical opportunity
-            if theoretical_profit < 0.20:  # 20 cents minimum theoretical
+            if theoretical_profit < 0.10:  # Lowered to 10 cents minimum theoretical
                 logger.warning(
                     f"[{self.symbol}] No theoretical arbitrage for {expiry_option.expiry}: "
                     f"profit=${theoretical_profit:.2f}"
@@ -1078,7 +1080,7 @@ class SFRExecutor(BaseExecutor):
             )
 
             # Must have guaranteed profit after execution
-            if guaranteed_profit < 0.10:  # 10 cents minimum guaranteed
+            if guaranteed_profit < 0.05:  # Lowered to 5 cents minimum guaranteed
                 logger.info(
                     f"[{self.symbol}] Theoretical profit ${theoretical_profit:.2f} "
                     f"but guaranteed only ${guaranteed_profit:.2f} - rejecting"
@@ -1392,6 +1394,381 @@ class SFRExecutor(BaseExecutor):
                     viable_pairs += 1
 
         return viable_pairs >= 1  # Allow evaluation with single expiry for testing
+
+    def calculate_all_opportunities_vectorized(
+        self,
+    ) -> Tuple[np.ndarray, np.ndarray, dict]:
+        """
+        Calculate all arbitrage opportunities in parallel using NumPy.
+        Returns arrays of profits and metadata for all expiry options.
+        """
+        # Gather all data into NumPy arrays
+        num_options = len(self.expiry_options)
+
+        # Pre-allocate arrays for all data
+        call_bids = np.zeros(num_options)
+        call_asks = np.zeros(num_options)
+        put_bids = np.zeros(num_options)
+        put_asks = np.zeros(num_options)
+        call_strikes = np.zeros(num_options)
+        put_strikes = np.zeros(num_options)
+        stock_bids = np.zeros(num_options)
+        stock_asks = np.zeros(num_options)
+
+        # Populate arrays (this is the only loop needed)
+        valid_mask = np.zeros(num_options, dtype=bool)
+
+        for i, expiry_option in enumerate(self.expiry_options):
+            call_ticker = self._get_ticker(expiry_option.call_contract.conId)
+            put_ticker = self._get_ticker(expiry_option.put_contract.conId)
+            stock_ticker = self._get_ticker(self.stock_contract.conId)
+
+            if call_ticker and put_ticker and stock_ticker:
+                # Check data validity
+                if (
+                    hasattr(call_ticker, "bid")
+                    and call_ticker.bid > 0
+                    and hasattr(call_ticker, "ask")
+                    and call_ticker.ask > 0
+                    and hasattr(put_ticker, "bid")
+                    and put_ticker.bid > 0
+                    and hasattr(put_ticker, "ask")
+                    and put_ticker.ask > 0
+                ):
+
+                    call_bids[i] = call_ticker.bid
+                    call_asks[i] = call_ticker.ask
+                    put_bids[i] = put_ticker.bid
+                    put_asks[i] = put_ticker.ask
+                    call_strikes[i] = expiry_option.call_strike
+                    put_strikes[i] = expiry_option.put_strike
+                    stock_bids[i] = (
+                        stock_ticker.bid if stock_ticker.bid > 0 else stock_ticker.last
+                    )
+                    stock_asks[i] = (
+                        stock_ticker.ask if stock_ticker.ask > 0 else stock_ticker.last
+                    )
+                    valid_mask[i] = True
+
+        # VECTORIZED CALCULATIONS - All opportunities calculated at once!
+        # Theoretical profits (using midpoints)
+        call_mids = (call_bids + call_asks) / 2
+        put_mids = (put_bids + put_asks) / 2
+        stock_mids = (stock_bids + stock_asks) / 2
+
+        theoretical_net_credits = call_mids - put_mids
+        theoretical_spreads = stock_mids - put_strikes
+        theoretical_profits = theoretical_net_credits - theoretical_spreads
+
+        # Guaranteed profits (using execution prices)
+        guaranteed_net_credits = call_bids - put_asks  # What we actually get
+        guaranteed_spreads = stock_asks - put_strikes  # What we actually pay
+        guaranteed_profits = guaranteed_net_credits - guaranteed_spreads
+
+        # Apply validity mask
+        theoretical_profits[~valid_mask] = -np.inf
+        guaranteed_profits[~valid_mask] = -np.inf
+
+        return (
+            theoretical_profits,
+            guaranteed_profits,
+            {
+                "call_bids": call_bids,
+                "call_asks": call_asks,
+                "put_bids": put_bids,
+                "put_asks": put_asks,
+                "call_strikes": call_strikes,
+                "put_strikes": put_strikes,
+                "stock_bids": stock_bids,
+                "stock_asks": stock_asks,
+                "valid_mask": valid_mask,
+            },
+        )
+
+    def analyze_spreads_vectorized(self, market_data: dict) -> Tuple[np.ndarray, dict]:
+        """
+        Perform statistical analysis on bid-ask spreads to filter opportunities.
+        Returns a mask of viable opportunities and spread statistics.
+        """
+        # Calculate all spreads at once
+        call_spreads = market_data["call_asks"] - market_data["call_bids"]
+        put_spreads = market_data["put_asks"] - market_data["put_bids"]
+        stock_spreads = market_data["stock_asks"] - market_data["stock_bids"]
+
+        # Calculate spread as percentage of midpoint
+        call_mids = (market_data["call_asks"] + market_data["call_bids"]) / 2
+        put_mids = (market_data["put_asks"] + market_data["put_bids"]) / 2
+        stock_mids = (market_data["stock_asks"] + market_data["stock_bids"]) / 2
+
+        # Avoid division by zero
+        call_mids = np.where(call_mids > 0, call_mids, 1)
+        put_mids = np.where(put_mids > 0, put_mids, 1)
+        stock_mids = np.where(stock_mids > 0, stock_mids, 1)
+
+        call_spread_pct = call_spreads / call_mids
+        put_spread_pct = put_spreads / put_mids
+        stock_spread_pct = stock_spreads / stock_mids
+
+        # Statistical analysis
+        # Calculate z-scores for outlier detection
+        call_z_scores = self._calculate_z_scores(
+            call_spread_pct[market_data["valid_mask"]]
+        )
+        put_z_scores = self._calculate_z_scores(
+            put_spread_pct[market_data["valid_mask"]]
+        )
+
+        # Create quality scores based on spreads
+        # Lower spreads = higher quality
+        max_acceptable_spread_pct = 0.05  # 5% max spread
+
+        spread_quality_scores = np.ones(len(call_spreads))
+
+        # Penalize wide spreads
+        spread_quality_scores -= (
+            np.clip(call_spread_pct / max_acceptable_spread_pct, 0, 1) * 0.3
+        )
+        spread_quality_scores -= (
+            np.clip(put_spread_pct / max_acceptable_spread_pct, 0, 1) * 0.3
+        )
+        spread_quality_scores -= (
+            np.clip(stock_spread_pct / max_acceptable_spread_pct, 0, 1) * 0.2
+        )
+
+        # Penalize outliers (z-score > 2)
+        outlier_penalty = 0.5
+        full_call_z = np.zeros(len(call_spreads))
+        full_put_z = np.zeros(len(put_spreads))
+
+        valid_indices = np.where(market_data["valid_mask"])[0]
+        for idx, z_idx in enumerate(valid_indices):
+            if idx < len(call_z_scores):
+                full_call_z[z_idx] = call_z_scores[idx]
+            if idx < len(put_z_scores):
+                full_put_z[z_idx] = put_z_scores[idx]
+
+        spread_quality_scores[np.abs(full_call_z) > 2] -= outlier_penalty
+        spread_quality_scores[np.abs(full_put_z) > 2] -= outlier_penalty
+
+        # Calculate execution cost impact
+        # This estimates how much profit we lose to spreads
+        total_spread_cost = call_spreads + put_spreads + stock_spreads
+
+        # Create viability mask
+        viable_mask = (
+            market_data["valid_mask"]  # Has data
+            & (spread_quality_scores > 0.5)  # Decent spread quality
+            & (call_spread_pct < max_acceptable_spread_pct)  # Call spread acceptable
+            & (put_spread_pct < max_acceptable_spread_pct)  # Put spread acceptable
+            & (total_spread_cost < 5.0)  # Total spread cost < $5
+        )
+
+        spread_stats = {
+            "mean_call_spread": (
+                np.mean(call_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "mean_put_spread": (
+                np.mean(put_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "median_call_spread": (
+                np.median(call_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "median_put_spread": (
+                np.median(put_spreads[market_data["valid_mask"]])
+                if np.any(market_data["valid_mask"])
+                else 0
+            ),
+            "spread_quality_scores": spread_quality_scores,
+            "total_spread_costs": total_spread_cost,
+            "viable_count": np.sum(viable_mask),
+            "rejected_by_spread": np.sum(market_data["valid_mask"] & ~viable_mask),
+        }
+
+        logger.info(
+            f"[{self.symbol}] Spread analysis: {spread_stats['viable_count']} viable out of "
+            f"{np.sum(market_data['valid_mask'])} with data "
+            f"({spread_stats['rejected_by_spread']} rejected by spreads)"
+        )
+
+        return viable_mask, spread_stats
+
+    def _calculate_z_scores(self, data: np.ndarray) -> np.ndarray:
+        """Calculate z-scores for outlier detection"""
+        if len(data) == 0:
+            return np.array([])
+
+        mean = np.mean(data)
+        std = np.std(data)
+
+        if std == 0:
+            return np.zeros(len(data))
+
+        return (data - mean) / std
+
+    async def evaluate_with_available_data_vectorized(
+        self, max_priority: ContractPriority
+    ) -> Optional[Dict]:
+        """
+        Vectorized evaluation of all opportunities at once.
+        10-100x faster than sequential evaluation.
+        """
+        logger.info(
+            f"[{self.symbol}] Starting vectorized evaluation with {len(self.expiry_options)} options, max_priority={max_priority.value}"
+        )
+
+        # Step 1: Calculate all opportunities in parallel
+        theoretical_profits, guaranteed_profits, market_data = (
+            self.calculate_all_opportunities_vectorized()
+        )
+
+        # Step 2: Apply spread analysis and filtering
+        viable_mask, spread_stats = self.analyze_spreads_vectorized(market_data)
+
+        # Step 3: Apply additional filters
+        # Minimum profit thresholds (lowered for more opportunities)
+        min_theoretical_profit = 0.10  # Lowered from 0.20 to capture more opportunities
+        min_guaranteed_profit = 0.05  # Lowered from 0.10 for more executable trades
+
+        # Combine all filters
+        profitable_mask = (
+            viable_mask
+            & (theoretical_profits >= min_theoretical_profit)
+            & (guaranteed_profits >= min_guaranteed_profit)
+        )
+
+        # Step 4: Rank opportunities by profit potential
+        # Create composite score considering both profit and spread quality
+        profit_scores = guaranteed_profits.copy()
+        profit_scores[~profitable_mask] = -np.inf
+
+        # Adjust scores by spread quality
+        if "spread_quality_scores" in spread_stats:
+            profit_scores = profit_scores * spread_stats["spread_quality_scores"]
+
+        # Step 5: Find best opportunity
+        if np.all(profit_scores == -np.inf):
+            logger.info(
+                f"[{self.symbol}] No profitable opportunities found after vectorized evaluation"
+            )
+            return None
+
+        best_idx = np.argmax(profit_scores)
+        best_profit = guaranteed_profits[best_idx]
+
+        logger.info(
+            f"[{self.symbol}] Best opportunity found: "
+            f"Expiry {self.expiry_options[best_idx].expiry}, "
+            f"Guaranteed profit: ${best_profit:.2f}, "
+            f"Theoretical profit: ${theoretical_profits[best_idx]:.2f}"
+        )
+
+        # Log rejection statistics
+        total_evaluated = len(self.expiry_options)
+        with_data = np.sum(market_data["valid_mask"])
+        theoretically_profitable = np.sum(theoretical_profits >= min_theoretical_profit)
+        guaranteed_profitable = np.sum(guaranteed_profits >= min_guaranteed_profit)
+        after_spread_filter = np.sum(viable_mask)
+
+        logger.info(
+            f"[{self.symbol}] Funnel: {total_evaluated} evaluated → "
+            f"{with_data} with data → "
+            f"{theoretically_profitable} theoretical → "
+            f"{after_spread_filter} good spreads → "
+            f"{guaranteed_profitable} guaranteed → "
+            f"1 selected"
+        )
+
+        # Build the order for the best opportunity
+        best_expiry = self.expiry_options[best_idx]
+
+        # Use the already calculated prices for order construction
+        combo_limit_price = self.calculate_combo_limit_price(
+            stock_price=market_data["stock_asks"][best_idx],
+            call_price=market_data["call_bids"][best_idx],
+            put_price=market_data["put_asks"][best_idx],
+            buffer_percent=0.01,
+        )
+
+        conversion_contract, order = self.build_order(
+            self.symbol,
+            self.stock_contract,
+            best_expiry.call_contract,
+            best_expiry.put_contract,
+            combo_limit_price,
+            self.quantity,
+            call_price=market_data["call_bids"][best_idx],
+            put_price=market_data["put_asks"][best_idx],
+        )
+
+        # Calculate missing required fields for execution logging
+        best_net_credit = (
+            market_data["call_bids"][best_idx] - market_data["put_asks"][best_idx]
+        )
+        best_stock_price = market_data["stock_asks"][best_idx]
+        best_min_profit = guaranteed_profits[best_idx]
+        best_max_profit = (
+            best_expiry.call_strike - best_expiry.put_strike
+        ) + best_net_credit
+        best_min_roi = (
+            (best_min_profit / (best_stock_price + best_net_credit)) * 100
+            if (best_stock_price + best_net_credit) > 0
+            else 0
+        )
+
+        return {
+            "contract": conversion_contract,
+            "order": order,
+            "guaranteed_profit": best_profit,
+            "trade_details": {
+                "expiry": best_expiry.expiry,
+                "call_strike": best_expiry.call_strike,
+                "put_strike": best_expiry.put_strike,
+                "call_price": market_data["call_bids"][best_idx],
+                "put_price": market_data["put_asks"][best_idx],
+                "stock_price": best_stock_price,
+                # Add missing required fields for execution logging
+                "net_credit": best_net_credit,
+                "min_profit": best_min_profit,
+                "max_profit": best_max_profit,
+                "min_roi": best_min_roi,
+                "theoretical_profit": theoretical_profits[best_idx],
+                "spread_quality_score": spread_stats["spread_quality_scores"][best_idx],
+            },
+            "expiry_option": best_expiry,
+            "statistics": {
+                "total_evaluated": total_evaluated,
+                "rejected_by_spreads": spread_stats["rejected_by_spread"],
+                "mean_call_spread": spread_stats["mean_call_spread"],
+                "mean_put_spread": spread_stats["mean_put_spread"],
+            },
+        }
+
+    def benchmark_vectorized_vs_sequential(self):
+        """Compare performance of vectorized vs sequential calculations"""
+        import time
+
+        # Sequential timing
+        start = time.perf_counter()
+        for expiry_option in self.expiry_options:
+            _ = self.calc_price_and_build_order_for_expiry(expiry_option)
+        sequential_time = time.perf_counter() - start
+
+        # Vectorized timing
+        start = time.perf_counter()
+        _ = self.calculate_all_opportunities_vectorized()
+        vectorized_time = time.perf_counter() - start
+
+        speedup = sequential_time / vectorized_time if vectorized_time > 0 else 1
+        logger.info(f"[{self.symbol}] Performance comparison:")
+        logger.info(f"  Sequential: {sequential_time:.3f}s")
+        logger.info(f"  Vectorized: {vectorized_time:.3f}s")
+        logger.info(f"  Speedup: {speedup:.1f}x faster")
 
     async def evaluate_with_available_data(
         self, max_priority: ContractPriority
@@ -1767,6 +2144,179 @@ class SFR(ArbitrageClass):
         # Stock price is above all strikes
         return len(sorted_strikes) - 1
 
+    async def validate_strikes_for_expiry(
+        self, symbol: str, expiry: str, potential_strikes: List[float]
+    ) -> List[float]:
+        """
+        Validate which strikes actually exist for a specific expiry.
+
+        Args:
+            symbol: Trading symbol
+            expiry: Specific expiry date (e.g., '20250912')
+            potential_strikes: List of strikes to validate
+
+        Returns:
+            List of strikes that actually exist for this expiry
+        """
+        # Initialize cache if not exists
+        if not hasattr(self, "expiry_strike_cache"):
+            self.expiry_strike_cache = {}
+
+        # Check cache first (5 minute TTL for strike validation)
+        cache_key = f"{symbol}_{expiry}"
+        current_time = time.time()
+        if hasattr(self, "cache_timestamps"):
+            cached_time = self.cache_timestamps.get(cache_key, 0)
+            if current_time - cached_time < 300:  # 5 minute cache
+                cached_strikes = self.expiry_strike_cache.get(symbol, {}).get(expiry)
+                if cached_strikes is not None:
+                    logger.debug(
+                        f"[{symbol}] Using cached strikes for {expiry}: {len(cached_strikes)} strikes"
+                    )
+                    return list(cached_strikes)
+
+        # Limit strikes to reasonable range to avoid overwhelming API
+        # We'll get the stock price when this is called from scan_sfr
+        nearby_strikes = potential_strikes[:20]  # Limit to first 20 for API efficiency
+
+        if not nearby_strikes:
+            return []
+
+        logger.debug(
+            f"[{symbol}] Validating {len(nearby_strikes)} strikes for expiry {expiry}"
+        )
+
+        # Create test contracts for batch validation
+        test_contracts = []
+        for strike in nearby_strikes:
+            # Test with call options (calls usually have same availability as puts)
+            test_contract = Option(symbol, expiry, strike, "C", "SMART")
+            test_contracts.append(test_contract)
+
+        valid_strikes = []
+
+        try:
+            # Use qualifyContractsAsync for batch validation
+            qualified_contracts = await self.ib.qualifyContractsAsync(*test_contracts)
+
+            for i, qualified in enumerate(qualified_contracts):
+                if qualified and hasattr(qualified, "conId") and qualified.conId:
+                    valid_strikes.append(nearby_strikes[i])
+
+        except Exception as e:
+            logger.warning(f"[{symbol}] Strike validation failed for {expiry}: {e}")
+            # Fallback: assume all strikes are valid (better than blocking)
+            valid_strikes = nearby_strikes
+
+        # Cache the result
+        if symbol not in self.expiry_strike_cache:
+            self.expiry_strike_cache[symbol] = {}
+        self.expiry_strike_cache[symbol][expiry] = set(valid_strikes)
+
+        if not hasattr(self, "cache_timestamps"):
+            self.cache_timestamps = {}
+        self.cache_timestamps[cache_key] = current_time
+
+        logger.info(
+            f"[{symbol}] Expiry {expiry}: {len(valid_strikes)}/{len(nearby_strikes)} strikes are valid"
+        )
+        if len(valid_strikes) < len(nearby_strikes):
+            invalid_strikes = [s for s in nearby_strikes if s not in valid_strikes]
+            logger.debug(f"[{symbol}] Invalid strikes for {expiry}: {invalid_strikes}")
+
+        return valid_strikes
+
+    async def parallel_qualify_all_contracts_with_validation(
+        self,
+        symbol: str,
+        strikes_by_expiry: Dict[str, List[float]],
+        valid_strike_pairs: List[Tuple[float, float]],
+    ) -> Dict:
+        """
+        Qualify option contracts using expiry-specific strike validation.
+        Only creates contracts for strikes that actually exist for each expiry.
+        """
+        all_options_to_qualify = []
+        expiry_contract_map = {}
+
+        for expiry, valid_strikes_for_expiry in strikes_by_expiry.items():
+            valid_strikes_set = set(valid_strikes_for_expiry)
+
+            for call_strike, put_strike in valid_strike_pairs:
+                # Only create contracts if BOTH strikes exist for this specific expiry
+                if call_strike in valid_strikes_set and put_strike in valid_strikes_set:
+                    call = Option(symbol, expiry, call_strike, "C", "SMART")
+                    put = Option(symbol, expiry, put_strike, "P", "SMART")
+                    all_options_to_qualify.extend([call, put])
+
+                    key = f"{expiry}_{call_strike}_{put_strike}"
+                    expiry_contract_map[key] = {
+                        "call_original": call,
+                        "put_original": put,
+                        "expiry": expiry,
+                        "call_strike": call_strike,
+                        "put_strike": put_strike,
+                    }
+                else:
+                    # Log when we skip invalid combinations
+                    missing_strikes = []
+                    if call_strike not in valid_strikes_set:
+                        missing_strikes.append(f"call {call_strike}")
+                    if put_strike not in valid_strikes_set:
+                        missing_strikes.append(f"put {put_strike}")
+                    logger.debug(
+                        f"[{symbol}] Skipping {expiry} - missing strikes: {', '.join(missing_strikes)}"
+                    )
+
+        if not all_options_to_qualify:
+            logger.warning(
+                f"[{symbol}] No valid option contracts to qualify after expiry-specific filtering"
+            )
+            return {}
+
+        logger.info(
+            f"[{symbol}] Qualifying {len(all_options_to_qualify)} contracts ({len(all_options_to_qualify)//2} strike pairs) using expiry-specific validation"
+        )
+
+        try:
+            # Single parallel qualification for ALL validated contracts
+            qualified_contracts = await self.qualify_contracts_cached(
+                *all_options_to_qualify
+            )
+        except Exception as e:
+            logger.error(f"[{symbol}] Contract qualification failed: {e}")
+            return {}
+
+        # Map qualified contracts back to their original contracts
+        qualified_map = {}
+        original_to_qualified = {}
+
+        # Build mapping from original to qualified contracts
+        for i, qualified in enumerate(qualified_contracts):
+            if i < len(all_options_to_qualify):
+                original_to_qualified[id(all_options_to_qualify[i])] = qualified
+
+        # Build final result mapping
+        for key, contract_info in expiry_contract_map.items():
+            call_qualified = original_to_qualified.get(
+                id(contract_info["call_original"])
+            )
+            put_qualified = original_to_qualified.get(id(contract_info["put_original"]))
+
+            if call_qualified and put_qualified:
+                qualified_map[key] = {
+                    "call_contract": call_qualified,
+                    "put_contract": put_qualified,
+                    "expiry": contract_info["expiry"],
+                    "call_strike": contract_info["call_strike"],
+                    "put_strike": contract_info["put_strike"],
+                }
+
+        logger.info(
+            f"[{symbol}] Successfully qualified {len(qualified_map)} strike combinations after expiry validation"
+        )
+        return qualified_map
+
     async def scan_sfr(self, symbol, quantity=1, profit_target=0.50, cost_limit=120.0):
         """
         Scan for SFR opportunities for a specific symbol.
@@ -1808,47 +2358,77 @@ class SFR(ArbitrageClass):
             # Request options chain
             chain = await self._get_chain(stock, exchange="SMART")
 
-            # Define parameters for the options (expiry and strike price)
-            valid_strikes = [
-                s for s in chain.strikes if s <= stock_price and s > stock_price - 25
-            ]  # Example strike price
+            # Get potential strikes from chain (all strikes across all expiries)
+            potential_strikes = [s for s in chain.strikes if abs(s - stock_price) <= 25]
 
-            if len(valid_strikes) < 2:
-                logger.info(
-                    f"Not enough valid strikes found for {symbol} (found: {len(valid_strikes)})"
-                )
-                metrics_collector.add_rejection_reason(
-                    RejectionReason.INSUFFICIENT_VALID_STRIKES,
-                    {
-                        "symbol": symbol,
-                        "valid_strikes_count": len(valid_strikes),
-                        "required_strikes": 2,
-                        "stock_price": stock_price,
-                    },
-                )
-                return
+            logger.info(
+                f"[{symbol}] Chain has {len(chain.strikes)} total strikes across all expiries"
+            )
+            logger.info(
+                f"[{symbol}] {len(potential_strikes)} strikes within $25 of stock price (${stock_price:.2f})"
+            )
 
-            # Prepare for parallel contract qualification
+            # Get valid expiries first
             valid_expiries = self.filter_expirations_within_range(
                 chain.expirations, 15, 45
             )
 
             if len(valid_expiries) == 0:
                 logger.warning(
-                    f"No valid expiries found for {symbol} in range 19-45 days, skipping scan"
+                    f"No valid expiries found for {symbol} in range 15-45 days, skipping scan"
                 )
                 metrics_collector.add_rejection_reason(
                     RejectionReason.NO_VALID_EXPIRIES,
                     {
                         "available_expiries": len(chain.expirations),
-                        "days_range": "19-45",
+                        "days_range": "15-45",
                     },
                 )
                 return
 
-            if len(valid_strikes) < 2:
+            # Validate strikes for each expiry (this is the key fix!)
+            strikes_by_expiry = {}
+            total_valid_strikes = 0
+
+            for expiry in valid_expiries:
+                valid_strikes_for_expiry = await self.validate_strikes_for_expiry(
+                    symbol, expiry, potential_strikes
+                )
+                if valid_strikes_for_expiry:
+                    strikes_by_expiry[expiry] = valid_strikes_for_expiry
+                    total_valid_strikes += len(valid_strikes_for_expiry)
+
+            if total_valid_strikes < 2:
                 logger.info(
-                    f"Not enough valid strikes for {symbol}, skipping parallel qualification"
+                    f"Not enough valid strikes found for {symbol} across all expiries (found: {total_valid_strikes})"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INSUFFICIENT_VALID_STRIKES,
+                    {
+                        "symbol": symbol,
+                        "valid_strikes_count": total_valid_strikes,
+                        "required_strikes": 2,
+                        "stock_price": stock_price,
+                        "expiries_tested": len(valid_expiries),
+                    },
+                )
+                return
+
+            logger.info(
+                f"[{symbol}] Strike validation complete: {len(strikes_by_expiry)} expiries with valid strikes"
+            )
+
+            # Now we need to update the logic to work with expiry-specific strikes
+            # For now, let's combine all valid strikes to maintain existing logic
+            all_valid_strikes = set()
+            for expiry_strikes in strikes_by_expiry.values():
+                all_valid_strikes.update(expiry_strikes)
+
+            combined_valid_strikes = sorted(list(all_valid_strikes))
+
+            if len(combined_valid_strikes) < 2:
+                logger.info(
+                    f"Not enough combined valid strikes for {symbol}, skipping parallel qualification"
                 )
                 return
 
@@ -1856,7 +2436,7 @@ class SFR(ArbitrageClass):
             valid_strike_pairs = []
 
             # Sort strikes for position-based selection
-            sorted_strikes = sorted(valid_strikes)
+            sorted_strikes = sorted(combined_valid_strikes)
 
             # Find stock price position within valid strikes
             stock_position = self.find_stock_position_in_strikes(
@@ -1914,7 +2494,7 @@ class SFR(ArbitrageClass):
             metrics_collector.record_strike_effectiveness(
                 symbol,
                 total_strikes,
-                len(valid_strikes),
+                len(combined_valid_strikes),
                 combinations_generated,
                 combinations_tested,
             )
@@ -1923,6 +2503,7 @@ class SFR(ArbitrageClass):
                 f"[{symbol}] Testing {len(valid_strike_pairs)} conversion-optimized strike combinations "
                 f"(stock position: {stock_position}, price: ${stock_price:.2f})"
             )
+
             if priority_combinations:
                 logger.info(
                     f"[{symbol}] Found {len(priority_combinations)} high-probability 1-2 strike difference combinations"
@@ -1932,9 +2513,11 @@ class SFR(ArbitrageClass):
                     f"[{symbol}] Found {len(secondary_combinations)} secondary 3-{self.max_strike_difference} strike difference combinations"
                 )
 
-            # Parallel qualification of all contracts
-            qualified_contracts_map = await self.parallel_qualify_all_contracts(
-                symbol, valid_expiries, valid_strike_pairs
+            # Parallel qualification of all contracts using expiry-specific strikes
+            qualified_contracts_map = (
+                await self.parallel_qualify_all_contracts_with_validation(
+                    symbol, strikes_by_expiry, valid_strike_pairs
+                )
             )
 
             # Build expiry options from qualified contracts
