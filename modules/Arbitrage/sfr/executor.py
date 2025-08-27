@@ -24,7 +24,12 @@ from .constants import DEFAULT_DATA_TIMEOUT
 from .data_collector import DataCollectionCoordinator, DataCollectionManager
 from .models import ExpiryOption, OpportunityTuple
 from .opportunity_evaluator import OpportunityEvaluator
-from .utils import flush_all_handlers, get_stock_midpoint, log_funnel_summary
+from .utils import (
+    calculate_combo_limit_price,
+    flush_all_handlers,
+    get_stock_midpoint,
+    log_funnel_summary,
+)
 from .validation import MarketValidator
 
 logger = get_logger()
@@ -383,7 +388,7 @@ class SFRExecutor(BaseExecutor):
         best_expiry = self.expiry_options[best_idx]
 
         # Build the order for the best opportunity
-        combo_limit_price = self.calculate_combo_limit_price(
+        combo_limit_price = calculate_combo_limit_price(
             stock_price=vectorized_data.market_data["stock_asks"][best_idx],
             call_price=vectorized_data.market_data["call_bids"][best_idx],
             put_price=vectorized_data.market_data["put_asks"][best_idx],
