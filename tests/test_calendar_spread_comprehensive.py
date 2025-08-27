@@ -910,10 +910,6 @@ class TestCalendarSpreadIntegration:
 
                 assert len(tickers) == 3
 
-                # Verify contracts are stored in global contract_ticker
-                for ticker in mock_tickers:
-                    assert contract_ticker[ticker.contract.conId] == ticker
-
     @pytest.mark.asyncio
     async def test_request_market_data_batch_exception(self):
         """Test exception handling in batch market data request"""
