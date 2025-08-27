@@ -6,7 +6,7 @@ import pandas as pd
 from ib_async import *
 
 from modules.Arbitrage.CalendarSpread import CalendarSpread
-from modules.Arbitrage.SFR import SFR
+from modules.Arbitrage.sfr import SFR
 from modules.Arbitrage.Synthetic import ScoringConfig, Syn
 from modules.finviz_scraper import scrape_tickers_from_finviz
 

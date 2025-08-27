@@ -12,7 +12,7 @@ import logging
 import pytest
 
 from modules.Arbitrage.metrics import metrics_collector
-from modules.Arbitrage.SFR import SFR
+from modules.Arbitrage.sfr import SFR
 
 try:
     from .market_scenarios import ArbitrageTestCases, MarketScenarios
@@ -518,7 +518,7 @@ class TestArbitrageIntegration:
             # 3. The executor's arbitrage detection logic would accept this scenario
 
             # Direct verification: Test the arbitrage condition check logic for profitable scenario
-            from modules.Arbitrage.SFR import SFRExecutor
+            from modules.Arbitrage.sfr.executor import SFRExecutor
 
             # Create a minimal executor to test the check_conditions logic directly
             dummy_executor = SFRExecutor(
@@ -716,7 +716,7 @@ class TestArbitrageIntegration:
 
             # Direct verification: Test the arbitrage condition check logic
             from modules.Arbitrage.metrics import RejectionReason
-            from modules.Arbitrage.SFR import SFRExecutor
+            from modules.Arbitrage.sfr.executor import SFRExecutor
 
             # Create a minimal executor to test the check_conditions logic directly
             dummy_executor = SFRExecutor(
@@ -907,7 +907,7 @@ class TestArbitrageIntegration:
 
             # Direct verification: Test the arbitrage condition check logic
             from modules.Arbitrage.metrics import RejectionReason
-            from modules.Arbitrage.SFR import SFRExecutor
+            from modules.Arbitrage.sfr.executor import SFRExecutor
 
             # Create a minimal executor to test the check_conditions logic directly
             dummy_executor = SFRExecutor(
@@ -1127,7 +1127,7 @@ class TestArbitrageIntegration:
 
             # Direct verification: Test the arbitrage condition check logic
             from modules.Arbitrage.metrics import RejectionReason
-            from modules.Arbitrage.SFR import SFRExecutor
+            from modules.Arbitrage.sfr.executor import SFRExecutor
 
             # Create a minimal executor to test the check_conditions logic directly
             dummy_executor = SFRExecutor(
@@ -1192,7 +1192,8 @@ class TestArbitrageIntegration:
         stock_price = 131.24
 
         # Create a mock executor to test the position logic
-        from modules.Arbitrage.SFR import ExpiryOption, SFRExecutor
+        from modules.Arbitrage.sfr.executor import SFRExecutor
+        from modules.Arbitrage.sfr.models import ExpiryOption
 
         # Calculate dynamic expiry date
         valid_expiry_date = datetime.now() + timedelta(days=30)
@@ -1467,7 +1468,7 @@ class TestArbitrageIntegration:
                     # CRITICAL: Manually populate the global contract_ticker for testing
                     # The test environment doesn't automatically populate this global dictionary
                     # IMPORTANT: Accumulate tickers instead of overwriting to prevent cross-symbol contamination
-                    from modules.Arbitrage.SFR import contract_ticker
+                    from modules.Arbitrage.sfr import contract_ticker
 
                     symbol_ticker_count = 0
                     for ticker in complete_tickers:

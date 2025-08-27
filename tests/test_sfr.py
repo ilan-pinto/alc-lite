@@ -3,7 +3,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from modules.Arbitrage.SFR import ExpiryOption, SFRExecutor
+from modules.Arbitrage.sfr.executor import SFRExecutor
+from modules.Arbitrage.sfr.models import ExpiryOption
 
 
 @pytest.mark.unit
@@ -275,7 +276,7 @@ def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
 
 @pytest.mark.unit
 def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
-    from modules.Arbitrage.SFR import SFRExecutor
+    from modules.Arbitrage.sfr.executor import SFRExecutor
 
     # Create mock contracts with specific conIds
     call_contract = MagicMock(conId=2)
@@ -320,7 +321,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
 
     # Patch contract_ticker in the SFR module with stock and option data using composite keys
     monkeypatch.setattr(
-        "modules.Arbitrage.SFR.contract_ticker",
+        "modules.Arbitrage.sfr.contract_ticker",
         {
             ("TEST", 1): stock_ticker,  # Stock ticker with composite key
             ("TEST", 2): call_ticker,  # Call ticker with composite key
