@@ -369,7 +369,7 @@ class MarketScenarios:
             "AAPL", expiry, 184.5, "C", stock_price, 35
         )
         call_184_5.bid = 4.20  # High bid for selling call
-        call_184_5.ask = 4.40
+        call_184_5.ask = 4.30  # Call spread = 0.10/4.30 = 2.3% (well within 5% limit)
         call_184_5.close = 4.30
         call_184_5.volume = 450
         scenarios["AAPL"][call_184_5.contract.conId] = call_184_5
@@ -377,11 +377,12 @@ class MarketScenarios:
         put_183_5 = MarketDataGenerator.generate_option_data(
             "AAPL", expiry, 183.5, "P", stock_price, 35
         )
-        put_183_5.bid = 1.80
+        put_183_5.bid = 1.94
         put_183_5.ask = (
-            2.00  # Net credit = 4.20 - 2.00 = 2.20, Spread = 185.50 - 183.5 = 2.00
+            1.98  # Net credit = 4.20 - 1.98 = 2.22, Spread = 185.50 - 183.5 = 2.00
+            # Put spread = 0.04/1.98 = 2.0% (well within 5% limit)
         )
-        put_183_5.close = 1.90  # Min profit = 2.20 - 2.00 = 0.20 > 0 ✅ PROFITABLE!
+        put_183_5.close = 1.96  # Min profit = 2.22 - 2.00 = 0.22 > 0 ✅ PROFITABLE!
         put_183_5.volume = 380
         scenarios["AAPL"][put_183_5.contract.conId] = put_183_5
 

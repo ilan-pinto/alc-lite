@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 import numpy as np
 from eventkit import Event
-from ib_async import IB, Contract, Order, Ticker
+from ib_async import IB, Contract, Option, Order, Ticker
 
 from modules.Arbitrage.Strategy import ArbitrageClass, BaseExecutor, OrderManagerClass
 
@@ -1395,25 +1395,6 @@ class SFRExecutor(BaseExecutor):
 
         return viable_pairs >= 1  # Allow evaluation with single expiry for testing
 
-    def get_dynamic_strike_width(self, stock_price: float) -> float:
-        """
-        Get dynamic strike width based on stock price.
-
-        Args:
-            stock_price: Current stock price
-
-        Returns:
-            - 2.5 for stocks < $100
-            - 5.0 for stocks $100-500
-            - 10.0 for stocks > $500
-        """
-        if stock_price < 100:
-            return 2.5
-        elif stock_price <= 500:
-            return 5.0
-        else:
-            return 10.0
-
     def calculate_all_opportunities_vectorized(
         self,
     ) -> Tuple[np.ndarray, np.ndarray, dict]:
@@ -1725,6 +1706,21 @@ class SFRExecutor(BaseExecutor):
             put_price=market_data["put_asks"][best_idx],
         )
 
+        # Calculate missing required fields for execution logging
+        best_net_credit = (
+            market_data["call_bids"][best_idx] - market_data["put_asks"][best_idx]
+        )
+        best_stock_price = market_data["stock_asks"][best_idx]
+        best_min_profit = guaranteed_profits[best_idx]
+        best_max_profit = (
+            best_expiry.call_strike - best_expiry.put_strike
+        ) + best_net_credit
+        best_min_roi = (
+            (best_min_profit / (best_stock_price + best_net_credit)) * 100
+            if (best_stock_price + best_net_credit) > 0
+            else 0
+        )
+
         return {
             "contract": conversion_contract,
             "order": order,
@@ -1735,7 +1731,12 @@ class SFRExecutor(BaseExecutor):
                 "put_strike": best_expiry.put_strike,
                 "call_price": market_data["call_bids"][best_idx],
                 "put_price": market_data["put_asks"][best_idx],
-                "stock_price": market_data["stock_asks"][best_idx],
+                "stock_price": best_stock_price,
+                # Add missing required fields for execution logging
+                "net_credit": best_net_credit,
+                "min_profit": best_min_profit,
+                "max_profit": best_max_profit,
+                "min_roi": best_min_roi,
                 "theoretical_profit": theoretical_profits[best_idx],
                 "spread_quality_score": spread_stats["spread_quality_scores"][best_idx],
             },
@@ -2143,24 +2144,178 @@ class SFR(ArbitrageClass):
         # Stock price is above all strikes
         return len(sorted_strikes) - 1
 
-    def get_dynamic_strike_width(self, stock_price: float) -> float:
+    async def validate_strikes_for_expiry(
+        self, symbol: str, expiry: str, potential_strikes: List[float]
+    ) -> List[float]:
         """
-        Get dynamic strike width based on stock price.
+        Validate which strikes actually exist for a specific expiry.
 
         Args:
-            stock_price: Current stock price
+            symbol: Trading symbol
+            expiry: Specific expiry date (e.g., '20250912')
+            potential_strikes: List of strikes to validate
 
         Returns:
-            - 2.5 for stocks < $100
-            - 5.0 for stocks $100-500
-            - 10.0 for stocks > $500
+            List of strikes that actually exist for this expiry
         """
-        if stock_price < 100:
-            return 2.5
-        elif stock_price <= 500:
-            return 5.0
-        else:
-            return 10.0
+        # Initialize cache if not exists
+        if not hasattr(self, "expiry_strike_cache"):
+            self.expiry_strike_cache = {}
+
+        # Check cache first (5 minute TTL for strike validation)
+        cache_key = f"{symbol}_{expiry}"
+        current_time = time.time()
+        if hasattr(self, "cache_timestamps"):
+            cached_time = self.cache_timestamps.get(cache_key, 0)
+            if current_time - cached_time < 300:  # 5 minute cache
+                cached_strikes = self.expiry_strike_cache.get(symbol, {}).get(expiry)
+                if cached_strikes is not None:
+                    logger.debug(
+                        f"[{symbol}] Using cached strikes for {expiry}: {len(cached_strikes)} strikes"
+                    )
+                    return list(cached_strikes)
+
+        # Limit strikes to reasonable range to avoid overwhelming API
+        # We'll get the stock price when this is called from scan_sfr
+        nearby_strikes = potential_strikes[:20]  # Limit to first 20 for API efficiency
+
+        if not nearby_strikes:
+            return []
+
+        logger.debug(
+            f"[{symbol}] Validating {len(nearby_strikes)} strikes for expiry {expiry}"
+        )
+
+        # Create test contracts for batch validation
+        test_contracts = []
+        for strike in nearby_strikes:
+            # Test with call options (calls usually have same availability as puts)
+            test_contract = Option(symbol, expiry, strike, "C", "SMART")
+            test_contracts.append(test_contract)
+
+        valid_strikes = []
+
+        try:
+            # Use qualifyContractsAsync for batch validation
+            qualified_contracts = await self.ib.qualifyContractsAsync(*test_contracts)
+
+            for i, qualified in enumerate(qualified_contracts):
+                if qualified and hasattr(qualified, "conId") and qualified.conId:
+                    valid_strikes.append(nearby_strikes[i])
+
+        except Exception as e:
+            logger.warning(f"[{symbol}] Strike validation failed for {expiry}: {e}")
+            # Fallback: assume all strikes are valid (better than blocking)
+            valid_strikes = nearby_strikes
+
+        # Cache the result
+        if symbol not in self.expiry_strike_cache:
+            self.expiry_strike_cache[symbol] = {}
+        self.expiry_strike_cache[symbol][expiry] = set(valid_strikes)
+
+        if not hasattr(self, "cache_timestamps"):
+            self.cache_timestamps = {}
+        self.cache_timestamps[cache_key] = current_time
+
+        logger.info(
+            f"[{symbol}] Expiry {expiry}: {len(valid_strikes)}/{len(nearby_strikes)} strikes are valid"
+        )
+        if len(valid_strikes) < len(nearby_strikes):
+            invalid_strikes = [s for s in nearby_strikes if s not in valid_strikes]
+            logger.debug(f"[{symbol}] Invalid strikes for {expiry}: {invalid_strikes}")
+
+        return valid_strikes
+
+    async def parallel_qualify_all_contracts_with_validation(
+        self,
+        symbol: str,
+        strikes_by_expiry: Dict[str, List[float]],
+        valid_strike_pairs: List[Tuple[float, float]],
+    ) -> Dict:
+        """
+        Qualify option contracts using expiry-specific strike validation.
+        Only creates contracts for strikes that actually exist for each expiry.
+        """
+        all_options_to_qualify = []
+        expiry_contract_map = {}
+
+        for expiry, valid_strikes_for_expiry in strikes_by_expiry.items():
+            valid_strikes_set = set(valid_strikes_for_expiry)
+
+            for call_strike, put_strike in valid_strike_pairs:
+                # Only create contracts if BOTH strikes exist for this specific expiry
+                if call_strike in valid_strikes_set and put_strike in valid_strikes_set:
+                    call = Option(symbol, expiry, call_strike, "C", "SMART")
+                    put = Option(symbol, expiry, put_strike, "P", "SMART")
+                    all_options_to_qualify.extend([call, put])
+
+                    key = f"{expiry}_{call_strike}_{put_strike}"
+                    expiry_contract_map[key] = {
+                        "call_original": call,
+                        "put_original": put,
+                        "expiry": expiry,
+                        "call_strike": call_strike,
+                        "put_strike": put_strike,
+                    }
+                else:
+                    # Log when we skip invalid combinations
+                    missing_strikes = []
+                    if call_strike not in valid_strikes_set:
+                        missing_strikes.append(f"call {call_strike}")
+                    if put_strike not in valid_strikes_set:
+                        missing_strikes.append(f"put {put_strike}")
+                    logger.debug(
+                        f"[{symbol}] Skipping {expiry} - missing strikes: {', '.join(missing_strikes)}"
+                    )
+
+        if not all_options_to_qualify:
+            logger.warning(
+                f"[{symbol}] No valid option contracts to qualify after expiry-specific filtering"
+            )
+            return {}
+
+        logger.info(
+            f"[{symbol}] Qualifying {len(all_options_to_qualify)} contracts ({len(all_options_to_qualify)//2} strike pairs) using expiry-specific validation"
+        )
+
+        try:
+            # Single parallel qualification for ALL validated contracts
+            qualified_contracts = await self.qualify_contracts_cached(
+                *all_options_to_qualify
+            )
+        except Exception as e:
+            logger.error(f"[{symbol}] Contract qualification failed: {e}")
+            return {}
+
+        # Map qualified contracts back to their original contracts
+        qualified_map = {}
+        original_to_qualified = {}
+
+        # Build mapping from original to qualified contracts
+        for i, qualified in enumerate(qualified_contracts):
+            if i < len(all_options_to_qualify):
+                original_to_qualified[id(all_options_to_qualify[i])] = qualified
+
+        # Build final result mapping
+        for key, contract_info in expiry_contract_map.items():
+            call_qualified = original_to_qualified.get(
+                id(contract_info["call_original"])
+            )
+            put_qualified = original_to_qualified.get(id(contract_info["put_original"]))
+
+            if call_qualified and put_qualified:
+                qualified_map[key] = {
+                    "call_contract": call_qualified,
+                    "put_contract": put_qualified,
+                    "expiry": contract_info["expiry"],
+                    "call_strike": contract_info["call_strike"],
+                    "put_strike": contract_info["put_strike"],
+                }
+
+        logger.info(
+            f"[{symbol}] Successfully qualified {len(qualified_map)} strike combinations after expiry validation"
+        )
+        return qualified_map
 
     async def scan_sfr(self, symbol, quantity=1, profit_target=0.50, cost_limit=120.0):
         """
@@ -2203,77 +2358,77 @@ class SFR(ArbitrageClass):
             # Request options chain
             chain = await self._get_chain(stock, exchange="SMART")
 
-            # Get dynamic strike width based on stock price
-            strike_width = self.get_dynamic_strike_width(stock_price)
-
-            # Filter strikes intelligently based on price level
-            # For lower priced stocks, use tighter range
-            # For higher priced stocks, allow wider range
-            if stock_price < 100:
-                # For stocks < $100: look for strikes within $15 of stock price
-                valid_strikes = [
-                    s
-                    for s in chain.strikes
-                    if abs(s - stock_price) <= 15
-                    and s % strike_width == 0  # Ensure strikes follow proper width
-                ]
-            elif stock_price <= 500:
-                # For stocks $100-500: look for strikes within $30 of stock price
-                valid_strikes = [
-                    s
-                    for s in chain.strikes
-                    if abs(s - stock_price) <= 30
-                    and s % strike_width == 0  # Ensure strikes follow proper width
-                ]
-            else:
-                # For stocks > $500: look for strikes within $50 of stock price
-                valid_strikes = [
-                    s
-                    for s in chain.strikes
-                    if abs(s - stock_price) <= 50
-                    and s % strike_width == 0  # Ensure strikes follow proper width
-                ]
+            # Get potential strikes from chain (all strikes across all expiries)
+            potential_strikes = [s for s in chain.strikes if abs(s - stock_price) <= 25]
 
             logger.info(
-                f"[{symbol}] Using strike width ${strike_width:.1f} for stock price ${stock_price:.2f}"
+                f"[{symbol}] Chain has {len(chain.strikes)} total strikes across all expiries"
+            )
+            logger.info(
+                f"[{symbol}] {len(potential_strikes)} strikes within $25 of stock price (${stock_price:.2f})"
             )
 
-            if len(valid_strikes) < 2:
-                logger.info(
-                    f"Not enough valid strikes found for {symbol} (found: {len(valid_strikes)})"
-                )
-                metrics_collector.add_rejection_reason(
-                    RejectionReason.INSUFFICIENT_VALID_STRIKES,
-                    {
-                        "symbol": symbol,
-                        "valid_strikes_count": len(valid_strikes),
-                        "required_strikes": 2,
-                        "stock_price": stock_price,
-                    },
-                )
-                return
-
-            # Prepare for parallel contract qualification
+            # Get valid expiries first
             valid_expiries = self.filter_expirations_within_range(
                 chain.expirations, 15, 45
             )
 
             if len(valid_expiries) == 0:
                 logger.warning(
-                    f"No valid expiries found for {symbol} in range 19-45 days, skipping scan"
+                    f"No valid expiries found for {symbol} in range 15-45 days, skipping scan"
                 )
                 metrics_collector.add_rejection_reason(
                     RejectionReason.NO_VALID_EXPIRIES,
                     {
                         "available_expiries": len(chain.expirations),
-                        "days_range": "19-45",
+                        "days_range": "15-45",
                     },
                 )
                 return
 
-            if len(valid_strikes) < 2:
+            # Validate strikes for each expiry (this is the key fix!)
+            strikes_by_expiry = {}
+            total_valid_strikes = 0
+
+            for expiry in valid_expiries:
+                valid_strikes_for_expiry = await self.validate_strikes_for_expiry(
+                    symbol, expiry, potential_strikes
+                )
+                if valid_strikes_for_expiry:
+                    strikes_by_expiry[expiry] = valid_strikes_for_expiry
+                    total_valid_strikes += len(valid_strikes_for_expiry)
+
+            if total_valid_strikes < 2:
                 logger.info(
-                    f"Not enough valid strikes for {symbol}, skipping parallel qualification"
+                    f"Not enough valid strikes found for {symbol} across all expiries (found: {total_valid_strikes})"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.INSUFFICIENT_VALID_STRIKES,
+                    {
+                        "symbol": symbol,
+                        "valid_strikes_count": total_valid_strikes,
+                        "required_strikes": 2,
+                        "stock_price": stock_price,
+                        "expiries_tested": len(valid_expiries),
+                    },
+                )
+                return
+
+            logger.info(
+                f"[{symbol}] Strike validation complete: {len(strikes_by_expiry)} expiries with valid strikes"
+            )
+
+            # Now we need to update the logic to work with expiry-specific strikes
+            # For now, let's combine all valid strikes to maintain existing logic
+            all_valid_strikes = set()
+            for expiry_strikes in strikes_by_expiry.values():
+                all_valid_strikes.update(expiry_strikes)
+
+            combined_valid_strikes = sorted(list(all_valid_strikes))
+
+            if len(combined_valid_strikes) < 2:
+                logger.info(
+                    f"Not enough combined valid strikes for {symbol}, skipping parallel qualification"
                 )
                 return
 
@@ -2281,7 +2436,7 @@ class SFR(ArbitrageClass):
             valid_strike_pairs = []
 
             # Sort strikes for position-based selection
-            sorted_strikes = sorted(valid_strikes)
+            sorted_strikes = sorted(combined_valid_strikes)
 
             # Find stock price position within valid strikes
             stock_position = self.find_stock_position_in_strikes(
@@ -2339,7 +2494,7 @@ class SFR(ArbitrageClass):
             metrics_collector.record_strike_effectiveness(
                 symbol,
                 total_strikes,
-                len(valid_strikes),
+                len(combined_valid_strikes),
                 combinations_generated,
                 combinations_tested,
             )
@@ -2349,11 +2504,6 @@ class SFR(ArbitrageClass):
                 f"(stock position: {stock_position}, price: ${stock_price:.2f})"
             )
 
-            # Log configuration being used for better visibility
-            logger.info(
-                f"[{symbol}] Configuration: strike_width=${strike_width:.1f}, "
-                f"min_theoretical=$0.10, min_guaranteed=$0.05, min_absolute=$0.03"
-            )
             if priority_combinations:
                 logger.info(
                     f"[{symbol}] Found {len(priority_combinations)} high-probability 1-2 strike difference combinations"
@@ -2363,9 +2513,11 @@ class SFR(ArbitrageClass):
                     f"[{symbol}] Found {len(secondary_combinations)} secondary 3-{self.max_strike_difference} strike difference combinations"
                 )
 
-            # Parallel qualification of all contracts
-            qualified_contracts_map = await self.parallel_qualify_all_contracts(
-                symbol, valid_expiries, valid_strike_pairs
+            # Parallel qualification of all contracts using expiry-specific strikes
+            qualified_contracts_map = (
+                await self.parallel_qualify_all_contracts_with_validation(
+                    symbol, strikes_by_expiry, valid_strike_pairs
+                )
             )
 
             # Build expiry options from qualified contracts
