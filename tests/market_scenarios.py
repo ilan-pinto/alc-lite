@@ -431,6 +431,7 @@ class MarketScenarios:
         scenarios["MSFT"][put_414_75.contract.conId] = put_414_75
 
         # Add supporting strikes for MSFT including the exact ones we need
+        # CRITICAL: Override auto-generated prices to ensure NO arbitrage opportunities
         for strike in [413.75, 414.75, 415.75, 416.75, 417.75]:
             for right in ["C", "P"]:
                 # Skip if we already defined this strike/right combination
@@ -441,6 +442,19 @@ class MarketScenarios:
                 ticker = MarketDataGenerator.generate_option_data(
                     "MSFT", expiry, strike, right, stock_price, 35
                 )
+
+                # Override with unprofitable pricing to prevent unintended arbitrage
+                if (
+                    right == "C"
+                ):  # Calls - make bids low (hard to sell calls profitably)
+                    ticker.bid = 0.05  # Very low bid
+                    ticker.ask = ticker.bid + 0.20  # Wide spread
+                    ticker.close = ticker.bid + 0.10
+                else:  # Puts - make asks high (expensive to buy puts)
+                    ticker.ask = 5.00  # Very high ask
+                    ticker.bid = ticker.ask - 0.20  # Wide spread
+                    ticker.close = ticker.ask - 0.10
+
                 scenarios["MSFT"][ticker.contract.conId] = ticker
 
         # TSLA: Negative net credit
@@ -469,6 +483,7 @@ class MarketScenarios:
         scenarios["TSLA"][put_244_8.contract.conId] = put_244_8
 
         # Add supporting strikes for TSLA including the exact ones we need
+        # CRITICAL: Override auto-generated prices to ensure NO arbitrage opportunities
         for strike in [243.8, 244.8, 245.8, 246.8, 247.8]:
             for right in ["C", "P"]:
                 # Skip if we already defined this strike/right combination
@@ -479,6 +494,19 @@ class MarketScenarios:
                 ticker = MarketDataGenerator.generate_option_data(
                     "TSLA", expiry, strike, right, stock_price, 35
                 )
+
+                # Override with unprofitable pricing to prevent unintended arbitrage
+                if (
+                    right == "C"
+                ):  # Calls - make bids low (hard to sell calls profitably)
+                    ticker.bid = 0.05  # Very low bid
+                    ticker.ask = ticker.bid + 0.25  # Wide spread
+                    ticker.close = ticker.bid + 0.12
+                else:  # Puts - make asks high (expensive to buy puts)
+                    ticker.ask = 8.00  # Very high ask
+                    ticker.bid = ticker.ask - 0.25  # Wide spread
+                    ticker.close = ticker.ask - 0.12
+
                 scenarios["TSLA"][ticker.contract.conId] = ticker
 
         return scenarios

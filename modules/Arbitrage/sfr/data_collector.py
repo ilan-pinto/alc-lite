@@ -366,49 +366,6 @@ class DataCollectionCoordinator:
 
         return call_data is not None and put_data is not None
 
-    def log_missing_contracts(self):
-        """Log information about missing contract data"""
-        missing_contracts = [
-            c
-            for c in self.all_contracts
-            if self.ticker_manager.get_ticker(c.conId) is None
-        ]
-
-        if missing_contracts:
-            logger.warning(
-                f"[{self.symbol}] Missing data for {len(missing_contracts)} contracts out of {len(self.all_contracts)}"
-            )
-            # Log details of missing contracts (first 5)
-            for c in missing_contracts[:5]:
-                contract_type = getattr(c, "secType", "Unknown")
-                if contract_type == "OPT":
-                    logger.info(
-                        f"  Missing: {c.symbol} {getattr(c, 'right', '')} {getattr(c, 'strike', '')} {getattr(c, 'lastTradeDateOrContractMonth', '')}"
-                    )
-                else:
-                    logger.info(f"  Missing: {c.symbol} ({contract_type})")
-
-    def get_data_collection_stats(self) -> dict:
-        """Get comprehensive data collection statistics"""
-        return {
-            "symbol": self.symbol,
-            "elapsed_time": self.get_elapsed_time(),
-            "current_phase": (
-                self.current_phase.value if self.current_phase else "unknown"
-            ),
-            "total_contracts": len(self.all_contracts),
-            "contracts_with_data": sum(
-                1
-                for c in self.all_contracts
-                if self.ticker_manager.get_ticker(c.conId) is not None
-            ),
-            "completion_percentage": self.collection_metrics.get_completion_percentage(),
-            "critical_data_sufficient": self.has_sufficient_critical_data(),
-            "important_data_sufficient": self.has_sufficient_important_data(),
-            "minimum_viable_data": self.has_minimum_viable_data(),
-            "stock_data_available": self.has_stock_data(),
-        }
-
 
 class DataCollectionManager:
     """High-level manager for data collection operations"""
@@ -436,10 +393,6 @@ class DataCollectionManager:
         """Set reference to global contract_ticker dictionary"""
         if self.coordinator:
             self.coordinator.set_contract_ticker_reference(contract_ticker)
-
-    def get_coordinator(self) -> Optional[DataCollectionCoordinator]:
-        """Get the data collection coordinator"""
-        return self.coordinator
 
     def cleanup(self) -> int:
         """Clean up data collection resources"""

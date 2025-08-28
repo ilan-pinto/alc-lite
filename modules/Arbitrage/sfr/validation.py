@@ -233,91 +233,12 @@ class DataQualityValidator:
         if (
             final_score < 0.6
         ):  # Log breakdown for scores that might cause evaluation failures
-            self._log_quality_breakdown(
-                stock_ticker, call_ticker, put_ticker, final_score
+            logger.debug(
+                f"Low data quality score: {final_score:.2f} - "
+                f"stock: {bool(stock_ticker)}, call: {bool(call_ticker)}, put: {bool(put_ticker)}"
             )
 
         return final_score
-
-    def _log_quality_breakdown(
-        self, stock_ticker, call_ticker, put_ticker, final_score
-    ):
-        """Log detailed breakdown of quality scores"""
-        stock_score = 0.0
-        call_score = 0.0
-        put_score = 0.0
-
-        # Recalculate component scores for logging
-        if stock_ticker:
-            if hasattr(stock_ticker, "bid") and self.price_validator.is_valid_price(
-                stock_ticker.bid
-            ):
-                stock_score += 0.1
-            if hasattr(stock_ticker, "ask") and self.price_validator.is_valid_price(
-                stock_ticker.ask
-            ):
-                stock_score += 0.1
-            if hasattr(stock_ticker, "last") and self.price_validator.is_valid_price(
-                stock_ticker.last
-            ):
-                stock_score += 0.05
-            if hasattr(stock_ticker, "volume") and stock_ticker.volume > 0:
-                stock_score += 0.05
-
-        if call_ticker:
-            if hasattr(call_ticker, "bid") and self.price_validator.is_valid_price(
-                call_ticker.bid
-            ):
-                call_score += 0.1
-            if hasattr(call_ticker, "ask") and self.price_validator.is_valid_price(
-                call_ticker.ask
-            ):
-                call_score += 0.1
-            if hasattr(call_ticker, "last") and self.price_validator.is_valid_price(
-                call_ticker.last
-            ):
-                call_score += 0.05
-            if hasattr(call_ticker, "volume") and call_ticker.volume > 0:
-                call_score += 0.05
-            if (
-                hasattr(call_ticker, "bid")
-                and hasattr(call_ticker, "ask")
-                and self.price_validator.is_valid_price(call_ticker.bid)
-                and self.price_validator.is_valid_price(call_ticker.ask)
-            ):
-                spread = abs(call_ticker.ask - call_ticker.bid)
-                if spread < 5.0:
-                    call_score += 0.05
-
-        if put_ticker:
-            if hasattr(put_ticker, "bid") and self.price_validator.is_valid_price(
-                put_ticker.bid
-            ):
-                put_score += 0.1
-            if hasattr(put_ticker, "ask") and self.price_validator.is_valid_price(
-                put_ticker.ask
-            ):
-                put_score += 0.1
-            if hasattr(put_ticker, "last") and self.price_validator.is_valid_price(
-                put_ticker.last
-            ):
-                put_score += 0.05
-            if hasattr(put_ticker, "volume") and put_ticker.volume > 0:
-                put_score += 0.05
-            if (
-                hasattr(put_ticker, "bid")
-                and hasattr(put_ticker, "ask")
-                and self.price_validator.is_valid_price(put_ticker.bid)
-                and self.price_validator.is_valid_price(put_ticker.ask)
-            ):
-                spread = abs(put_ticker.ask - put_ticker.bid)
-                if spread < 5.0:
-                    put_score += 0.05
-
-        logger.debug(
-            f"Low data quality score: {final_score:.2f} "
-            f"(stock={stock_score:.2f}, call={call_score:.2f}, put={put_score:.2f})"
-        )
 
 
 class ConditionsValidator:

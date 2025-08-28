@@ -426,17 +426,25 @@ class OpportunityEvaluator:
     """Main opportunity evaluator that coordinates all evaluation components"""
 
     def __init__(
-        self, symbol: str, expiry_options: List[ExpiryOption], ticker_getter_func
+        self,
+        symbol: str,
+        expiry_options: List[ExpiryOption],
+        ticker_getter_func,
+        check_conditions_func=None,
     ):
         self.symbol = symbol
         self.expiry_options = expiry_options
         self.get_ticker = ticker_getter_func
+        self.check_conditions_func = check_conditions_func
 
         self.calculator = OpportunityCalculator(symbol)
         self.vectorized_evaluator = VectorizedOpportunityEvaluator(
             symbol, expiry_options, ticker_getter_func
         )
-        self.conditions_validator = ConditionsValidator()
+        if check_conditions_func is None:
+            self.conditions_validator = ConditionsValidator()
+        else:
+            self.conditions_validator = None  # Will use the provided function
 
     def calc_price_and_build_order_for_expiry(
         self,
@@ -728,8 +736,9 @@ class OpportunityEvaluator:
                 f"guaranteed_profit:{min_profit:.2f}, max_profit:{max_profit:.2f}, min_roi:{min_roi:.2f}%"
             )
 
-            conditions_met, rejection_reason = (
-                self.conditions_validator.check_conditions(
+            # Use provided check_conditions function or default validator
+            if self.check_conditions_func:
+                conditions_met, rejection_reason = self.check_conditions_func(
                     self.symbol,
                     profit_target,
                     cost_limit,
@@ -740,7 +749,20 @@ class OpportunityEvaluator:
                     pricing_data.stock_exec,
                     min_profit,
                 )
-            )
+            else:
+                conditions_met, rejection_reason = (
+                    self.conditions_validator.check_conditions(
+                        self.symbol,
+                        profit_target,
+                        cost_limit,
+                        expiry_option.put_strike,
+                        combo_limit_price,  # Use calculated precise limit price
+                        pricing_data.guaranteed_net_credit,
+                        min_roi,
+                        pricing_data.stock_exec,
+                        min_profit,
+                    )
+                )
 
             if conditions_met:
                 # Build order with precise limit price and target leg prices

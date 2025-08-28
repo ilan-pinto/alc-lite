@@ -53,7 +53,7 @@ def calculate_combo_limit_price(
     stock_price: float,
     call_price: float,
     put_price: float,
-    buffer_percent: float = 0.02,  # 2% buffer for slippage
+    buffer_percent: float = 0.02,  # 2% buffer for slippage (typically called with 0.01)
 ) -> float:
     """
     Calculate precise combo limit price based on individual leg target prices.
@@ -125,58 +125,6 @@ def calculate_z_scores(data: np.ndarray) -> np.ndarray:
     return (data - mean) / std
 
 
-def validate_strike_ordering(call_strike: float, put_strike: float) -> bool:
-    """Validate that call strike is greater than put strike"""
-    return call_strike > put_strike
-
-
-def format_trade_summary(
-    symbol: str,
-    expiry: str,
-    call_strike: float,
-    put_strike: float,
-    call_price: float,
-    put_price: float,
-    stock_price: float,
-    net_credit: float,
-    min_profit: float,
-    max_profit: float,
-    min_roi: float,
-) -> str:
-    """Format a comprehensive trade summary string"""
-    return (
-        f"[{symbol}] Trade Summary:\n"
-        f"  Expiry: {expiry}\n"
-        f"  Call: {call_strike} @ ${call_price:.2f}\n"
-        f"  Put: {put_strike} @ ${put_price:.2f}\n"
-        f"  Stock: ${stock_price:.2f}\n"
-        f"  Net Credit: ${net_credit:.2f}\n"
-        f"  Profit Range: ${min_profit:.2f} - ${max_profit:.2f}\n"
-        f"  Min ROI: {min_roi:.2f}%"
-    )
-
-
-def round_prices(prices: dict) -> dict:
-    """Round all price values to 2 decimal places"""
-    rounded = {}
-    for key, value in prices.items():
-        if isinstance(value, (int, float)) and not np.isnan(value):
-            rounded[key] = round(value, 2)
-        else:
-            rounded[key] = value
-    return rounded
-
-
-def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:
-    """Safely divide two numbers, returning default if denominator is zero"""
-    try:
-        if denominator == 0 or np.isnan(denominator) or np.isnan(numerator):
-            return default
-        return numerator / denominator
-    except (ZeroDivisionError, TypeError):
-        return default
-
-
 def get_contract_key(contract) -> str:
     """Generate a deterministic key for a contract based on its content"""
     try:
@@ -201,18 +149,6 @@ def calculate_days_to_expiry(expiry_str: str) -> int:
         return 0
 
 
-def format_percentage(value: float, precision: int = 2) -> str:
-    """Format a decimal value as a percentage string"""
-    return f"{value * 100:.{precision}f}%"
-
-
 def clamp(value: float, min_val: float, max_val: float) -> float:
     """Clamp a value between min and max bounds"""
     return max(min_val, min(value, max_val))
-
-
-def is_weekend() -> bool:
-    """Check if current day is weekend (Saturday or Sunday)"""
-    from datetime import datetime
-
-    return datetime.now().weekday() >= 5

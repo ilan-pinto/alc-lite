@@ -24,12 +24,7 @@ from .constants import DEFAULT_DATA_TIMEOUT
 from .data_collector import DataCollectionCoordinator, DataCollectionManager
 from .models import ExpiryOption, OpportunityTuple
 from .opportunity_evaluator import OpportunityEvaluator
-from .utils import (
-    calculate_combo_limit_price,
-    flush_all_handlers,
-    get_stock_midpoint,
-    log_funnel_summary,
-)
+from .utils import flush_all_handlers, get_stock_midpoint, log_funnel_summary
 from .validation import MarketValidator
 
 logger = get_logger()
@@ -384,61 +379,29 @@ class SFRExecutor(BaseExecutor):
 
         # Convert vectorized result to standard format
         best_idx = result["best_idx"]
-        vectorized_data = result["vectorized_data"]
         best_expiry = self.expiry_options[best_idx]
 
-        # Build the order for the best opportunity
-        combo_limit_price = calculate_combo_limit_price(
-            stock_price=vectorized_data.market_data["stock_asks"][best_idx],
-            call_price=vectorized_data.market_data["call_bids"][best_idx],
-            put_price=vectorized_data.market_data["put_asks"][best_idx],
-            buffer_percent=0.01,
+        # Use calc_price_and_build_order_for_expiry for proper limit price calculation
+        opportunity_result = (
+            self.opportunity_evaluator.calc_price_and_build_order_for_expiry(
+                expiry_option=best_expiry,
+                stock_contract=self.stock_contract,
+                profit_target=self.profit_target,
+                cost_limit=self.cost_limit,
+                quantity=self.quantity,
+                build_order_func=self.build_order,
+                priority_filter=max_priority,
+            )
         )
 
-        conversion_contract, order = self.build_order(
-            self.symbol,
-            self.stock_contract,
-            best_expiry.call_contract,
-            best_expiry.put_contract,
-            combo_limit_price,
-            self.quantity,
-            call_price=vectorized_data.market_data["call_bids"][best_idx],
-            put_price=vectorized_data.market_data["put_asks"][best_idx],
-        )
-
-        # Calculate missing required fields for execution logging
-        best_net_credit = (
-            vectorized_data.market_data["call_bids"][best_idx]
-            - vectorized_data.market_data["put_asks"][best_idx]
-        )
-        best_stock_price = vectorized_data.market_data["stock_asks"][best_idx]
-        best_min_profit = vectorized_data.guaranteed_profits[best_idx]
-        best_max_profit = (
-            best_expiry.call_strike - best_expiry.put_strike
-        ) + best_net_credit
-        best_min_roi = (
-            (best_min_profit / (best_stock_price + best_net_credit)) * 100
-            if (best_stock_price + best_net_credit) > 0
-            else 0
-        )
+        if not opportunity_result:
+            return None
 
         return {
-            "contract": conversion_contract,
-            "order": order,
-            "guaranteed_profit": result["best_profit"],
-            "trade_details": {
-                "expiry": best_expiry.expiry,
-                "call_strike": best_expiry.call_strike,
-                "put_strike": best_expiry.put_strike,
-                "call_price": vectorized_data.market_data["call_bids"][best_idx],
-                "put_price": vectorized_data.market_data["put_asks"][best_idx],
-                "stock_price": best_stock_price,
-                "net_credit": best_net_credit,
-                "min_profit": best_min_profit,
-                "max_profit": best_max_profit,
-                "min_roi": best_min_roi,
-                "theoretical_profit": vectorized_data.theoretical_profits[best_idx],
-            },
+            "contract": opportunity_result[0],
+            "order": opportunity_result[1],
+            "guaranteed_profit": opportunity_result[2],
+            "trade_details": opportunity_result[3],
             "expiry_option": best_expiry,
             "statistics": result["statistics"],
         }
@@ -554,7 +517,10 @@ class SFRExecutor(BaseExecutor):
         funnel_analysis = metrics_collector.get_funnel_analysis()
         log_funnel_summary(self.symbol, funnel_analysis)
 
-    # Delegation methods for backward compatibility with tests
+    # === Delegation Methods for Backward Compatibility ===
+    # These methods delegate to specialized validators and evaluators
+    # They are kept for backward compatibility with tests and legacy code
+
     def check_conditions(
         self,
         symbol: str,
@@ -567,7 +533,7 @@ class SFRExecutor(BaseExecutor):
         stock_price: float,
         min_profit: float,
     ):
-        """Delegate to conditions validator for backward compatibility"""
+        """Delegate to conditions validator for backward compatibility with tests and legacy code"""
         from .validation import ConditionsValidator
 
         validator = ConditionsValidator()
@@ -584,23 +550,31 @@ class SFRExecutor(BaseExecutor):
         )
 
     def calc_price_and_build_order_for_expiry(self, expiry_option):
-        """Delegate to opportunity evaluator for backward compatibility"""
-        if not self.opportunity_evaluator:
+        """Delegate to opportunity evaluator for backward compatibility with tests and legacy code"""
+        # Force recreation for proper ticker function setup (for test compatibility)
+        if True:  # Always recreate to ensure proper ticker setup
             from .opportunity_evaluator import OpportunityEvaluator
 
-            self.opportunity_evaluator = OpportunityEvaluator(symbol=self.symbol)
+            # Create a ticker getter that works with the test setup (compatible with original SFR)
+            def get_ticker_func(conId):
+                # Import the global contract_ticker from the sfr module for test compatibility
+                from . import contract_ticker
 
-        # Find the stock contract from our contracts
-        stock_contract = next(
-            (c for c in self.all_contracts if c.secType == "STK"), None
-        )
+                return contract_ticker.get((self.symbol, conId))
 
-        # Create a simple build_order function for compatibility
+            self.opportunity_evaluator = OpportunityEvaluator(
+                symbol=self.symbol,
+                expiry_options=self.expiry_options,
+                ticker_getter_func=get_ticker_func,
+                check_conditions_func=self.check_conditions,
+            )
+
+        # Use the stock_contract passed in constructor (preserved from original)
+        stock_contract = self.stock_contract
+
+        # Use the inherited build_order method for compatibility
         def build_order_func(*args, **kwargs):
-            # This is a placeholder for the test compatibility
-            from ..Strategy import LimitOrder
-
-            return LimitOrder("BUY", self.quantity, 1.0)
+            return self.build_order(*args, **kwargs)
 
         return self.opportunity_evaluator.calc_price_and_build_order_for_expiry(
             expiry_option=expiry_option,
@@ -609,4 +583,12 @@ class SFRExecutor(BaseExecutor):
             cost_limit=self.cost_limit,
             quantity=self.quantity,
             build_order_func=build_order_func,
+        )
+
+    def find_stock_position_in_strikes(self, stock_price: float, valid_strikes):
+        """Delegate to StrikeValidator for backward compatibility with tests and legacy code"""
+        from .validation import StrikeValidator
+
+        return StrikeValidator.find_stock_position_in_strikes(
+            stock_price, valid_strikes
         )

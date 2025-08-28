@@ -158,7 +158,7 @@ def test_calc_price_and_build_order_no_stock_ticker():
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
-        stock_contract=MagicMock(conId=1),
+        stock_contract=MagicMock(conId=1, secType="STK"),
         expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
@@ -186,7 +186,7 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
-        stock_contract=MagicMock(conId=1),
+        stock_contract=MagicMock(conId=1, secType="STK"),
         expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
@@ -219,7 +219,7 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
-        stock_contract=MagicMock(conId=1),
+        stock_contract=MagicMock(conId=1, secType="STK"),
         expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
@@ -253,7 +253,7 @@ def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
-        stock_contract=MagicMock(conId=1),
+        stock_contract=MagicMock(conId=1, secType="STK"),
         expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,
@@ -298,7 +298,7 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     sfr_executor = SFRExecutor(
         ib=MagicMock(),
         order_manager=MagicMock(),
-        stock_contract=MagicMock(conId=1),
+        stock_contract=MagicMock(conId=1, secType="STK"),
         expiry_options=expiry_options,
         symbol="TEST",
         profit_target=10.0,

@@ -217,8 +217,16 @@ class TestCalendarEdgeCases:
             try:
                 with patch("commands.option.CalendarSpread") as mock_calendar_class:
                     mock_calendar = MagicMock()
-                    mock_calendar.ib = MagicMock()
-                    mock_calendar.scan = AsyncMock()
+                    mock_ib = MagicMock()
+                    mock_ib.disconnect = MagicMock()
+                    mock_ib.isConnected = MagicMock(
+                        return_value=False
+                    )  # Avoid disconnect calls
+                    mock_calendar.ib = mock_ib
+                    # Ensure scan returns a proper coroutine by using AsyncMock with return_value
+                    mock_scan = AsyncMock()
+                    mock_scan.return_value = None  # Explicit return value
+                    mock_calendar.scan = mock_scan
                     mock_calendar_class.return_value = mock_calendar
 
                     option_scan.calendar_finder(
