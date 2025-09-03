@@ -379,7 +379,17 @@ class SFRExecutor(BaseExecutor):
 
         # Convert vectorized result to standard format
         best_idx = result["best_idx"]
-        best_expiry = self.expiry_options[best_idx]
+        # Use the ExpiryOption object directly from vectorized evaluation to prevent index mismatch
+        best_expiry = result[
+            "best_expiry_option"
+        ]  # Use the actual ExpiryOption from result
+
+        # Add contract verification logging
+        logger.info(f"[{self.symbol}] EXECUTOR CONTRACT VERIFICATION:")
+        logger.info(f"  Using ExpiryOption from vectorized result (not index lookup)")
+        logger.info(
+            f"  Expiry: {best_expiry.expiry}, Call Strike: {best_expiry.call_strike}, Put Strike: {best_expiry.put_strike}"
+        )
 
         # Use calc_price_and_build_order_for_expiry for proper limit price calculation
         opportunity_result = (
@@ -437,6 +447,38 @@ class SFRExecutor(BaseExecutor):
                 trade_details["max_profit"],
                 trade_details["min_roi"],
             )
+
+            # CRITICAL SAFETY CHECK: Verify arbitrage condition before execution
+            net_credit = trade_details["net_credit"]
+            spread = trade_details["stock_price"] - trade_details["put_strike"]
+            final_profit = net_credit - spread
+
+            logger.info(f"[{self.symbol}] FINAL SAFETY CHECK BEFORE EXECUTION:")
+            logger.info(f"  Net Credit: ${net_credit:.2f}, Spread: ${spread:.2f}")
+            logger.info(
+                f"  Final Profit: ${final_profit:.2f} (should match min_profit: ${trade_details['min_profit']:.2f})"
+            )
+
+            # Safety check: ensure we still have positive profit
+            if final_profit <= 0.0:
+                logger.error(
+                    f"[{self.symbol}] CRITICAL ERROR: Final profit check failed! "
+                    f"Net credit ${net_credit:.2f} <= spread ${spread:.2f}. "
+                    f"Calculated profit: ${final_profit:.2f}. BLOCKING EXECUTION!"
+                )
+                self.finish_collection_without_execution(
+                    "negative_profit_detected_at_execution"
+                )
+                return
+
+            # Verify profit matches expected
+            profit_diff = abs(final_profit - trade_details["min_profit"])
+            if profit_diff > 0.01:  # Allow 1 cent difference for rounding
+                logger.warning(
+                    f"[{self.symbol}] PROFIT MISMATCH WARNING: "
+                    f"Final profit ${final_profit:.2f} differs from expected ${trade_details['min_profit']:.2f} "
+                    f"by ${profit_diff:.2f}"
+                )
 
             # Place the order
             self.is_active = False  # Prevent multiple executions

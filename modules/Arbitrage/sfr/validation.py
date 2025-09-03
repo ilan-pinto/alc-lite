@@ -261,15 +261,36 @@ class ConditionsValidator:
 
         spread = stock_price - put_strike
 
+        # Calculate and verify actual profit
+        calculated_profit = net_credit - spread
+
+        # Enhanced logging for debugging contract mismatch issues
+        logger.info(f"[{symbol}] ARBITRAGE VALIDATION DETAILS:")
+        logger.info(f"  Stock Price: ${stock_price:.2f}, Put Strike: ${put_strike:.2f}")
+        logger.info(f"  Net Credit: ${net_credit:.2f}, Spread: ${spread:.2f}")
+        logger.info(
+            f"  Calculated Profit: ${calculated_profit:.2f}, Expected Min Profit: ${min_profit:.2f}"
+        )
+
         # For conversion arbitrage: min_profit = net_credit - spread
         # We want min_profit > 0, so net_credit > spread
         if (
             net_credit <= spread
         ):  # Reject if net_credit <= spread (no arbitrage opportunity)
-            logger.info(
-                f"[{symbol}] net_credit[{net_credit}] <= spread[{spread}] - no arbitrage opportunity"
+            logger.error(
+                f"[{symbol}] ARBITRAGE CONDITION FAILED: net_credit[${net_credit:.2f}] <= spread[${spread:.2f}] - "
+                f"calculated profit: ${calculated_profit:.2f}"
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
+
+        # Additional check: verify calculated profit matches expected profit
+        profit_diff = abs(calculated_profit - min_profit)
+        if profit_diff > 0.05:  # Allow 5 cents difference for market movement
+            logger.warning(
+                f"[{symbol}] PROFIT CALCULATION MISMATCH: "
+                f"Calculated: ${calculated_profit:.2f}, Expected: ${min_profit:.2f}, "
+                f"Difference: ${profit_diff:.2f}"
+            )
 
         elif min_profit < 0.03:  # Lowered minimum profit threshold to 3 cents
             logger.info(

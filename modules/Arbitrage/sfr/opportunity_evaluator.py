@@ -731,10 +731,31 @@ class OpportunityEvaluator:
                 buffer_percent=0.01,  # 1% buffer for realistic execution
             )
 
+            # Comprehensive logging for debugging contract and profit issues
+            logger.info(f"[{self.symbol}] COMPREHENSIVE PRICING ANALYSIS:")
+            logger.info(f"  Expiry: {expiry_option.expiry}")
             logger.info(
-                f"[{self.symbol}] Expiry: {expiry_option.expiry} theoretical_profit:{pricing_data.theoretical_profit:.2f}, "
-                f"guaranteed_profit:{min_profit:.2f}, max_profit:{max_profit:.2f}, min_roi:{min_roi:.2f}%"
+                f"  Contract Details - Call Strike: {expiry_option.call_strike}, Put Strike: {expiry_option.put_strike}"
             )
+            logger.info(
+                f"  Contract IDs - Call: {expiry_option.call_contract.conId}, Put: {expiry_option.put_contract.conId}"
+            )
+            logger.info(
+                f"  Execution Prices - Stock: ${pricing_data.stock_exec:.2f}, Call: ${pricing_data.call_exec:.2f}, Put: ${pricing_data.put_exec:.2f}"
+            )
+            logger.info(
+                f"  Fair Values - Stock: ${pricing_data.stock_fair:.2f}, Call: ${pricing_data.call_fair:.2f}, Put: ${pricing_data.put_fair:.2f}"
+            )
+            logger.info(
+                f"  Theoretical - Net Credit: ${pricing_data.theoretical_net_credit:.2f}, Spread: ${pricing_data.theoretical_spread:.2f}, Profit: ${pricing_data.theoretical_profit:.2f}"
+            )
+            logger.info(
+                f"  Guaranteed - Net Credit: ${pricing_data.guaranteed_net_credit:.2f}, Spread: ${pricing_data.guaranteed_spread:.2f}, Profit: ${pricing_data.guaranteed_profit:.2f}"
+            )
+            logger.info(
+                f"  Final Metrics - Min Profit: ${min_profit:.2f}, Max Profit: ${max_profit:.2f}, Min ROI: {min_roi:.2f}%"
+            )
+            logger.info(f"  Combo Limit Price: ${combo_limit_price:.2f}")
 
             # Use provided check_conditions function or default validator
             if self.check_conditions_func:
@@ -906,8 +927,22 @@ class OpportunityEvaluator:
             f"1 selected"
         )
 
+        # Get the actual ExpiryOption for the best opportunity
+        best_expiry_option = self.expiry_options[best_idx]
+
+        # Log detailed information about the selected opportunity for debugging
+        logger.info(f"[{self.symbol}] SELECTED OPPORTUNITY DETAILS:")
+        logger.info(f"  Index: {best_idx}, Expiry: {best_expiry_option.expiry}")
+        logger.info(
+            f"  Call Strike: {best_expiry_option.call_strike}, Put Strike: {best_expiry_option.put_strike}"
+        )
+        logger.info(
+            f"  Contract IDs - Call: {best_expiry_option.call_contract.conId}, Put: {best_expiry_option.put_contract.conId}"
+        )
+
         return {
             "best_idx": best_idx,
+            "best_expiry_option": best_expiry_option,  # Return actual ExpiryOption object
             "best_profit": best_profit,
             "vectorized_data": vectorized_data,
             "statistics": {
