@@ -786,6 +786,44 @@ class OpportunityEvaluator:
                 )
 
             if conditions_met:
+                # CRITICAL: Verify contract strikes before building order
+                if hasattr(expiry_option.call_contract, "strike"):
+                    try:
+                        actual_call_strike = expiry_option.call_contract.strike
+                        if abs(actual_call_strike - expiry_option.call_strike) > 0.01:
+                            logger.error(
+                                f"[{self.symbol}] CRITICAL: Call contract strike mismatch! "
+                                f"Expected {expiry_option.call_strike}, got {actual_call_strike}. "
+                                f"Contract ID: {expiry_option.call_contract.conId}"
+                            )
+                            return None, None, None, None
+                    except (TypeError, AttributeError):
+                        # Handle mock objects or other test scenarios
+                        pass
+
+                if hasattr(expiry_option.put_contract, "strike"):
+                    try:
+                        actual_put_strike = expiry_option.put_contract.strike
+                        if abs(actual_put_strike - expiry_option.put_strike) > 0.01:
+                            logger.error(
+                                f"[{self.symbol}] CRITICAL: Put contract strike mismatch! "
+                                f"Expected {expiry_option.put_strike}, got {actual_put_strike}. "
+                                f"Contract ID: {expiry_option.put_contract.conId}"
+                            )
+                            return None, None, None, None
+                    except (TypeError, AttributeError):
+                        # Handle mock objects or other test scenarios
+                        pass
+
+                # Log contract details before building order
+                logger.info(f"[{self.symbol}] Building order with verified contracts:")
+                logger.info(
+                    f"  Call: Strike={expiry_option.call_strike}, ConId={expiry_option.call_contract.conId}"
+                )
+                logger.info(
+                    f"  Put: Strike={expiry_option.put_strike}, ConId={expiry_option.put_contract.conId}"
+                )
+
                 # Build order with precise limit price and target leg prices
                 conversion_contract, order = build_order_func(
                     self.symbol,
@@ -930,15 +968,40 @@ class OpportunityEvaluator:
         # Get the actual ExpiryOption for the best opportunity
         best_expiry_option = self.expiry_options[best_idx]
 
-        # Log detailed information about the selected opportunity for debugging
-        logger.info(f"[{self.symbol}] SELECTED OPPORTUNITY DETAILS:")
+        # CRITICAL: Log and verify the actual contracts being returned
+        logger.info(f"[{self.symbol}] VECTORIZED RESULT - Selected Opportunity:")
         logger.info(f"  Index: {best_idx}, Expiry: {best_expiry_option.expiry}")
         logger.info(
-            f"  Call Strike: {best_expiry_option.call_strike}, Put Strike: {best_expiry_option.put_strike}"
+            f"  Call Strike: {best_expiry_option.call_strike}, ConId: {best_expiry_option.call_contract.conId}"
         )
         logger.info(
-            f"  Contract IDs - Call: {best_expiry_option.call_contract.conId}, Put: {best_expiry_option.put_contract.conId}"
+            f"  Put Strike: {best_expiry_option.put_strike}, ConId: {best_expiry_option.put_contract.conId}"
         )
+
+        # Verify contracts have correct strikes before returning
+        if hasattr(best_expiry_option.call_contract, "strike"):
+            try:
+                actual_call_strike = best_expiry_option.call_contract.strike
+                if abs(actual_call_strike - best_expiry_option.call_strike) > 0.01:
+                    logger.error(
+                        f"[{self.symbol}] CRITICAL: Vectorized result has strike mismatch in call contract! "
+                        f"Expected {best_expiry_option.call_strike}, got {actual_call_strike}"
+                    )
+            except (TypeError, AttributeError):
+                # Handle mock objects or other test scenarios
+                pass
+
+        if hasattr(best_expiry_option.put_contract, "strike"):
+            try:
+                actual_put_strike = best_expiry_option.put_contract.strike
+                if abs(actual_put_strike - best_expiry_option.put_strike) > 0.01:
+                    logger.error(
+                        f"[{self.symbol}] CRITICAL: Vectorized result has strike mismatch in put contract! "
+                        f"Expected {best_expiry_option.put_strike}, got {actual_put_strike}"
+                    )
+            except (TypeError, AttributeError):
+                # Handle mock objects or other test scenarios
+                pass
 
         return {
             "best_idx": best_idx,

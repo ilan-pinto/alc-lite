@@ -7,7 +7,13 @@ This module contains all the dataclasses and type definitions used by the SFR st
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
+import numpy as np
 from ib_async import Contract
+
+from ..common import get_logger
+from ..metrics import RejectionReason
+
+logger = get_logger()
 
 
 @dataclass
@@ -19,6 +25,31 @@ class ExpiryOption:
     put_contract: Contract
     call_strike: float
     put_strike: float
+
+    def __post_init__(self):
+        """Validate contracts match intended strikes"""
+        if self.call_contract and hasattr(self.call_contract, "strike"):
+            # Skip validation for mock objects in tests
+            try:
+                if abs(self.call_contract.strike - self.call_strike) > 0.01:
+                    logger.error(
+                        f"CONTRACT STRIKE MISMATCH: Call contract strike {self.call_contract.strike} "
+                        f"!= intended strike {self.call_strike}, Contract ID: {self.call_contract.conId}"
+                    )
+            except (TypeError, AttributeError):
+                # Handle mock objects or other test scenarios
+                pass
+        if self.put_contract and hasattr(self.put_contract, "strike"):
+            # Skip validation for mock objects in tests
+            try:
+                if abs(self.put_contract.strike - self.put_strike) > 0.01:
+                    logger.error(
+                        f"CONTRACT STRIKE MISMATCH: Put contract strike {self.put_contract.strike} "
+                        f"!= intended strike {self.put_strike}, Contract ID: {self.put_contract.conId}"
+                    )
+            except (TypeError, AttributeError):
+                # Handle mock objects or other test scenarios
+                pass
 
 
 @dataclass

@@ -277,6 +277,16 @@ class BaseExecutor:
         Returns:
             Tuple of (conversion_contract, order)
         """
+        # Log contract details being used for order construction
+        logger.info(f"[{symbol}] Building ComboLeg order:")
+        logger.info(f"  Stock ConId: {stock.conId}")
+        logger.info(
+            f"  Call ConId: {call.conId}, Strike: {getattr(call, 'strike', 'N/A')}"
+        )
+        logger.info(
+            f"  Put ConId: {put.conId}, Strike: {getattr(put, 'strike', 'N/A')}"
+        )
+
         stock_leg = ComboLeg(
             conId=stock.conId, ratio=100, action="BUY", exchange="SMART"
         )
@@ -560,7 +570,15 @@ class ArbitrageClass:
                     contract.right,
                 )
                 if cached_contract:
-                    cached_contracts.append(cached_contract)
+                    # Verify cached contract still matches requested strike
+                    if abs(cached_contract.strike - contract.strike) < 0.01:
+                        cached_contracts.append(cached_contract)
+                    else:
+                        logger.warning(
+                            f"Cached contract strike mismatch: requested {contract.strike}, "
+                            f"cached {cached_contract.strike} for {contract.symbol}"
+                        )
+                        uncached_contracts.append(contract)
                 else:
                     uncached_contracts.append(contract)
             else:
@@ -573,7 +591,35 @@ class ArbitrageClass:
             qualified_uncached = await self._qualify_contracts_in_batches(
                 uncached_contracts
             )
-            qualified_contracts.extend(qualified_uncached)
+
+            # Verify qualified contracts match requested strikes
+            verified_qualified = []
+            rejected_count = 0
+            for i, qualified in enumerate(qualified_uncached):
+                if (
+                    i < len(uncached_contracts)
+                    and hasattr(qualified, "strike")
+                    and hasattr(uncached_contracts[i], "strike")
+                ):
+                    if abs(qualified.strike - uncached_contracts[i].strike) < 0.01:
+                        verified_qualified.append(qualified)
+                    else:
+                        logger.warning(
+                            f"Strike mismatch after qualification: requested {uncached_contracts[i].strike}, "
+                            f"got {qualified.strike} for {qualified.symbol}"
+                        )
+                        rejected_count += 1
+                else:
+                    # Non-option contract or no strike comparison needed
+                    verified_qualified.append(qualified)
+
+            if rejected_count > 0:
+                logger.warning(
+                    f"Rejected {rejected_count} contracts due to strike mismatches"
+                )
+
+            qualified_contracts.extend(verified_qualified)
+            qualified_uncached = verified_qualified  # Update for caching
 
             # Cache the newly qualified option contracts
             for contract in qualified_uncached:

@@ -255,7 +255,7 @@ class ConditionsValidator:
         min_roi: float,
         stock_price: float,
         min_profit: float,
-    ) -> Tuple[bool, Optional["RejectionReason"]]:
+    ) -> Tuple[bool, Optional["RejectionReason"]]:  # noqa: F821
         """Check if trading conditions are met for SFR arbitrage"""
         from ..metrics import RejectionReason
 
@@ -291,31 +291,32 @@ class ConditionsValidator:
                 f"Calculated: ${calculated_profit:.2f}, Expected: ${min_profit:.2f}, "
                 f"Difference: ${profit_diff:.2f}"
             )
+            # Continue processing despite mismatch - just log warning
 
-        elif min_profit < 0.03:  # Lowered minimum profit threshold to 3 cents
+        if min_profit < 0.03:  # Lowered minimum profit threshold to 3 cents
             logger.info(
                 f"[{symbol}] min_profit[{min_profit:.2f}] < 0.03 - below minimum threshold"
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 
-        elif net_credit < 0:
+        if net_credit < 0:
             logger.info(
                 f"[{symbol}] net_credit[{net_credit}] > 0 - doesn't meet conditions"
             )
             return False, RejectionReason.NET_CREDIT_NEGATIVE
 
-        elif profit_target is not None and profit_target > min_roi:
+        if profit_target is not None and profit_target > min_roi:
             logger.info(
                 f"[{symbol}]  profit_target({profit_target}) >  min_roi({min_roi} - doesn't meet conditions) "
             )
             return False, RejectionReason.PROFIT_TARGET_NOT_MET
 
-        elif np.isnan(lmt_price) or lmt_price > cost_limit:
+        if np.isnan(lmt_price) or lmt_price > cost_limit:
             logger.info(
                 f"[{symbol}] np.isnan(lmt_price) or lmt_price > limit - doesn't meet conditions"
             )
             return False, RejectionReason.PRICE_LIMIT_EXCEEDED
 
-        else:
-            logger.info(f"[{symbol}] meets conditions - initiating order")
-            return True, None
+        # If we reach here, all conditions are met
+        logger.info(f"[{symbol}] meets conditions - initiating order")
+        return True, None

@@ -373,11 +373,15 @@ class TestBoxRiskValidator:
 
     def _create_valid_opportunity(self) -> BoxSpreadOpportunity:
         """Create a valid box spread opportunity for testing"""
+        # Calculate expiry 30 days from now to ensure test always uses future date
+        expiry_date = datetime.now() + timedelta(days=30)
+        expiry_str = expiry_date.strftime("%Y%m%d")
+
         # Create mock legs with reasonable values
         long_call_k1 = BoxSpreadLeg(
             contract=MagicMock(),
             strike=180.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="C",
             action="BUY",
             price=7.50,
@@ -395,7 +399,7 @@ class TestBoxRiskValidator:
         short_call_k2 = BoxSpreadLeg(
             contract=MagicMock(),
             strike=185.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="C",
             action="SELL",
             price=4.20,
@@ -413,7 +417,7 @@ class TestBoxRiskValidator:
         short_put_k1 = BoxSpreadLeg(
             contract=MagicMock(),
             strike=180.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="P",
             action="SELL",
             price=2.30,
@@ -431,7 +435,7 @@ class TestBoxRiskValidator:
         long_put_k2 = BoxSpreadLeg(
             contract=MagicMock(),
             strike=185.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="P",
             action="BUY",
             price=5.95,
@@ -450,7 +454,7 @@ class TestBoxRiskValidator:
             symbol="AAPL",
             lower_strike=180.0,
             upper_strike=185.0,
-            expiry="20250830",
+            expiry=expiry_str,
             long_call_k1=long_call_k1,
             short_call_k2=short_call_k2,
             short_put_k1=short_put_k1,
@@ -471,6 +475,7 @@ class TestBoxRiskValidator:
             net_theta=-0.01,  # Small theta
             net_vega=0.01,  # Low vega
             composite_score=0.85,
+            time_to_expiry_days=30,  # Add explicit time to expiry for validation
         )
 
     def _create_invalid_opportunity(self) -> BoxSpreadOpportunity:
@@ -1025,10 +1030,14 @@ class TestBoxComponentsIntegration:
 
     def _create_spy_opportunity(self, contracts) -> BoxSpreadOpportunity:
         """Create a realistic SPY box spread opportunity"""
+        # Calculate expiry 30 days from now to ensure test always uses future date
+        expiry_date = datetime.now() + timedelta(days=30)
+        expiry_str = expiry_date.strftime("%Y%m%d")
+
         long_call_k1 = BoxSpreadLeg(
             contract=contracts[0],
             strike=500.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="C",
             action="BUY",
             price=12.50,
@@ -1046,7 +1055,7 @@ class TestBoxComponentsIntegration:
         short_call_k2 = BoxSpreadLeg(
             contract=contracts[1],
             strike=505.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="C",
             action="SELL",
             price=9.20,
@@ -1064,7 +1073,7 @@ class TestBoxComponentsIntegration:
         short_put_k1 = BoxSpreadLeg(
             contract=contracts[2],
             strike=500.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="P",
             action="SELL",
             price=7.30,
@@ -1082,7 +1091,7 @@ class TestBoxComponentsIntegration:
         long_put_k2 = BoxSpreadLeg(
             contract=contracts[3],
             strike=505.0,
-            expiry="20250830",
+            expiry=expiry_str,
             right="P",
             action="BUY",
             price=10.95,
@@ -1101,7 +1110,7 @@ class TestBoxComponentsIntegration:
             symbol="SPY",
             lower_strike=500.0,
             upper_strike=505.0,
-            expiry="20250830",
+            expiry=expiry_str,
             long_call_k1=long_call_k1,
             short_call_k2=short_call_k2,
             short_put_k1=short_put_k1,
@@ -1122,6 +1131,7 @@ class TestBoxComponentsIntegration:
             net_theta=-0.04,
             net_vega=0.02,
             composite_score=0.90,
+            time_to_expiry_days=30,  # Add explicit time to expiry for validation
         )
 
     def test_end_to_end_validation_flow(self):

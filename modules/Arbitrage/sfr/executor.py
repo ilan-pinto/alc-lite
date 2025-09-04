@@ -480,6 +480,83 @@ class SFRExecutor(BaseExecutor):
                     f"by ${profit_diff:.2f}"
                 )
 
+            # CRITICAL CONTRACT VERIFICATION: Extract and verify contract details
+            if hasattr(opportunity["contract"], "comboLegs"):
+                combo_legs = opportunity["contract"].comboLegs
+                logger.info(f"[{self.symbol}] Order ComboLeg Contract IDs:")
+
+                # Extract the call and put leg contract IDs (skip stock leg at index 0)
+                actual_call_conid = combo_legs[1].conId if len(combo_legs) > 1 else None
+                actual_put_conid = combo_legs[2].conId if len(combo_legs) > 2 else None
+
+                for i, leg in enumerate(combo_legs):
+                    action = (
+                        "BUY STOCK"
+                        if i == 0
+                        else ("SELL CALL" if i == 1 else "BUY PUT")
+                    )
+                    logger.info(f"  Leg {i}: {action}, ConId={leg.conId}")
+
+                # Get expected contract IDs from the expiry_option
+                if "expiry_option" in opportunity:
+                    expected_call_conid = opportunity[
+                        "expiry_option"
+                    ].call_contract.conId
+                    expected_put_conid = opportunity["expiry_option"].put_contract.conId
+
+                    logger.info(
+                        f"[{self.symbol}] Expected Contract IDs - Call: {expected_call_conid}, Put: {expected_put_conid}"
+                    )
+                    logger.info(
+                        f"[{self.symbol}] Actual Contract IDs - Call: {actual_call_conid}, Put: {actual_put_conid}"
+                    )
+
+                    # CRITICAL: Block execution if contract IDs don't match
+                    if (
+                        actual_call_conid != expected_call_conid
+                        or actual_put_conid != expected_put_conid
+                    ):
+                        logger.error(
+                            f"[{self.symbol}] CRITICAL CONTRACT MISMATCH DETECTED! BLOCKING EXECUTION!"
+                        )
+                        logger.error(
+                            f"  Expected Call ID: {expected_call_conid}, Got: {actual_call_conid}"
+                        )
+                        logger.error(
+                            f"  Expected Put ID: {expected_put_conid}, Got: {actual_put_conid}"
+                        )
+                        logger.error(
+                            f"  Expected strikes - Call: {trade_details['call_strike']}, Put: {trade_details['put_strike']}"
+                        )
+                        self.finish_collection_without_execution(
+                            "contract_id_mismatch_at_execution"
+                        )
+                        return  # BLOCK EXECUTION
+
+                # Log expected strikes for reference
+                expected_call_strike = trade_details["call_strike"]
+                expected_put_strike = trade_details["put_strike"]
+                logger.info(
+                    f"[{self.symbol}] Expected strikes - Call: {expected_call_strike}, Put: {expected_put_strike}"
+                )
+
+                if "expiry_option" in opportunity:
+                    if (
+                        actual_call_conid == expected_call_conid
+                        and actual_put_conid == expected_put_conid
+                    ):
+                        logger.info(
+                            f"[{self.symbol}] ✓ Contract IDs verified! About to place order with correct contracts"
+                        )
+                    else:
+                        logger.error(
+                            f"[{self.symbol}] Should not reach here - contract verification failed but not blocked"
+                        )
+                else:
+                    logger.warning(
+                        f"[{self.symbol}] ⚠ Cannot verify contract IDs - expiry_option not in opportunity dict"
+                    )
+
             # Place the order
             self.is_active = False  # Prevent multiple executions
             result = await self.order_manager.place_order(

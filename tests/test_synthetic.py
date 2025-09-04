@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
@@ -18,9 +19,13 @@ from modules.Arbitrage.Synthetic import (
 @pytest.mark.unit
 def test_syn_executor_check_conditions_all_false_branches():
     """Test all False branches of SynExecutor.check_conditions."""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -129,9 +134,13 @@ def test_syn_executor_check_conditions_all_false_branches():
 @pytest.mark.unit
 def test_syn_executor_check_conditions_true_branch():
     """Test True branch of SynExecutor.check_conditions."""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -166,9 +175,13 @@ def test_syn_executor_check_conditions_true_branch():
 @pytest.mark.unit
 def test_calc_price_and_build_order_no_stock_ticker():
     """Test calc_price_and_build_order returns (None, None) if no ticker for stock contract."""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -198,9 +211,13 @@ def test_calc_price_and_build_order_no_stock_ticker():
 @pytest.mark.unit
 def test_calc_price_and_build_order_missing_option_data(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if option data is missing."""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -235,9 +252,13 @@ def test_calc_price_and_build_order_missing_option_data(monkeypatch):
 @pytest.mark.unit
 def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if call_strike < put_strike."""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -273,9 +294,13 @@ def test_calc_price_and_build_order_call_strike_less_than_put_strike(monkeypatch
 @pytest.mark.unit
 def test_calc_price_and_build_order_check_conditions_false(monkeypatch):
     """Test calc_price_and_build_order returns (None, None) if check_conditions returns False."""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -315,9 +340,14 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
     # Create mock contracts with specific conIds
     call_contract = MagicMock(conId=2)
     put_contract = MagicMock(conId=3)
+
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250918",  # Future date within valid range (30 days from now)
+            expiry=expiry_str,  # Dynamic future date within valid range (30 days from now)
             call_contract=call_contract,
             put_contract=put_contract,
             call_strike=100.0,
@@ -368,9 +398,13 @@ def test_calc_price_and_build_order_check_conditions_true(monkeypatch):
 
 @pytest.mark.unit
 def test_syn_executor_build_order_quantity():
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     expiry_options = [
         ExpiryOption(
-            expiry="20250830",
+            expiry=expiry_str,
             call_contract=MagicMock(),
             put_contract=MagicMock(),
             call_strike=100.0,
@@ -402,18 +436,22 @@ def test_syn_executor_build_order_quantity():
 @pytest.mark.asyncio
 async def test_rejection_reasons_are_logged_during_scan():
     """Test that rejection reasons are properly logged during scan execution"""
+    # Calculate expiry 30 days from now to ensure test always uses future date
+    expiry_date = datetime.now() + timedelta(days=30)
+    expiry_str = expiry_date.strftime("%Y%m%d")
+
     # Create a real SynExecutor to test scan lifecycle
     stock_contract = Stock("AAPL", "SMART", "USD")
     stock_contract.conId = 1001  # Set contract ID
 
-    call_contract = Option("AAPL", "20250918", 150, "C", "SMART")
+    call_contract = Option("AAPL", expiry_str, 150, "C", "SMART")
     call_contract.conId = 1002  # Set contract ID
 
-    put_contract = Option("AAPL", "20250918", 140, "P", "SMART")
+    put_contract = Option("AAPL", expiry_str, 140, "P", "SMART")
     put_contract.conId = 1003  # Set contract ID
 
     expiry_option = ExpiryOption(
-        expiry="20250918",
+        expiry=expiry_str,
         call_contract=call_contract,
         put_contract=put_contract,
         call_strike=150,

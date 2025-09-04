@@ -37,7 +37,8 @@ class TestOptionScanCalendarFinder:
             mock_instance = MagicMock()
             mock_instance.ib = MagicMock()
             mock_instance.ib.disconnect = MagicMock()
-            mock_instance.scan = AsyncMock()
+            # Use AsyncMock for async scan method
+            mock_instance.scan = AsyncMock(return_value=None)
             mock.return_value = mock_instance
             yield mock
 
@@ -622,19 +623,19 @@ class TestOptionScanIntegration:
             # Configure SFR mock
             mock_sfr_instance = MagicMock()
             mock_sfr_instance.ib = MagicMock()
-            mock_sfr_instance.scan = AsyncMock()
+            mock_sfr_instance.scan = AsyncMock(return_value=None)
             mock_sfr.return_value = mock_sfr_instance
 
             # Configure Syn mock
             mock_syn_instance = MagicMock()
             mock_syn_instance.ib = MagicMock()
-            mock_syn_instance.scan = AsyncMock()
+            mock_syn_instance.scan = AsyncMock(return_value=None)
             mock_syn.return_value = mock_syn_instance
 
             # Configure CalendarSpread mock
             mock_calendar_instance = MagicMock()
             mock_calendar_instance.ib = MagicMock()
-            mock_calendar_instance.scan = AsyncMock()
+            mock_calendar_instance.scan = AsyncMock(return_value=None)
             mock_calendar.return_value = mock_calendar_instance
 
             yield mock_sfr_instance, mock_syn_instance, mock_calendar_instance
@@ -671,7 +672,7 @@ class TestOptionScanIntegration:
             for mock_class in [mock_sfr, mock_syn, mock_calendar]:
                 mock_instance = MagicMock()
                 mock_instance.ib = MagicMock()
-                mock_instance.scan = AsyncMock()
+                mock_instance.scan = AsyncMock(return_value=None)
                 mock_class.return_value = mock_instance
 
             # Test consistent logging parameters
@@ -725,7 +726,7 @@ class TestOptionScanIntegration:
             for mock_class in [mock_sfr, mock_syn, mock_calendar]:
                 mock_instance = MagicMock()
                 mock_instance.ib = MagicMock()
-                mock_instance.scan = AsyncMock()
+                mock_instance.scan = AsyncMock(return_value=None)
                 mock_class.return_value = mock_instance
 
             # Test with finviz URL - all methods should use scraped symbols
@@ -770,7 +771,7 @@ class TestOptionScanPerformance:
         with patch("commands.option.CalendarSpread") as mock_calendar:
             mock_instance = MagicMock()
             mock_instance.ib = MagicMock()
-            mock_instance.scan = AsyncMock()
+            mock_instance.scan = AsyncMock(return_value=None)
             mock_calendar.return_value = mock_instance
 
             # Test with large symbol list and many parameters
@@ -814,7 +815,7 @@ class TestOptionScanPerformance:
         with patch("commands.option.CalendarSpread") as mock_calendar:
             mock_instance = MagicMock()
             mock_instance.ib = MagicMock()
-            mock_instance.scan = AsyncMock()
+            mock_instance.scan = AsyncMock(return_value=None)
             mock_calendar.return_value = mock_instance
 
             # Call method multiple times with different large configurations

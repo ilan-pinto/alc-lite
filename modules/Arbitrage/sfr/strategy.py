@@ -320,7 +320,8 @@ class SFR(ArbitrageClass):
             if i < len(all_options_to_qualify):
                 original_to_qualified[id(all_options_to_qualify[i])] = qualified
 
-        # Build final result mapping
+        # Build final result mapping with strike verification
+        rejected_mismatches = 0
         for key, contract_info in expiry_contract_map.items():
             call_qualified = original_to_qualified.get(
                 id(contract_info["call_original"])
@@ -328,6 +329,31 @@ class SFR(ArbitrageClass):
             put_qualified = original_to_qualified.get(id(contract_info["put_original"]))
 
             if call_qualified and put_qualified:
+                # Critical: Verify strikes match exactly after IB qualification
+                call_strike_match = (
+                    abs(call_qualified.strike - contract_info["call_strike"]) < 0.01
+                )
+                put_strike_match = (
+                    abs(put_qualified.strike - contract_info["put_strike"]) < 0.01
+                )
+
+                if not call_strike_match:
+                    logger.warning(
+                        f"[{symbol}] STRIKE MISMATCH REJECTED: Call requested {contract_info['call_strike']}, "
+                        f"IB returned {call_qualified.strike} for {contract_info['expiry']}"
+                    )
+                    rejected_mismatches += 1
+                    continue
+
+                if not put_strike_match:
+                    logger.warning(
+                        f"[{symbol}] STRIKE MISMATCH REJECTED: Put requested {contract_info['put_strike']}, "
+                        f"IB returned {put_qualified.strike} for {contract_info['expiry']}"
+                    )
+                    rejected_mismatches += 1
+                    continue
+
+                # Only add to map if strikes match exactly
                 qualified_map[key] = {
                     "call_contract": call_qualified,
                     "put_contract": put_qualified,
@@ -336,8 +362,13 @@ class SFR(ArbitrageClass):
                     "put_strike": contract_info["put_strike"],
                 }
 
+        if rejected_mismatches > 0:
+            logger.warning(
+                f"[{symbol}] Rejected {rejected_mismatches} contracts due to strike mismatches from IB qualification"
+            )
+
         logger.info(
-            f"[{symbol}] Successfully qualified {len(qualified_map)} strike combinations after expiry validation"
+            f"[{symbol}] Successfully qualified {len(qualified_map)} strike combinations after expiry and strike validation"
         )
         return qualified_map
 
