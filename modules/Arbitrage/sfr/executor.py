@@ -24,6 +24,7 @@ from .constants import DEFAULT_DATA_TIMEOUT
 from .data_collector import DataCollectionCoordinator, DataCollectionManager
 from .models import ExpiryOption, OpportunityTuple
 from .opportunity_evaluator import OpportunityEvaluator
+from .parallel_integration import create_parallel_integrator
 from .utils import flush_all_handlers, get_stock_midpoint, log_funnel_summary
 from .validation import MarketValidator
 
@@ -100,9 +101,37 @@ class SFRExecutor(BaseExecutor):
         # Initialize last stock price for priority calculation
         self.last_stock_price = None
 
+        # Initialize parallel execution integrator
+        self.parallel_integrator = None
+        self._parallel_integration_initialized = False
+
     def set_contract_ticker_reference(self, contract_ticker: dict):
         """Set reference to global contract_ticker dictionary"""
         self.data_manager.set_contract_ticker_reference(contract_ticker)
+
+    async def _initialize_parallel_integration(self) -> None:
+        """Initialize parallel execution integration if not already done."""
+        if self._parallel_integration_initialized:
+            return
+
+        try:
+
+            self.parallel_integrator = await create_parallel_integrator(
+                ib=self.ib,
+                order_manager=self.order_manager,
+                symbol=self.symbol,
+                opportunity_evaluator=self.opportunity_evaluator,
+            )
+
+            self._parallel_integration_initialized = True
+            logger.info(f"[{self.symbol}] Parallel execution integration initialized")
+
+        except Exception as e:
+            logger.warning(
+                f"[{self.symbol}] Failed to initialize parallel integration: {e}"
+            )
+            logger.info(f"[{self.symbol}] Falling back to traditional combo orders")
+            self._parallel_integration_initialized = False
 
     async def executor(self, event: Event) -> None:
         """
@@ -557,22 +586,57 @@ class SFRExecutor(BaseExecutor):
                         f"[{self.symbol}] ⚠ Cannot verify contract IDs - expiry_option not in opportunity dict"
                     )
 
-            # Place the order
-            self.is_active = False  # Prevent multiple executions
-            result = await self.order_manager.place_order(
-                opportunity["contract"], opportunity["order"]
-            )
+            # Initialize parallel integration if not already done
+            await self._initialize_parallel_integration()
 
-            if result:
-                self.data_coordinator.collection_metrics.execution_triggered = True
-                logger.info(f"[{self.symbol}] Order placed successfully")
-                metrics_collector.record_opportunity_found(self.symbol)
-                metrics_collector.finish_scan(success=True)
-            else:
-                logger.warning(f"[{self.symbol}] Order placement failed")
-                metrics_collector.finish_scan(
-                    success=False, error_message="Order placement failed"
+            # Place the order using optimal execution method
+            self.is_active = False  # Prevent multiple executions
+
+            if self.parallel_integrator and self._parallel_integration_initialized:
+                # Use parallel execution integrator
+                logger.info(f"[{self.symbol}] Executing with parallel execution system")
+                execution_result = await self.parallel_integrator.execute_opportunity(
+                    opportunity
                 )
+
+                if execution_result["success"]:
+                    self.data_coordinator.collection_metrics.execution_triggered = True
+                    logger.info(
+                        f"[{self.symbol}] {execution_result['method'].upper()} execution successful: "
+                        f"{execution_result.get('legs_filled', 'N/A')} legs, "
+                        f"slippage: ${execution_result.get('slippage_dollars', 0.0):.2f}"
+                    )
+                    # Note: Opportunity recording is handled by parallel_integration.py to avoid double-counting
+                    metrics_collector.finish_scan(success=True)
+                else:
+                    logger.warning(
+                        f"[{self.symbol}] {execution_result['method'].upper()} execution failed: "
+                        f"{execution_result.get('error_message', 'Unknown error')}"
+                    )
+                    metrics_collector.finish_scan(
+                        success=False,
+                        error_message=execution_result.get(
+                            "error_message", "Execution failed"
+                        ),
+                    )
+            else:
+                # Fallback to traditional combo order execution
+                logger.info(f"[{self.symbol}] Executing with traditional combo orders")
+                result = await self.order_manager.place_order(
+                    opportunity["contract"], opportunity["order"]
+                )
+
+                if result:
+                    self.data_coordinator.collection_metrics.execution_triggered = True
+                    logger.info(f"[{self.symbol}] Combo order placed successfully")
+                    # Note: Don't record opportunity here - wait for execution confirmation
+                    # The opportunity will be recorded in the parallel execution path after fills are confirmed
+                    metrics_collector.finish_scan(success=True)
+                else:
+                    logger.warning(f"[{self.symbol}] Combo order placement failed")
+                    metrics_collector.finish_scan(
+                        success=False, error_message="Order placement failed"
+                    )
 
             self.deactivate()
 

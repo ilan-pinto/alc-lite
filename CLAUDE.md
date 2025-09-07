@@ -136,6 +136,64 @@ python -m pytest tests/test_cli_arguments.py -v
 python -m pytest tests/ -m integration -v
 ```
 
+### Test Failure Analysis (verify-test command)
+
+The `verify-test` command provides automated analysis of pytest test failures, identifying root causes and providing fix recommendations:
+
+```bash
+# Analyze a specific test file
+python alchimest.py verify-test tests/test_global_execution_lock.py
+
+# Analyze all tests with detailed output
+python alchimest.py verify-test tests/ --verbose
+
+# Find similar failures across test files
+python alchimest.py verify-test tests/test_*.py --find-similar
+
+# Get agent consultation recommendations
+python alchimest.py verify-test tests/ --consult-agents
+
+# Quick analysis without similarity search
+python alchimest.py verify-test tests/test_parallel_executor.py --no-similar
+
+# Analyze multiple specific test files
+python alchimest.py verify-test tests/test_sfr.py tests/test_arbitrage.py --verbose --consult-agents
+```
+
+#### verify-test Features
+
+- **Automated Root Cause Analysis**: Identifies whether failures are due to code issues, test issues, environment problems, or dependency issues
+- **Similarity Detection**: Finds similar failure patterns in other test files to identify recurring problems
+- **Agent Consultation**: Recommends which specialized agents (pytest-test-engineer, algotrading-python-expert, etc.) to consult for deeper analysis
+- **Fix Confidence Scoring**: Provides confidence levels for recommended fixes
+- **Comprehensive Reporting**: Rich console output with color-coded results, failure categorization, and actionable recommendations
+
+#### Common Failure Types Identified
+
+1. **Test Issues**: Incorrect test expectations, assertion logic errors, test setup problems
+2. **Code Issues**: Implementation bugs, performance problems, API changes, type mismatches
+3. **Environment Issues**: Network connectivity, external service dependencies, system configuration
+4. **Dependency Issues**: Missing packages, import errors, version conflicts
+
+#### Example Output
+
+```
+Test Verification Summary
+┏━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━┓
+┃ Metric      ┃ Count ┃ Percentage ┃
+┡━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━┩
+│ Total Tests │    22 │      100.0%│
+│ Passed      │    21 │       95.5%│
+│ Failed      │     1 │        4.5%│
+│ Skipped     │     0 │        0.0%│
+└─────────────┴───────┴────────────┘
+
+Root Cause: Test expectation mismatch - concurrent execution timing issue
+Recommendation: Fix test timing by creating proper contention scenarios
+Agent Consultation: pytest-test-engineer (HIGH priority)
+Fix Confidence Score: 85%
+```
+
 ### Code Quality
 ```bash
 # Format code with black

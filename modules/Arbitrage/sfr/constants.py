@@ -95,3 +95,56 @@ RETRY_DELAY_SECONDS = 0.1
 
 # Cache settings
 CONTRACT_CACHE_TTL = 300  # 5 minutes TTL for contract cache
+
+# Parallel execution configuration
+PARALLEL_EXECUTION_ENABLED = True  # Enable/disable parallel execution
+PARALLEL_EXECUTION_TIMEOUT = 30.0  # Maximum time to wait for all legs to fill (seconds)
+PARALLEL_FILL_TIMEOUT_PER_LEG = (
+    10.0  # Maximum time to wait for individual leg (seconds)
+)
+PARALLEL_MAX_SLIPPAGE_PERCENT = 2.0  # Maximum acceptable slippage percentage
+PARALLEL_MAX_GLOBAL_ATTEMPTS = 5  # Maximum global execution attempts per session
+PARALLEL_MAX_SYMBOL_ATTEMPTS = 3  # Maximum execution attempts per symbol
+
+# Partial fill handling
+PARTIAL_FILL_AGGRESSIVE_TIMEOUT = 5.0  # Timeout for aggressive completion attempts
+PARTIAL_FILL_MAX_SLIPPAGE = (
+    0.05  # Maximum slippage for partial fill completion (5 cents)
+)
+PARTIAL_FILL_COMPLETION_ATTEMPTS = 3  # Maximum attempts to complete partial fills
+
+# Rollback configuration
+ROLLBACK_MAX_ATTEMPTS = 3  # Maximum rollback attempts
+ROLLBACK_TIMEOUT_PER_ATTEMPT = 15.0  # Timeout per rollback attempt (seconds)
+ROLLBACK_AGGRESSIVE_PRICING_FACTOR = 0.01  # 1% price adjustment for aggressive rollback
+ROLLBACK_MAX_SLIPPAGE_PERCENT = 3.0  # Maximum acceptable rollback slippage
+
+# Execution reporting
+EXECUTION_REPORT_DEFAULT_LEVEL = "detailed"  # summary, detailed, comprehensive, debug
+EXECUTION_REPORT_AUTO_EXPORT = False  # Auto-export reports to files
+EXECUTION_REPORT_EXPORT_FORMAT = "html"  # html, json, text
+
+# Safety limits
+MAX_CONCURRENT_PARALLEL_EXECUTIONS = 1  # Only one parallel execution at a time globally
+EXECUTION_LOCK_TIMEOUT = 30.0  # Global execution lock timeout (seconds)
+DAILY_PARALLEL_EXECUTION_LIMIT = 20  # Maximum parallel executions per day
+
+# Performance thresholds
+EXECUTION_TIME_WARNING_THRESHOLD = (
+    10.0  # Warn if execution takes longer than this (seconds)
+)
+EXECUTION_TIME_ERROR_THRESHOLD = (
+    30.0  # Error if execution takes longer than this (seconds)
+)
+SLIPPAGE_WARNING_THRESHOLD = 1.0  # Warn if slippage exceeds this (dollars)
+SLIPPAGE_ERROR_THRESHOLD = 5.0  # Error if slippage exceeds this (dollars)
+
+# Monitoring and alerts
+ENABLE_EXECUTION_MONITORING = True  # Enable real-time execution monitoring
+ENABLE_SLIPPAGE_ALERTS = True  # Enable slippage alerts
+ENABLE_PERFORMANCE_LOGGING = True  # Enable detailed performance logging
+
+# Development and testing
+PARALLEL_EXECUTION_DRY_RUN = False  # Enable dry-run mode for testing
+PARALLEL_EXECUTION_DEBUG_MODE = False  # Enable debug mode with extra logging
+SIMULATE_PARTIAL_FILLS = False  # Simulate partial fills for testing (development only)

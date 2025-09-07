@@ -357,10 +357,10 @@ class MarketScenarios:
             "AAPL", expiry, 184.5, "P", stock_price, 35
         )
         put_184_5.bid = 2.80
-        put_184_5.ask = (
-            2.60  # Net credit = 3.20 - 2.60 = 0.60, Spread = 185.50 - 184.5 = 1.00
+        put_184_5.ask = 4.50  # Make expensive to prevent Call 184.5/Put 184.5 profitability: 4.20-4.50=-0.30
+        put_184_5.close = (
+            3.65  # Min profit with Call 185.5: 3.20-4.50=-1.30 (unprofitable)
         )
-        put_184_5.close = 2.70  # Min profit = 0.60 - 1.00 = -0.40 < 0 ❌ (This is still not profitable!)
         put_184_5.volume = 380
         scenarios["AAPL"][put_184_5.contract.conId] = put_184_5
 
@@ -401,6 +401,32 @@ class MarketScenarios:
                     "AAPL", expiry, strike, right, stock_price, 35
                 )
                 ticker.volume = max(100, ticker.volume // 3)
+
+                # CRITICAL: Override pricing to prevent all unintended arbitrage opportunities
+                # Only the intended Call 184.5 / Put 183.5 combination should be profitable
+                if strike == 185.5 and right == "P":
+                    # Prevent Call 185.5 / Put 185.5 from being profitable
+                    ticker.bid = 2.50  # High bid
+                    ticker.ask = 4.00  # Very expensive to buy
+                    ticker.close = 3.80
+                elif strike == 182.5 and right == "P":
+                    # Prevent multiple Call/Put 182.5 combinations from being profitable
+                    # Need to make it expensive enough to kill profitability with various calls
+                    ticker.bid = 0.10
+                    ticker.ask = 4.50  # Very expensive - kills Call 184.5/Put 182.5 (4.20-4.50=-0.30)
+                    ticker.close = 2.30
+                elif strike == 182.5 and right == "C":
+                    # Prevent Call 182.5 / Put 182.5 from being profitable (same strike)
+                    # Make the call bid very low so net credit becomes negative
+                    ticker.bid = 0.05  # Very low bid - hard to sell profitably
+                    ticker.ask = 0.20
+                    ticker.close = 0.12
+                elif strike == 183.5 and right == "C":
+                    # Prevent Call 183.5 / Put 183.5 and Call 183.5 / Put 182.5 from being profitable
+                    ticker.bid = 0.05  # Very low bid
+                    ticker.ask = 0.20
+                    ticker.close = 0.12
+
                 scenarios["AAPL"][ticker.contract.conId] = ticker
 
         # MSFT: No arbitrage (spread >= net_credit)

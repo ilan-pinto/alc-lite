@@ -405,6 +405,61 @@ class BaseExecutor:
         """Deactivate the executor"""
         self.is_active = False
 
+    def pause_execution(self, reason: str = "manual_pause") -> None:
+        """
+        Pause the executor from processing new opportunities.
+        Used during parallel execution to prevent interference.
+
+        Args:
+            reason: Reason for pausing execution
+        """
+        if hasattr(self, "execution_paused"):
+            if not self.execution_paused:
+                self.execution_paused = True
+                self.pause_reason = reason
+                logger.info(f"[{self.symbol}] Executor paused: {reason}")
+        else:
+            # Initialize pause state if not already present
+            self.execution_paused = True
+            self.pause_reason = reason
+            logger.info(f"[{self.symbol}] Executor paused: {reason}")
+
+    def resume_execution(self) -> None:
+        """
+        Resume the executor to process opportunities normally.
+        Used after parallel execution completion or failure.
+        """
+        if hasattr(self, "execution_paused") and self.execution_paused:
+            previous_reason = getattr(self, "pause_reason", "unknown")
+            self.execution_paused = False
+            self.pause_reason = None
+            logger.info(
+                f"[{self.symbol}] Executor resumed (was paused: {previous_reason})"
+            )
+        else:
+            # Initialize resume state if not already present
+            self.execution_paused = False
+            self.pause_reason = None
+            logger.debug(f"[{self.symbol}] Executor resume called (was not paused)")
+
+    def is_execution_paused(self) -> bool:
+        """
+        Check if execution is currently paused.
+
+        Returns:
+            True if execution is paused, False otherwise
+        """
+        return getattr(self, "execution_paused", False)
+
+    def get_pause_reason(self) -> str:
+        """
+        Get the reason for current pause state.
+
+        Returns:
+            Reason string if paused, empty string if not paused
+        """
+        return getattr(self, "pause_reason", "") if self.is_execution_paused() else ""
+
     async def executor(self, event: Event) -> None:
         """Base executor method - should be overridden by subclasses."""
         try:
@@ -533,6 +588,63 @@ class ArbitrageClass:
         logger.info(
             f"Deactivated {len(self.active_executors)} executors due to order fill"
         )
+
+    def pause_all_executors(self, reason: str = "global_pause") -> int:
+        """
+        Pause all active executors.
+        Used during parallel execution to prevent interference.
+
+        Args:
+            reason: Reason for pausing all executors
+
+        Returns:
+            Number of executors that were paused
+        """
+        paused_count = 0
+        for executor in self.active_executors.values():
+            if executor.is_active and not executor.is_execution_paused():
+                executor.pause_execution(reason)
+                paused_count += 1
+
+        if paused_count > 0:
+            logger.info(f"Paused {paused_count} executors: {reason}")
+
+        return paused_count
+
+    def resume_all_executors(self) -> int:
+        """
+        Resume all paused executors.
+        Used after parallel execution completion.
+
+        Returns:
+            Number of executors that were resumed
+        """
+        resumed_count = 0
+        for executor in self.active_executors.values():
+            if executor.is_active and executor.is_execution_paused():
+                executor.resume_execution()
+                resumed_count += 1
+
+        if resumed_count > 0:
+            logger.info(f"Resumed {resumed_count} executors")
+
+        return resumed_count
+
+    def get_executor_pause_status(self) -> Dict[str, Dict[str, any]]:
+        """
+        Get pause status for all executors.
+
+        Returns:
+            Dictionary mapping symbol to pause status info
+        """
+        status = {}
+        for symbol, executor in self.active_executors.items():
+            status[symbol] = {
+                "is_active": executor.is_active,
+                "is_paused": executor.is_execution_paused(),
+                "pause_reason": executor.get_pause_reason(),
+            }
+        return status
 
     def cleanup_inactive_executors(self):
         """Remove inactive executors to prevent memory leaks"""
