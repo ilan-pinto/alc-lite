@@ -100,6 +100,15 @@ class SFR(ArbitrageClass):
 
         try:
             while not self.order_filled:
+                # Check if executor is paused per ADR-003
+                current_symbol = getattr(self, "current_scanning_symbol", None)
+                if self.is_paused(current_symbol):
+                    logger.debug(
+                        "Executor is paused - waiting during parallel execution"
+                    )
+                    await asyncio.sleep(0.1)  # Small delay while paused
+                    continue
+
                 # Start cycle tracking
                 _ = metrics_collector.start_cycle(len(symbol_list))
 
@@ -108,6 +117,11 @@ class SFR(ArbitrageClass):
                     # Check if order was filled during symbol processing
                     if self.order_filled:
                         break
+
+                    # Check if this symbol's executor should be paused per ADR-003
+                    if self.is_paused(symbol):
+                        logger.debug(f"[{symbol}] Skipping scan - executor is paused")
+                        continue
 
                     # Use throttled scanning instead of fixed delays
                     task = asyncio.create_task(
@@ -137,9 +151,23 @@ class SFR(ArbitrageClass):
                     metrics_collector.print_summary()
 
                 # Check if order was filled before continuing
+                # For parallel execution, wait until all legs are complete
                 if self.order_filled:
-                    logger.info("Order filled - exiting scan loop")
-                    break
+                    if self.parallel_execution_in_progress:
+                        if self.parallel_execution_complete:
+                            logger.info(
+                                "All parallel legs completed - exiting scan loop"
+                            )
+                            break
+                        else:
+                            logger.info(
+                                f"Order filled for {self.active_parallel_symbol} but parallel execution still in progress - continuing scan"
+                            )
+                            # Reset order_filled to false so scan continues until parallel execution completes
+                            self.order_filled = False
+                    else:
+                        logger.info("Order filled (sequential) - exiting scan loop")
+                        break
 
                 # Reset for next iteration
                 contract_ticker = {}
@@ -665,6 +693,7 @@ class SFR(ArbitrageClass):
                 start_time=time.time(),
                 quantity=quantity,
                 data_timeout=5.0,  # Give more time for data collection
+                strategy=self,
             )
 
             # Set the global contract_ticker reference

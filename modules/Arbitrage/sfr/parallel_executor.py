@@ -96,11 +96,13 @@ class ParallelLegExecutor:
         self,
         ib: IB,
         symbol: str,
+        strategy=None,
         on_execution_complete: Optional[Callable] = None,
         on_execution_failed: Optional[Callable] = None,
     ):
         self.ib = ib
         self.symbol = symbol
+        self.strategy = strategy
         self.executor_id = f"parallel_{symbol}_{int(time.time())}"
 
         # Callback functions
@@ -154,6 +156,16 @@ class ParallelLegExecutor:
             logger.error(f"[{self.symbol}] Failed to initialize parallel executor: {e}")
             return False
 
+    def _cleanup_strategy_flags(self):
+        """Clean up parallel execution flags in strategy."""
+        if self.strategy:
+            self.strategy.parallel_execution_in_progress = False
+            self.strategy.parallel_execution_complete = False
+            self.strategy.active_parallel_symbol = None
+            logger.info(
+                f"[{self.symbol}] Parallel execution flags cleaned up in strategy"
+            )
+
     async def execute_parallel_arbitrage(
         self,
         stock_contract: Contract,
@@ -183,18 +195,29 @@ class ParallelLegExecutor:
         Returns:
             ExecutionResult with complete execution details
         """
+        # Set parallel execution flags in strategy
+        if self.strategy:
+            self.strategy.parallel_execution_in_progress = True
+            self.strategy.parallel_execution_complete = False
+            self.strategy.active_parallel_symbol = self.symbol
+            logger.info(
+                f"[{self.symbol}] Parallel execution started - flags set in strategy"
+            )
+
         self._total_attempts += 1
         self._global_attempt_count += 1
         self._symbol_attempt_count[self.symbol] += 1
 
         # Check attempt limits
         if self._global_attempt_count > PARALLEL_MAX_GLOBAL_ATTEMPTS:
+            self._cleanup_strategy_flags()
             return self._create_error_result(
                 "global_attempt_limit_exceeded",
                 f"Global attempt limit of {PARALLEL_MAX_GLOBAL_ATTEMPTS} exceeded",
             )
 
         if self._symbol_attempt_count[self.symbol] > PARALLEL_MAX_SYMBOL_ATTEMPTS:
+            self._cleanup_strategy_flags()
             return self._create_error_result(
                 "symbol_attempt_limit_exceeded",
                 f"Symbol attempt limit of {PARALLEL_MAX_SYMBOL_ATTEMPTS} exceeded for {self.symbol}",
@@ -212,12 +235,20 @@ class ParallelLegExecutor:
         )
 
         if not lock_acquired:
+            self._cleanup_strategy_flags()
             return self._create_error_result(
                 "lock_timeout", "Failed to acquire global execution lock within timeout"
             )
 
         try:
-            # Step 2: Create execution plan
+            # Step 2: Pause all other executors per ADR-003
+            if self.strategy:
+                await self.strategy.pause_all_other_executors(self.symbol)
+                logger.info(
+                    f"[{self.symbol}] All other executors paused during parallel execution"
+                )
+
+            # Step 3: Create execution plan
             expiry = getattr(call_contract, "lastTradeDateOrContractMonth", "unknown")
 
             execution_plan = await self.framework.create_execution_plan(
@@ -352,6 +383,16 @@ class ParallelLegExecutor:
 
                 total_time = time.time() - start_time
 
+                # Stop all executors per ADR-003 (successful execution)
+                if self.strategy:
+                    await self.strategy.stop_all_executors()
+                    logger.info(
+                        f"[{self.symbol}] All executors stopped - successful parallel execution"
+                    )
+
+                # Clean up strategy flags on successful completion
+                self._cleanup_strategy_flags()
+
                 return ExecutionResult(
                     success=True,
                     execution_id=plan.execution_id,
@@ -388,13 +429,23 @@ class ParallelLegExecutor:
 
                 total_time = time.time() - start_time
 
+                # Resume all executors per ADR-003 (execution failed/partial)
+                if self.strategy:
+                    await self.strategy.resume_all_executors()
+                    logger.info(
+                        f"[{self.symbol}] All executors resumed after partial fill/rollback"
+                    )
+
+                # Clean up strategy flags on partial fill/rollback
+                self._cleanup_strategy_flags()
+
                 return ExecutionResult(
                     success=False,
                     execution_id=plan.execution_id,
                     symbol=self.symbol,
                     total_execution_time=total_time,
                     all_legs_filled=False,
-                    partially_filled=True,
+                    partially_filled=fill_result["filled_count"] > 0,
                     legs_filled=fill_result["filled_count"],
                     total_legs=3,
                     expected_total_cost=expected_cost,
@@ -415,6 +466,21 @@ class ParallelLegExecutor:
         except Exception as e:
             total_time = time.time() - start_time
             logger.error(f"[{self.symbol}] Critical error in parallel execution: {e}")
+
+            # Resume all executors per ADR-003 (execution error)
+            if self.strategy:
+                try:
+                    await self.strategy.resume_all_executors()
+                    logger.info(
+                        f"[{self.symbol}] All executors resumed after execution error"
+                    )
+                except Exception as resume_error:
+                    logger.error(
+                        f"[{self.symbol}] Failed to resume executors: {resume_error}"
+                    )
+
+            # Clean up strategy flags on error
+            self._cleanup_strategy_flags()
 
             return ExecutionResult(
                 success=False,
@@ -475,6 +541,13 @@ class ParallelLegExecutor:
                 if fill_status["filled_count"] == len(legs):
                     fill_status["all_filled"] = True
                     logger.info(f"[{self.symbol}] ✓ ALL LEGS FILLED successfully!")
+
+                    # Set parallel execution complete flag in strategy
+                    if self.strategy:
+                        self.strategy.parallel_execution_complete = True
+                        logger.info(
+                            f"[{self.symbol}] Parallel execution complete - strategy can now exit"
+                        )
                     break
 
                 # Check individual leg timeouts

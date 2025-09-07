@@ -5,7 +5,6 @@ import pyfiglet
 import warnings
 
 from commands.option import OptionScan
-from commands.verify_test import run_verify_test_command
 from modules.Arbitrage.common import configure_logging
 from modules.Arbitrage.metrics import metrics_collector
 from modules.welcome import print_welcome
@@ -430,51 +429,6 @@ def main() -> None:
         "--reset", action="store_true", help="Reset metrics after generating report"
     )
 
-    # Test verification sub-command
-    parser_verify = subparsers.add_parser(
-        "verify-test",
-        help="Analyze pytest test failures and provide root cause analysis with fix recommendations",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        description="Automatically run pytest tests, analyze any failures, identify root causes, "
-        "search for similar failures in other tests, and provide recommendations for fixes. "
-        "Can consult with specialized agents for deeper analysis.",
-        epilog="Examples:\n"
-        "  Verify specific test file:\n"
-        "    %(prog)s verify-test tests/test_global_execution_lock.py\n\n"
-        "  Verify all tests with detailed analysis:\n"
-        "    %(prog)s verify-test tests/ --verbose --find-similar\n\n"
-        "  Get agent consultation for complex failures:\n"
-        "    %(prog)s verify-test tests/test_*.py --consult-agents\n\n"
-        "  Quick verification without similarity search:\n"
-        "    %(prog)s verify-test tests/test_parallel_executor.py --no-similar\n",
-    )
-    parser_verify.add_argument(
-        "test_paths",
-        nargs="+",
-        help="Test file paths or directories to verify (e.g., tests/test_file.py, tests/)",
-    )
-    parser_verify.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose output with detailed failure analysis",
-    )
-    parser_verify.add_argument(
-        "--find-similar",
-        action="store_true",
-        default=True,
-        help="Search for similar failures in other test files (default: enabled)",
-    )
-    parser_verify.add_argument(
-        "--no-similar",
-        action="store_true",
-        help="Disable similarity search for faster execution",
-    )
-    parser_verify.add_argument(
-        "--consult-agents",
-        action="store_true",
-        help="Provide recommendations for consulting with specialized agents",
-    )
     parser_syn.add_argument(
         "-s", "--symbols", nargs="+", help="List of symbols to scan (e.g., !MES, @SPX)"
     )
@@ -733,27 +687,6 @@ def main() -> None:
         if args.reset:
             metrics_collector.reset_session()
             print("Metrics have been reset.")
-
-    elif args.command == "verify-test":
-        # Handle --no-similar flag by inverting find_similar
-        find_similar = (
-            not args.no_similar
-            if hasattr(args, "no_similar") and args.no_similar
-            else args.find_similar
-        )
-
-        # Run test verification
-        results = run_verify_test_command(
-            test_paths=args.test_paths,
-            verbose=args.verbose,
-            find_similar=find_similar,
-            consult_agents=args.consult_agents,
-            console=console,
-        )
-
-        # Exit with error code if tests failed
-        if results.get("failed", 0) > 0:
-            exit(1)
 
     else:
         parser.print_help()

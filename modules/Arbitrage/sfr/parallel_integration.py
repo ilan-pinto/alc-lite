@@ -53,11 +53,13 @@ class ParallelExecutionIntegrator:
         order_manager: Any,
         symbol: str,
         opportunity_evaluator: OpportunityEvaluator,
+        strategy=None,
     ):
         self.ib = ib
         self.order_manager = order_manager
         self.symbol = symbol
         self.opportunity_evaluator = opportunity_evaluator
+        self.strategy = strategy
 
         # Parallel execution components
         self.parallel_executor: Optional[ParallelLegExecutor] = None
@@ -87,6 +89,7 @@ class ParallelExecutionIntegrator:
                 self.parallel_executor = ParallelLegExecutor(
                     ib=self.ib,
                     symbol=self.symbol,
+                    strategy=self.strategy,
                     on_execution_complete=self._on_execution_complete,
                     on_execution_failed=self._on_execution_failed,
                 )
@@ -137,22 +140,11 @@ class ParallelExecutionIntegrator:
         if PARALLEL_EXECUTION_DRY_RUN:
             return False, "dry_run_mode_enabled"
 
-        # Check opportunity characteristics
-        profit = opportunity.get("guaranteed_profit", 0.0)
-        if profit < 0.20:  # Less than 20 cents profit
-            return False, f"profit_too_low_for_parallel_{profit:.2f}"
-
         # Check if we have all required data
         if not self._has_sufficient_data_for_parallel(opportunity):
             return False, "insufficient_data_for_parallel"
 
-        # Check market conditions (simplified)
-        if market_conditions:
-            volatility = market_conditions.get("volatility", "normal")
-            if volatility == "high":
-                return False, "high_volatility_detected"
-
-        # Check recent performance
+        # Check recent performance (informational only - doesn't block execution)
         recent_success_rate = self._get_recent_parallel_success_rate()
         if recent_success_rate < 0.7:  # Less than 70% success rate recently
             logger.warning(
@@ -160,7 +152,7 @@ class ParallelExecutionIntegrator:
             )
             # Still proceed but log warning
 
-        return True, f"parallel_execution_favorable_profit_{profit:.2f}"
+        return True, "parallel_execution_enabled"
 
     async def execute_opportunity(
         self, opportunity: Dict, force_parallel: bool = False, force_combo: bool = False
@@ -581,7 +573,11 @@ class ParallelExecutionIntegrator:
 
 # Convenience function for easy integration
 async def create_parallel_integrator(
-    ib: IB, order_manager: Any, symbol: str, opportunity_evaluator: OpportunityEvaluator
+    ib: IB,
+    order_manager: Any,
+    symbol: str,
+    opportunity_evaluator: OpportunityEvaluator,
+    strategy=None,
 ) -> ParallelExecutionIntegrator:
     """
     Create and initialize a parallel execution integrator.
@@ -591,12 +587,13 @@ async def create_parallel_integrator(
         order_manager: Order manager instance
         symbol: Trading symbol
         opportunity_evaluator: Opportunity evaluator instance
+        strategy: Strategy instance for tracking parallel execution state
 
     Returns:
         Initialized ParallelExecutionIntegrator
     """
     integrator = ParallelExecutionIntegrator(
-        ib, order_manager, symbol, opportunity_evaluator
+        ib, order_manager, symbol, opportunity_evaluator, strategy
     )
 
     success = await integrator.initialize()

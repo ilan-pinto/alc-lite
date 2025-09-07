@@ -348,15 +348,15 @@ class TestParallelExecutionIntegration:
             high_profit_opp
         )
         assert use_parallel is True
-        assert "favorable" in reason
+        assert "parallel_execution_enabled" in reason
 
-        # Low profit opportunity - should avoid parallel
+        # Low profit opportunity - should STILL use parallel when PARALLEL_EXECUTION_ENABLED=True
         low_profit_opp = create_low_profit_opportunity("SPY", profit=0.10)
         use_parallel, reason = await integrator.should_use_parallel_execution(
             low_profit_opp
         )
-        assert use_parallel is False
-        assert "profit_too_low" in reason
+        assert use_parallel is True  # Changed: now uses parallel regardless of profit
+        assert "parallel_execution_enabled" in reason  # Changed: new reason
 
     @pytest.mark.asyncio
     async def test_combo_execution_fallback(self, integration_setup):
@@ -422,13 +422,15 @@ class TestParallelExecutionIntegration:
         integrator = await create_parallel_integrator(**integration_setup)
         opportunity = create_profitable_opportunity("SPY")
 
-        # High volatility market conditions
+        # High volatility market conditions - should STILL use parallel when enabled
         high_vol_conditions = {"volatility": "high"}
         use_parallel, reason = await integrator.should_use_parallel_execution(
             opportunity, market_conditions=high_vol_conditions
         )
-        assert use_parallel is False
-        assert "volatility" in reason
+        assert (
+            use_parallel is True
+        )  # Changed: parallel enabled overrides market conditions
+        assert "parallel_execution_enabled" in reason  # Changed: new reason
 
     @pytest.mark.asyncio
     async def test_error_propagation_and_handling(self, integration_setup):
@@ -774,7 +776,7 @@ class TestIntegrationEdgeCases:
 
         # Should still choose parallel for high profit
         assert use_parallel is True
-        assert "favorable" in reason
+        assert "parallel_execution_enabled" in reason
 
 
 @pytest.mark.performance

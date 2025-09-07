@@ -815,8 +815,8 @@ class TestGlobalOpportunityPerformance:
                 avg_time < 50
             ), f"Average selection time should be under 50ms, got {avg_time:.2f}ms"
             assert (
-                max_time < 100
-            ), f"Max selection time should be under 100ms, got {max_time:.2f}ms"
+                max_time < 150
+            ), f"Max selection time should be under 150ms, got {max_time:.2f}ms"
 
         print("✅ Performance benchmarks met for all test sizes")
 

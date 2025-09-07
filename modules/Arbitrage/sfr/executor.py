@@ -54,6 +54,7 @@ class SFRExecutor(BaseExecutor):
         quantity: int = 1,
         start_time: float = None,
         data_timeout: float = DEFAULT_DATA_TIMEOUT,
+        strategy=None,
     ) -> None:
         """Initialize the SFR Executor with modular components."""
         # Create list of all option contracts
@@ -82,6 +83,7 @@ class SFRExecutor(BaseExecutor):
         self.is_active = True
         self.data_timeout = data_timeout
         self.start_time = start_time or time.time()
+        self.strategy = strategy
 
         # Initialize modular components
         self.data_manager = DataCollectionManager(symbol)
@@ -121,6 +123,7 @@ class SFRExecutor(BaseExecutor):
                 order_manager=self.order_manager,
                 symbol=self.symbol,
                 opportunity_evaluator=self.opportunity_evaluator,
+                strategy=self.strategy,
             )
 
             self._parallel_integration_initialized = True
@@ -606,6 +609,12 @@ class SFRExecutor(BaseExecutor):
                         f"{execution_result.get('legs_filled', 'N/A')} legs, "
                         f"slippage: ${execution_result.get('slippage_dollars', 0.0):.2f}"
                     )
+                    # Set order_filled flag to exit scan loop
+                    if self.strategy:
+                        self.strategy.order_filled = True
+                        logger.info(
+                            f"[{self.symbol}] Setting order_filled flag to exit scan loop"
+                        )
                     # Note: Opportunity recording is handled by parallel_integration.py to avoid double-counting
                     metrics_collector.finish_scan(success=True)
                 else:

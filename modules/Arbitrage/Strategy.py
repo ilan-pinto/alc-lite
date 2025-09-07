@@ -485,6 +485,16 @@ class ArbitrageClass:
         self.active_executors: Dict[str, BaseExecutor] = {}
         self.order_filled = False  # Flag to track when an order is filled
 
+        # Parallel execution tracking
+        self.parallel_execution_in_progress = False
+        self.parallel_execution_complete = False
+        self.active_parallel_symbol = (
+            None  # Track which symbol is executing in parallel
+        )
+
+        # Executor pause/resume management per ADR-003
+        self._executor_paused = False
+
         # Persistent state management for optimization
         self.symbol_chain_cache = {}  # Cache options chains per symbol
         self.last_scan_time = {}  # Track last scan time per symbol
@@ -538,9 +548,25 @@ class ArbitrageClass:
         """Called whenever any order gets filled (partially or fully)."""
         if log_filled_order(trade):
             metrics_collector.record_order_filled()
-            # Set flag to signal that an order was filled
-            self.order_filled = True
-            logger.info("Order filled - will exit after printing metrics")
+
+            # Handle parallel vs sequential execution differently
+            if self.parallel_execution_in_progress:
+                # For parallel execution, only set order_filled when parallel execution is complete
+                # The parallel executor will set parallel_execution_complete when all legs are done
+                logger.info(
+                    f"Order filled during parallel execution (symbol: {self.active_parallel_symbol}) - waiting for all legs to complete"
+                )
+                if self.parallel_execution_complete:
+                    self.order_filled = True
+                    logger.info(
+                        "All parallel legs completed - will exit after printing metrics"
+                    )
+                # Note: If parallel execution is still in progress, order_filled remains True
+                # but the exit logic in scan loop will reset it and continue until completion
+            else:
+                # For sequential execution, behave as before
+                self.order_filled = True
+                logger.info("Order filled - will exit after printing metrics")
 
     async def master_executor(self, event: Event) -> None:
         """
@@ -1487,3 +1513,78 @@ class ArbitrageClass:
         except Exception as e:
             logger.error(f"Error analyzing VIX correlation performance: {e}")
             return {"error": str(e)}
+
+    # Executor pause/resume methods per ADR-003
+    async def pause_all_other_executors(self, executing_symbol: str) -> None:
+        """
+        Pause all executors except the one currently executing.
+
+        This implements the pause behavior specified in ADR-003 where during
+        parallel execution, all other symbol executors pause their scanning
+        to avoid interference while maintaining the global execution lock.
+
+        Args:
+            executing_symbol: The symbol that is currently executing and should not be paused
+        """
+        logger.info(f"[{executing_symbol}] Pausing all other executors per ADR-003")
+        self._executor_paused = True
+        self.active_parallel_symbol = executing_symbol
+        logger.debug(
+            f"Executor pause state: paused={self._executor_paused}, active_symbol={executing_symbol}"
+        )
+
+    async def resume_all_executors(self) -> None:
+        """
+        Resume all paused executors after execution completes or fails.
+
+        This allows other symbols to continue scanning after a parallel
+        execution attempt has finished (whether successful or not).
+        """
+        logger.info("Resuming all executors - execution completed/failed")
+        self._executor_paused = False
+        self.active_parallel_symbol = None
+        logger.debug(
+            f"Executor pause state: paused={self._executor_paused}, active_symbol=None"
+        )
+
+    async def stop_all_executors(self) -> None:
+        """
+        Stop all executors after successful execution.
+
+        Per ADR-003, when a successful execution occurs, all scanning should stop
+        and the program should prepare to exit since the arbitrage opportunity
+        has been captured.
+        """
+        logger.info("Stopping all executors - successful execution captured")
+        self._executor_paused = True
+        self.active_parallel_symbol = None  # Clear active symbol for full stop
+        self.order_filled = True  # This will cause scan loops to exit
+        logger.debug("All executors stopped - will exit after metrics")
+
+    def is_paused(self, symbol: str = None) -> bool:
+        """
+        Check if the executor for the given symbol should be paused.
+
+        Args:
+            symbol: The symbol to check for pause state
+
+        Returns:
+            True if this symbol's executor should pause scanning, False otherwise
+        """
+        # If not paused globally, no one is paused
+        if not self._executor_paused:
+            return False
+
+        # If paused globally, only the active parallel symbol continues
+        # If active_parallel_symbol is None (stop state), all symbols are paused
+        if self.active_parallel_symbol is None:
+            is_paused = True
+        else:
+            is_paused = symbol != self.active_parallel_symbol
+
+        if is_paused and symbol:
+            logger.debug(
+                f"[{symbol}] Executor is paused (active: {self.active_parallel_symbol})"
+            )
+
+        return is_paused

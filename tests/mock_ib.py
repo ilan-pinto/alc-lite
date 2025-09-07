@@ -480,6 +480,34 @@ class MockIB:
         self.reqId_counter += numIds
         return self.reqId_counter
 
+    def placeOrder(self, contract: Contract, order) -> object:
+        """Mock synchronous order placement"""
+        # Create mock trade object
+        trade = MagicMock()
+        trade.contract = contract
+        trade.order = order
+
+        # Set orderId if not present
+        if not hasattr(order, "orderId") or order.orderId is None:
+            order.orderId = self.reqId_counter
+            self.reqId_counter += 1
+
+        # Configure orderStatus mock
+        trade.orderStatus.status = "Submitted"
+        trade.orderStatus.orderId = order.orderId
+        trade.orderStatus.filled = getattr(order, "totalQuantity", 100)
+        trade.orderStatus.avgFillPrice = getattr(order, "lmtPrice", 100.0)
+
+        # Simulate immediate fill for testing
+        trade.orderStatus.status = "Filled"
+
+        return trade
+
+    def cancelOrder(self, order) -> None:
+        """Mock synchronous order cancellation"""
+        if hasattr(order, "orderStatus"):
+            order.orderStatus.status = "Cancelled"
+
     async def placeOrderAsync(self, contract: Contract, order) -> object:
         """Mock order placement"""
         # Create mock trade object
