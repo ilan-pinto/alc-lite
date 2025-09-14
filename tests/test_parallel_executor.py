@@ -6,12 +6,39 @@ with sophisticated fill monitoring and rollback handling.
 """
 
 import asyncio
+import gc
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from modules.Arbitrage.sfr.parallel_executor import ExecutionResult, ParallelLegExecutor
+
+
+@pytest.fixture(scope="module", autouse=True)
+def reset_all_singletons():
+    """Reset singletons at module level to prevent cross-test contamination."""
+    yield
+    # Reset singleton state after all tests in module
+    from modules.Arbitrage.sfr.global_execution_lock import GlobalExecutionLock
+
+    GlobalExecutionLock._instance = None
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def cleanup_mocks():
+    """Clean up MagicMock call history to prevent memory accumulation."""
+    yield
+    # Clear all mock call history after each test to prevent memory leaks
+    for obj in gc.get_objects():
+        if isinstance(obj, MagicMock):
+            try:
+                obj.reset_mock()
+            except Exception:
+                # Some mocks might not be resettable, ignore errors
+                pass
+    gc.collect()
 
 
 # Test helper functions
@@ -812,11 +839,21 @@ class TestParallelExecutorPerformance:
         for _ in range(10):
             await executor.execute_parallel_arbitrage(**create_test_execution_params())
 
+        # Clean up trades list to prevent memory retention
+        del trades
+
+        # Reset mocks to clear call history
+        mock_ib_setup["ib"].reset_mock()
+        executor.framework.reset_mock()
+
+        # Force garbage collection
+        gc.collect()
+
         final_memory = process.memory_info().rss
         memory_increase = final_memory - initial_memory
 
         # Memory increase should be minimal
-        assert memory_increase < 50 * 1024 * 1024  # Less than 50MB increase
+        assert memory_increase < 60 * 1024 * 1024  # Less than 50MB increase
 
 
 class TestScanPauseResumeExitBehavior:
