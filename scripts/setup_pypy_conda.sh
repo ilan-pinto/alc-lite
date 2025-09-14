@@ -5,7 +5,8 @@
 set -e  # Exit on any error
 
 echo "🏎️ Setting up PyPy environment for alc-lite..."
-echo "This will create a conda environment 'alc-pypy' with PyPy 3.10"
+echo "This will create a conda environment 'alc-pypy' with Python 3.10.14 and PyPy 3.10"
+echo "Having both CPython and PyPy available provides maximum compatibility."
 echo
 
 # Check if conda is available
@@ -31,12 +32,15 @@ if conda env list | grep -q "alc-pypy"; then
     fi
 fi
 
-echo "📦 Creating conda environment with PyPy..."
-conda create -n alc-pypy -c conda-forge pypy3.10 -y
+echo "📦 Creating conda environment with Python 3.10.14..."
+conda create -n alc-pypy python=3.10.14 -y
 
-echo "🔧 Activating environment and setting up pip..."
+echo "⚡ Installing PyPy in the environment..."
 eval "$(conda shell.bash hook)"
 conda activate alc-pypy
+conda install -c conda-forge pypy3.10 -y
+
+echo "🔧 Setting up pip with PyPy..."
 
 # Ensure pip is available and up to date
 pypy3 -m ensurepip --default-pip

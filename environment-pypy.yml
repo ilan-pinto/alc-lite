@@ -3,6 +3,9 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  # Base Python (will be supplemented with PyPy)
+  - python=3.10.14
+
   # PyPy runtime
   - pypy3.10
 

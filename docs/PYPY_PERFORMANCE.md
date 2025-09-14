@@ -70,11 +70,12 @@ This script will:
 If you prefer manual installation:
 
 ```bash
-# Create conda environment
-conda create -n alc-pypy -c conda-forge pypy3.10 -y
+# Create conda environment with Python 3.10.14
+conda create -n alc-pypy python=3.10.14 -y
 
-# Activate environment
+# Activate environment and install PyPy
 conda activate alc-pypy
+conda install -c conda-forge pypy3.10 -y
 
 # Install dependencies
 pypy3 -m ensurepip --default-pip
