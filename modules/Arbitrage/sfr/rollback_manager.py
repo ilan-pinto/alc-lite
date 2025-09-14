@@ -162,7 +162,7 @@ class RollbackManager:
 
     def _add_rollback_attempt(self, attempt: RollbackAttempt) -> None:
         """Add rollback attempt with memory limit enforcement."""
-        self._add_rollback_attempt(attempt)
+        self.rollback_attempts.append(attempt)
         # Limit attempts history to prevent memory leaks
         if len(self.rollback_attempts) > self._max_rollback_attempts:
             self.rollback_attempts.pop(0)
@@ -468,6 +468,18 @@ class RollbackManager:
             plan.rollback_status = "completed" if result["success"] else "failed"
             return result
 
+        except RecursionError as re:
+            plan.rollback_status = "failed"
+            error_msg = f"Recursion error in rollback: {str(re)}"
+            logger.error(f"[{self.symbol}] {error_msg}")
+            # Emergency market order fallback for recursion errors
+            emergency_result = await self._emergency_market_rollback(plan)
+            return {
+                "success": False,
+                "error_message": error_msg,
+                "positions_unwound": emergency_result.get("positions_unwound", 0),
+                "emergency_fallback": True,
+            }
         except Exception as e:
             plan.rollback_status = "failed"
             logger.error(f"[{self.symbol}] Error in rollback strategy execution: {e}")
@@ -517,7 +529,10 @@ class RollbackManager:
                 )
                 position.rollback_trade = unwind_trade
                 position.rollback_order = market_order
-                position.unwind_status = "unwinding"
+
+                # Update tracking
+                self._update_rollback_tracking(rollback_plan, position, "unwinding")
+                self._log_rollback_order_placement(position, "market")
 
                 # Wait for fill (market orders should fill quickly)
                 fill_start = time.time()
@@ -529,7 +544,14 @@ class RollbackManager:
                         slippage = abs(fill_price - position.avg_fill_price)
                         cost = fill_price * position.current_quantity
 
-                        position.unwind_status = "completed"
+                        # Update tracking
+                        self._update_rollback_tracking(
+                            rollback_plan, position, "completed"
+                        )
+                        self._log_rollback_order_fill(
+                            position, fill_price, position.current_quantity
+                        )
+
                         unwound_count += 1
                         total_cost += cost
                         total_slippage += slippage
@@ -628,13 +650,48 @@ class RollbackManager:
 
         success = total_unwound == plan.total_positions
 
+        # Market order fallback if aggressive limit fails
+        if not success and total_unwound < plan.total_positions:
+            logger.warning(
+                f"[{self.symbol}] Aggressive limit rollback incomplete ({total_unwound}/{plan.total_positions}). "
+                f"Triggering market order fallback."
+            )
+
+            # Get remaining positions
+            remaining_positions = [
+                p for p in plan.positions_to_unwind if p.unwind_status == "pending"
+            ]
+
+            if remaining_positions:
+                # Execute market order fallback
+                market_fallback_result = await self._execute_market_order_fallback(
+                    plan, remaining_positions
+                )
+
+                # Update totals with fallback results
+                total_unwound += market_fallback_result["unwound_count"]
+                total_cost += market_fallback_result["cost"]
+                total_slippage += market_fallback_result["slippage"]
+
+                # Update final plan results
+                plan.positions_unwound = total_unwound
+                plan.total_rollback_cost = total_cost
+                plan.rollback_slippage = total_slippage
+
+                success = total_unwound == plan.total_positions
+
         return {
             "success": success,
             "positions_unwound": total_unwound,
             "total_cost": total_cost,
             "total_slippage": total_slippage,
             "attempts_used": min(attempt_num, ROLLBACK_MAX_ATTEMPTS),
-            "method": "aggressive_limit",
+            "method": (
+                "aggressive_limit_with_market_fallback"
+                if total_unwound > 0
+                else "aggressive_limit"
+            ),
+            "market_fallback_used": total_unwound > 0 and not success,
         }
 
     async def _execute_single_aggressive_attempt(
@@ -683,7 +740,10 @@ class RollbackManager:
                 )
                 position.rollback_trade = unwind_trade
                 position.rollback_order = aggressive_order
-                position.unwind_status = "unwinding"
+
+                # Update tracking
+                self._update_rollback_tracking(rollback_plan, position, "unwinding")
+                self._log_rollback_order_placement(position, "aggressive_limit")
 
                 logger.debug(
                     f"[{self.symbol}] Placed aggressive {unwind_action} order: "
@@ -865,7 +925,10 @@ class RollbackManager:
                 )
                 position.rollback_trade = unwind_trade
                 position.rollback_order = conservative_order
-                position.unwind_status = "unwinding"
+
+                # Update tracking
+                self._update_rollback_tracking(rollback_plan, position, "unwinding")
+                self._log_rollback_order_placement(position, "conservative_limit")
 
             except Exception as e:
                 logger.error(f"[{self.symbol}] Error placing conservative order: {e}")
@@ -1015,3 +1078,591 @@ class RollbackManager:
             )
 
         return cancelled_count
+
+    async def _emergency_market_rollback(self, plan: RollbackPlan) -> Dict:
+        """
+        Emergency market order rollback for catastrophic failures.
+
+        This method bypasses all normal rollback logic and immediately
+        places market orders to unwind positions. Used as last resort
+        when normal rollback fails due to recursion or other critical errors.
+        """
+        logger.critical(
+            f"[{self.symbol}] EMERGENCY ROLLBACK: Attempting immediate market liquidation"
+        )
+
+        positions_unwound = 0
+        total_cost = 0.0
+
+        # Get all filled positions that need unwinding
+        positions_to_unwind = [
+            p for p in plan.positions_to_unwind if p.leg_order.fill_status == "filled"
+        ]
+
+        for position in positions_to_unwind:
+            try:
+                # Cancel any existing rollback orders first
+                if position.rollback_trade:
+                    try:
+                        self.ib.cancelOrder(position.rollback_order)
+                        await asyncio.sleep(0.1)  # Brief pause
+                    except Exception:
+                        pass  # Ignore cancellation errors in emergency
+
+                # Determine opposite action for unwinding
+                unwind_action = "SELL" if position.leg_order.action == "BUY" else "BUY"
+
+                # Create emergency market order - no limit price
+                emergency_order = Order(
+                    orderId=self.ib.client.getReqId(),
+                    orderType="MKT",
+                    action=unwind_action,
+                    totalQuantity=position.current_quantity,
+                    tif="DAY",
+                )
+
+                # Place emergency market order
+                emergency_trade = self.ib.placeOrder(
+                    position.leg_order.contract, emergency_order
+                )
+
+                # Wait for emergency fill with very short timeout
+                emergency_start = time.time()
+                emergency_timeout = 5.0  # Only 5 seconds for emergency
+
+                while time.time() - emergency_start < emergency_timeout:
+                    if emergency_trade.orderStatus.status == "Filled":
+                        fill_price = emergency_trade.orderStatus.avgFillPrice
+                        cost = fill_price * position.current_quantity
+                        total_cost += cost
+                        positions_unwound += 1
+
+                        logger.warning(
+                            f"[{self.symbol}] EMERGENCY UNWIND: {position.leg_order.leg_type.value} "
+                            f"@ {fill_price:.2f} (MARKET ORDER)"
+                        )
+                        break
+
+                    await asyncio.sleep(0.1)
+
+                if emergency_trade.orderStatus.status != "Filled":
+                    logger.error(
+                        f"[{self.symbol}] EMERGENCY ROLLBACK FAILED: "
+                        f"{position.leg_order.leg_type.value} market order didn't fill"
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"[{self.symbol}] Error in emergency rollback for "
+                    f"{position.leg_order.leg_type.value}: {e}"
+                )
+
+        # Update plan with emergency results
+        plan.positions_unwound = positions_unwound
+        plan.total_rollback_cost = total_cost
+
+        result = {
+            "positions_unwound": positions_unwound,
+            "total_positions": len(positions_to_unwind),
+            "emergency_cost": total_cost,
+            "method": "emergency_market",
+            "success": positions_unwound > 0,
+        }
+
+        if positions_unwound == len(positions_to_unwind):
+            logger.warning(
+                f"[{self.symbol}] EMERGENCY ROLLBACK SUCCESSFUL: All positions liquidated"
+            )
+        else:
+            logger.critical(
+                f"[{self.symbol}] EMERGENCY ROLLBACK INCOMPLETE: {positions_unwound}/{len(positions_to_unwind)} positions liquidated"
+            )
+
+        return result
+
+    async def _execute_market_order_fallback(
+        self, plan: RollbackPlan, remaining_positions: List[RollbackPosition]
+    ) -> Dict:
+        """
+        Execute market order fallback for positions that couldn't be unwound with limit orders.
+
+        This is the last resort when aggressive limit orders fail to unwind positions.
+        Uses market orders to ensure positions are liquidated, accepting higher slippage.
+        """
+        logger.warning(
+            f"[{self.symbol}] Executing MARKET ORDER FALLBACK for {len(remaining_positions)} positions"
+        )
+
+        fallback_attempt = RollbackAttempt(
+            attempt_id=f"market_fallback_{int(time.time())}",
+            attempt_number=ROLLBACK_MAX_ATTEMPTS + 1,  # Beyond normal attempts
+            strategy_used=RollbackStrategy.IMMEDIATE_MARKET,
+            timestamp=time.time(),
+            positions_targeted=remaining_positions.copy(),
+        )
+
+        unwound_count = 0
+        total_cost = 0.0
+        total_slippage = 0.0
+        fallback_start = time.time()
+
+        # Sort by priority (stock first, then options)
+        sorted_positions = sorted(
+            remaining_positions, key=lambda p: p.unwinding_priority
+        )
+
+        for position in sorted_positions:
+            if position.unwind_status != "pending":
+                continue
+
+            try:
+                # Cancel any existing limit orders first
+                if position.rollback_trade:
+                    try:
+                        self.ib.cancelOrder(position.rollback_order)
+                        await asyncio.sleep(0.1)  # Brief pause
+                    except Exception:
+                        pass  # Ignore cancellation errors in fallback
+
+                # Determine opposite action for unwinding
+                unwind_action = "SELL" if position.leg_order.action == "BUY" else "BUY"
+
+                # Create market order for immediate execution
+                market_order = Order(
+                    orderId=self.ib.client.getReqId(),
+                    orderType="MKT",
+                    action=unwind_action,
+                    totalQuantity=position.current_quantity,
+                    tif="DAY",
+                )
+
+                # Place market order
+                market_trade = self.ib.placeOrder(
+                    position.leg_order.contract, market_order
+                )
+                position.rollback_trade = market_trade
+                position.rollback_order = market_order
+
+                # Update tracking
+                self._update_rollback_tracking(rollback_plan, position, "unwinding")
+                self._log_rollback_order_placement(position, "market_fallback")
+
+                logger.warning(
+                    f"[{self.symbol}] MARKET FALLBACK: Placed market {unwind_action} order for "
+                    f"{position.leg_order.leg_type.value} (quantity: {position.current_quantity})"
+                )
+
+                # Wait for market fill with short timeout
+                fill_start = time.time()
+                fill_timeout = 8.0  # 8 seconds for market order (should be fast)
+
+                while time.time() - fill_start < fill_timeout:
+                    if market_trade.orderStatus.status == "Filled":
+                        fill_price = market_trade.orderStatus.avgFillPrice
+                        slippage = abs(fill_price - position.avg_fill_price)
+                        cost = fill_price * position.current_quantity
+
+                        position.unwind_status = "completed"
+                        unwound_count += 1
+                        total_cost += cost
+                        total_slippage += slippage
+
+                        logger.warning(
+                            f"[{self.symbol}] ✓ MARKET FALLBACK FILL: {position.leg_order.leg_type.value} "
+                            f"@ {fill_price:.2f} (slippage: ${slippage:.2f}, HIGH RISK)"
+                        )
+                        break
+
+                    await asyncio.sleep(0.1)
+
+                if position.unwind_status != "completed":
+                    position.unwind_status = "failed"
+                    logger.error(
+                        f"[{self.symbol}] MARKET FALLBACK TIMEOUT: {position.leg_order.leg_type.value} "
+                        f"market order failed to fill within {fill_timeout}s"
+                    )
+
+            except Exception as e:
+                position.unwind_status = "failed"
+                logger.error(
+                    f"[{self.symbol}] Error in market fallback for "
+                    f"{position.leg_order.leg_type.value}: {e}"
+                )
+
+        # Update attempt results
+        fallback_attempt.positions_unwound = unwound_count
+        fallback_attempt.attempt_cost = total_cost
+        fallback_attempt.attempt_slippage = total_slippage
+        fallback_attempt.duration = time.time() - fallback_start
+        fallback_attempt.success = unwound_count > 0
+
+        self._add_rollback_attempt(fallback_attempt)
+
+        if unwound_count == len(remaining_positions):
+            logger.warning(
+                f"[{self.symbol}] ✓ MARKET FALLBACK SUCCESS: All {unwound_count} positions unwound "
+                f"(cost: ${total_cost:.2f}, slippage: ${total_slippage:.2f})"
+            )
+        elif unwound_count > 0:
+            logger.error(
+                f"[{self.symbol}] ⚠️ MARKET FALLBACK PARTIAL: {unwound_count}/{len(remaining_positions)} "
+                f"positions unwound - MANUAL INTERVENTION REQUIRED"
+            )
+        else:
+            logger.critical(
+                f"[{self.symbol}] ❌ MARKET FALLBACK FAILED: No positions unwound - "
+                f"CRITICAL MANUAL INTERVENTION REQUIRED"
+            )
+
+        return {
+            "unwound_count": unwound_count,
+            "cost": total_cost,
+            "slippage": total_slippage,
+            "duration": fallback_attempt.duration,
+            "method": "market_fallback",
+            "remaining_positions": len(remaining_positions) - unwound_count,
+        }
+
+    def get_rollback_order_status(self, rollback_id: str) -> Dict:
+        """Get comprehensive status of all orders in a rollback."""
+        if rollback_id not in self.active_rollbacks:
+            completed = next(
+                (
+                    rb
+                    for rb in self.completed_rollbacks
+                    if rb.rollback_id == rollback_id
+                ),
+                None,
+            )
+            if completed:
+                return self._get_rollback_status_dict(completed)
+            return {"error": f"Rollback {rollback_id} not found"}
+
+        rollback_plan = self.active_rollbacks[rollback_id]
+        return self._get_rollback_status_dict(rollback_plan)
+
+    def _get_rollback_status_dict(self, rollback_plan: RollbackPlan) -> Dict:
+        """Create comprehensive status dictionary for a rollback."""
+        order_statuses = []
+
+        for position in rollback_plan.positions_to_unwind:
+            if position.rollback_order:
+                order_status = {
+                    "leg_type": position.leg_order.leg_type.value,
+                    "contract": f"{position.leg_order.contract.symbol} {position.leg_order.contract.strike}",
+                    "order_id": position.rollback_order.orderId,
+                    "quantity": position.current_quantity,
+                    "avg_fill_price": position.avg_fill_price,
+                    "target_price": position.rollback_target_price,
+                    "unwind_status": position.unwind_status,
+                    "unrealized_pnl": position.unrealized_pnl,
+                    "priority": position.unwinding_priority,
+                }
+
+                # Add trade info if available
+                if position.rollback_trade:
+                    trade = position.rollback_trade
+                    order_status.update(
+                        {
+                            "trade_status": (
+                                trade.orderStatus.status
+                                if trade.orderStatus
+                                else "Unknown"
+                            ),
+                            "filled_quantity": (
+                                trade.orderStatus.filled if trade.orderStatus else 0
+                            ),
+                            "remaining_quantity": (
+                                trade.orderStatus.remaining
+                                if trade.orderStatus
+                                else position.current_quantity
+                            ),
+                            "avg_fill_price_actual": (
+                                trade.orderStatus.avgFillPrice
+                                if trade.orderStatus
+                                else None
+                            ),
+                        }
+                    )
+
+                order_statuses.append(order_status)
+
+        return {
+            "rollback_id": rollback_plan.rollback_id,
+            "symbol": rollback_plan.symbol,
+            "execution_id": rollback_plan.execution_id,
+            "status": rollback_plan.rollback_status,
+            "reason": rollback_plan.reason.value,
+            "strategy": rollback_plan.strategy.value,
+            "positions_to_unwind": rollback_plan.total_positions,
+            "positions_unwound": rollback_plan.positions_unwound,
+            "total_cost": rollback_plan.total_rollback_cost,
+            "slippage": rollback_plan.rollback_slippage,
+            "max_acceptable_loss": rollback_plan.max_acceptable_loss,
+            "estimated_cost": rollback_plan.estimated_unwinding_cost,
+            "created_time": rollback_plan.created_time,
+            "completion_time": rollback_plan.completion_time,
+            "duration": (
+                (rollback_plan.completion_time - rollback_plan.created_time)
+                if rollback_plan.completion_time
+                else None
+            ),
+            "success": rollback_plan.success,
+            "error_message": rollback_plan.error_message,
+            "orders": order_statuses,
+        }
+
+    def get_all_active_rollbacks_status(self) -> Dict[str, Dict]:
+        """Get status of all active rollbacks."""
+        return {
+            rollback_id: self._get_rollback_status_dict(rollback_plan)
+            for rollback_id, rollback_plan in self.active_rollbacks.items()
+        }
+
+    def get_rollback_performance_metrics(self) -> Dict:
+        """Get comprehensive performance metrics for rollback operations."""
+        metrics = dict(self.performance_metrics)
+
+        # Calculate success rate
+        total_rollbacks = metrics["total_rollbacks_initiated"]
+        if total_rollbacks > 0:
+            metrics["success_rate"] = metrics["successful_rollbacks"] / total_rollbacks
+        else:
+            metrics["success_rate"] = 0.0
+
+        # Calculate attempt statistics
+        if self.rollback_attempts:
+            successful_attempts = [a for a in self.rollback_attempts if a.success]
+            failed_attempts = [a for a in self.rollback_attempts if not a.success]
+
+            metrics["total_attempts"] = len(self.rollback_attempts)
+            metrics["successful_attempts"] = len(successful_attempts)
+            metrics["failed_attempts"] = len(failed_attempts)
+
+            if successful_attempts:
+                metrics["avg_successful_duration"] = sum(
+                    a.duration for a in successful_attempts
+                ) / len(successful_attempts)
+                metrics["avg_successful_cost"] = sum(
+                    a.attempt_cost for a in successful_attempts
+                ) / len(successful_attempts)
+                metrics["avg_successful_slippage"] = sum(
+                    a.attempt_slippage for a in successful_attempts
+                ) / len(successful_attempts)
+
+            # Strategy breakdown
+            strategy_counts = {}
+            for attempt in self.rollback_attempts:
+                strategy = attempt.strategy_used.value
+                strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
+            metrics["strategy_usage"] = strategy_counts
+
+        return metrics
+
+    def monitor_rollback_progress(self, rollback_id: str) -> Dict:
+        """Monitor real-time progress of an active rollback."""
+        if rollback_id not in self.active_rollbacks:
+            return {"error": f"Active rollback {rollback_id} not found"}
+
+        rollback_plan = self.active_rollbacks[rollback_id]
+        current_time = time.time()
+        elapsed_time = current_time - rollback_plan.created_time
+        time_remaining = rollback_plan.max_rollback_time - elapsed_time
+
+        # Calculate progress percentage
+        progress = 0.0
+        if rollback_plan.total_positions > 0:
+            progress = rollback_plan.positions_unwound / rollback_plan.total_positions
+
+        # Check for stalled orders
+        stalled_orders = []
+        for position in rollback_plan.positions_to_unwind:
+            if position.rollback_trade and position.rollback_trade.orderStatus:
+                order_status = position.rollback_trade.orderStatus.status
+                if (
+                    order_status in ["Submitted", "PreSubmitted"]
+                    and position.unwind_status == "unwinding"
+                ):
+                    # Check if order has been pending too long
+                    if (
+                        hasattr(position.rollback_trade, "log")
+                        and position.rollback_trade.log
+                    ):
+                        last_log = position.rollback_trade.log[-1]
+                        if hasattr(last_log, "time"):
+                            time_since_last_update = (
+                                current_time - last_log.time.timestamp()
+                            )
+                            if time_since_last_update > 30:  # 30 seconds without update
+                                stalled_orders.append(
+                                    {
+                                        "order_id": position.rollback_order.orderId,
+                                        "leg_type": position.leg_order.leg_type.value,
+                                        "time_stalled": time_since_last_update,
+                                    }
+                                )
+
+        return {
+            "rollback_id": rollback_id,
+            "status": rollback_plan.rollback_status,
+            "progress_percent": progress * 100,
+            "positions_unwound": rollback_plan.positions_unwound,
+            "total_positions": rollback_plan.total_positions,
+            "elapsed_time": elapsed_time,
+            "time_remaining": max(0, time_remaining),
+            "current_cost": rollback_plan.total_rollback_cost,
+            "estimated_cost": rollback_plan.estimated_unwinding_cost,
+            "current_slippage": rollback_plan.rollback_slippage,
+            "stalled_orders": stalled_orders,
+            "risk_metrics": {
+                "cost_vs_estimate": rollback_plan.total_rollback_cost
+                / max(rollback_plan.estimated_unwinding_cost, 0.01),
+                "within_loss_limit": rollback_plan.total_rollback_cost
+                <= rollback_plan.max_acceptable_loss,
+                "time_pressure": 1
+                - (
+                    time_remaining
+                    / (rollback_plan.max_rollback_time - rollback_plan.created_time)
+                ),
+            },
+        }
+
+    def get_rollback_attempts_history(self, limit: int = 10) -> List[Dict]:
+        """Get history of rollback attempts with details."""
+        recent_attempts = (
+            self.rollback_attempts[-limit:]
+            if len(self.rollback_attempts) > limit
+            else self.rollback_attempts
+        )
+
+        return [
+            {
+                "attempt_id": attempt.attempt_id,
+                "attempt_number": attempt.attempt_number,
+                "strategy": attempt.strategy_used.value,
+                "timestamp": datetime.fromtimestamp(attempt.timestamp).isoformat(),
+                "positions_targeted": len(attempt.positions_targeted),
+                "positions_unwound": attempt.positions_unwound,
+                "cost": attempt.attempt_cost,
+                "slippage": attempt.attempt_slippage,
+                "duration": attempt.duration,
+                "success": attempt.success,
+                "error_message": attempt.error_message,
+            }
+            for attempt in reversed(recent_attempts)
+        ]
+
+    def export_rollback_report(self, rollback_id: str, format: str = "dict") -> Dict:
+        """Export comprehensive rollback report for analysis."""
+        status = self.get_rollback_order_status(rollback_id)
+        if "error" in status:
+            return status
+
+        # Add related attempts
+        related_attempts = [
+            attempt
+            for attempt in self.rollback_attempts
+            if any(
+                pos.leg_order.execution_id == status["execution_id"]
+                for pos in attempt.positions_targeted
+            )
+        ]
+
+        report = {
+            "rollback_summary": status,
+            "attempts_history": [
+                {
+                    "attempt_id": attempt.attempt_id,
+                    "attempt_number": attempt.attempt_number,
+                    "strategy": attempt.strategy_used.value,
+                    "timestamp": datetime.fromtimestamp(attempt.timestamp).isoformat(),
+                    "duration": attempt.duration,
+                    "success": attempt.success,
+                    "positions_unwound": attempt.positions_unwound,
+                    "cost": attempt.attempt_cost,
+                    "slippage": attempt.attempt_slippage,
+                    "error_message": attempt.error_message,
+                }
+                for attempt in related_attempts
+            ],
+            "performance_context": self.get_rollback_performance_metrics(),
+            "report_generated": datetime.now().isoformat(),
+        }
+
+        return report
+
+    def _update_rollback_tracking(
+        self, rollback_plan: RollbackPlan, position: RollbackPosition, status: str
+    ):
+        """Update rollback tracking when order status changes."""
+        position.unwind_status = status
+
+        # Log the status change
+        logger.info(
+            f"[{self.symbol}] Rollback tracking update - "
+            f"Order {position.rollback_order.orderId if position.rollback_order else 'N/A'} "
+            f"for {position.leg_order.leg_type.value} -> {status}"
+        )
+
+        # Update rollback plan status based on individual position statuses
+        if status == "completed":
+            rollback_plan.positions_unwound += 1
+
+            # Check if all positions are completed
+            completed_positions = sum(
+                1
+                for pos in rollback_plan.positions_to_unwind
+                if pos.unwind_status == "completed"
+            )
+            if completed_positions == rollback_plan.total_positions:
+                rollback_plan.rollback_status = "completed"
+                rollback_plan.success = True
+                rollback_plan.completion_time = time.time()
+                logger.info(
+                    f"[{self.symbol}] Rollback {rollback_plan.rollback_id} completed successfully"
+                )
+
+        elif status == "failed":
+            # Check if any position has failed
+            failed_positions = [
+                pos
+                for pos in rollback_plan.positions_to_unwind
+                if pos.unwind_status == "failed"
+            ]
+            if failed_positions:
+                rollback_plan.rollback_status = "failed"
+                rollback_plan.success = False
+                rollback_plan.completion_time = time.time()
+                logger.error(
+                    f"[{self.symbol}] Rollback {rollback_plan.rollback_id} failed"
+                )
+
+        elif status == "unwinding":
+            if rollback_plan.rollback_status == "pending":
+                rollback_plan.rollback_status = "executing"
+
+    def _log_rollback_order_placement(
+        self, position: RollbackPosition, order_type: str
+    ):
+        """Log when a rollback order is placed."""
+        if position.rollback_order:
+            logger.info(
+                f"[{self.symbol}] Rollback {order_type} order placed - "
+                f"ID: {position.rollback_order.orderId}, "
+                f"Leg: {position.leg_order.leg_type.value}, "
+                f"Qty: {position.current_quantity}, "
+                f"Target: ${position.rollback_target_price:.2f if position.rollback_target_price else 0}"
+            )
+
+    def _log_rollback_order_fill(
+        self, position: RollbackPosition, fill_price: float, fill_qty: int
+    ):
+        """Log when a rollback order is filled."""
+        logger.info(
+            f"[{self.symbol}] Rollback order filled - "
+            f"ID: {position.rollback_order.orderId if position.rollback_order else 'N/A'}, "
+            f"Leg: {position.leg_order.leg_type.value}, "
+            f"Qty: {fill_qty}, "
+            f"Price: ${fill_price:.2f}, "
+            f"Slippage: ${abs(fill_price - (position.rollback_target_price or 0)):.2f}"
+        )

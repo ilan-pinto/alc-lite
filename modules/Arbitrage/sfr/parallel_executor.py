@@ -624,8 +624,25 @@ class ParallelLegExecutor:
                 plan, fill_result["filled_legs"], fill_result["pending_legs"]
             )
 
+            # Check if emergency fallback was triggered
+            if rollback_result.get("emergency_fallback"):
+                logger.critical(
+                    f"[{self.symbol}] EMERGENCY ROLLBACK TRIGGERED - System stability compromised"
+                )
+                await self._handle_emergency_shutdown(rollback_result)
+
             return rollback_result
 
+        except RecursionError as re:
+            logger.critical(f"[{self.symbol}] RECURSION ERROR in rollback: {re}")
+            await self._handle_emergency_shutdown(
+                {"error": "recursion_error", "error_message": str(re)}
+            )
+            return {
+                "success": False,
+                "error": "recursion_error_emergency_shutdown",
+                "positions_unwound": False,
+            }
         except Exception as e:
             logger.error(f"[{self.symbol}] Error in rollback execution: {e}")
             return {"success": False, "error": str(e), "positions_unwound": False}
@@ -689,6 +706,73 @@ class ParallelLegExecutor:
             error_message=error_message,
             order_placement_time=placement_time,
         )
+
+    async def _handle_emergency_shutdown(self, error_context: Dict) -> None:
+        """
+        Handle emergency shutdown when rollback fails catastrophically.
+
+        This implements the ADR-003 requirement for emergency shutdown
+        when rollback fails due to recursion errors or other critical issues.
+        """
+        logger.critical(f"[{self.symbol}] INITIATING EMERGENCY SHUTDOWN")
+        logger.critical(f"[{self.symbol}] Error context: {error_context}")
+
+        try:
+            # Step 1: Stop all executors immediately
+            if self.strategy:
+                logger.critical(f"[{self.symbol}] Stopping all executors...")
+                await self.strategy.stop_all_executors()
+
+            # Step 2: Send critical alerts (would integrate with alerting system in production)
+            await self._send_emergency_alert(error_context)
+
+            # Step 3: Disconnect from IB as specified in ADR-003
+            logger.critical(
+                f"[{self.symbol}] Disconnecting from IB due to emergency..."
+            )
+            if self.ib.isConnected():
+                self.ib.disconnect()
+
+            # Step 4: Exit system per ADR-003
+            logger.critical(
+                f"[{self.symbol}] EMERGENCY SHUTDOWN COMPLETE - Manual intervention required"
+            )
+
+            # In production, would trigger system exit
+            # For now, just log the critical state
+
+        except Exception as shutdown_error:
+            logger.critical(
+                f"[{self.symbol}] ERROR IN EMERGENCY SHUTDOWN: {shutdown_error}"
+            )
+
+    async def _send_emergency_alert(self, error_context: Dict) -> None:
+        """Send emergency alert for manual intervention."""
+        alert_message = f"""
+🚨 CRITICAL: Parallel Execution Emergency Shutdown
+
+Symbol: {self.symbol}
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Error: {error_context.get('error', 'unknown')}
+Message: {error_context.get('error_message', 'No details available')}
+
+Action Required:
+1. Check for stuck positions that need manual liquidation
+2. Verify system state before restarting
+3. Review logs for root cause
+4. Consider updating rollback logic
+
+Positions Status: {error_context.get('positions_unwound', 'unknown')}
+Emergency Cost: ${error_context.get('emergency_cost', 0):.2f}
+        """
+
+        logger.critical(alert_message)
+
+        # In production, would integrate with:
+        # - Email alerts
+        # - SMS notifications
+        # - Slack/Teams messages
+        # - PagerDuty incidents
 
     def get_execution_stats(self) -> Dict:
         """Get comprehensive execution statistics."""
