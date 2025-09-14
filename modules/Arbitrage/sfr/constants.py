@@ -85,9 +85,25 @@ PHASE_3_PROFIT_THRESHOLD = 0.10  # Lower threshold for final evaluation
 DEBUG_LOG_INTERVAL = 5  # Log debug messages every N seconds
 MAX_LOG_MISSING_CONTRACTS = 5  # Maximum number of missing contracts to log
 
-# Performance optimization
-NUMPY_VECTORIZATION_THRESHOLD = 10  # Minimum number of options for vectorization
-BATCH_PROCESSING_SIZE = 50  # Size for batch operations
+# Performance optimization (PyPy-aware)
+import sys
+
+# PyPy detection
+USING_PYPY = hasattr(sys, "pypy_version_info")
+
+# Adjust thresholds based on runtime
+if USING_PYPY:
+    # PyPy-optimized values
+    NUMPY_VECTORIZATION_THRESHOLD = 20  # PyPy handles larger thresholds better
+    BATCH_PROCESSING_SIZE = 100  # PyPy can handle larger batches efficiently
+    DEFAULT_CACHE_SIZE = 500  # Larger cache since PyPy manages memory better
+    JIT_WARMUP_ITERATIONS = 50  # Allow JIT to warm up
+else:
+    # CPython-optimized values
+    NUMPY_VECTORIZATION_THRESHOLD = 10  # CPython+numpy is efficient for smaller arrays
+    BATCH_PROCESSING_SIZE = 50  # Conservative batch size for CPython
+    DEFAULT_CACHE_SIZE = 200  # Smaller cache for CPython
+    JIT_WARMUP_ITERATIONS = 0  # No warmup needed
 
 # Error handling
 MAX_RETRY_ATTEMPTS = 3

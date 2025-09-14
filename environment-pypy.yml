@@ -1,0 +1,67 @@
+name: alc-pypy
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # PyPy runtime
+  - pypy3.10
+
+  # System dependencies
+  - pip
+  - setuptools
+  - wheel
+
+  # Development tools (PyPy compatible)
+  - git
+
+  # pip dependencies (installed via requirements-pypy.txt)
+  - pip:
+    # Core trading and market data
+    - ib_async==1.0.1
+
+    # Data processing
+    - pandas>=1.5.0
+    - numpy>=1.21.0
+
+    # Database connectivity
+    - asyncpg>=0.27.0
+    - psycopg2-binary>=2.9.0
+
+    # Console output and formatting
+    - rich>=12.0.0
+    - pyfiglet>=0.8.0
+    - tabulate>=0.9.0
+
+    # HTTP and web scraping
+    - yfinance==0.2.38
+    - selenium==4.23.1
+    - webdriver-manager==4.0.2
+
+    # Utilities and async helpers
+    - tenacity>=8.0.0
+
+    # Image processing
+    - Pillow>=8.0.0
+
+    # Development and testing
+    - pytest>=7.0.0
+    - pytest-cov>=4.0.0
+    - pytest-asyncio==1.0.0
+    - memory_profiler>=0.60.0
+
+    # Code formatting (PyPy compatible)
+    - black>=22.0.0
+    - isort>=5.10.0
+
+    # Data formats
+    - xmltodict>=0.13.0
+    - markdown>=3.4.0
+
+    # Visualization (optional)
+    - matplotlib>=3.5.0
+
+    # PyPy-specific optimizations
+    - cffi>=1.15.0
+
+    # Performance monitoring (for benchmarks)
+    - psutil>=5.8.0

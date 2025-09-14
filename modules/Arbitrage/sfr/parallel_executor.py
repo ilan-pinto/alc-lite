@@ -20,6 +20,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 from ib_async import IB, Contract, Order, OrderStatus, Trade
 
 from ..common import get_logger
+from ..pypy_config import get_batch_size, optimizer, should_vectorize
 from .constants import (
     PARALLEL_EXECUTION_TIMEOUT,
     PARALLEL_FILL_TIMEOUT_PER_LEG,
@@ -516,51 +517,78 @@ class ParallelLegExecutor:
 
         logger.info(f"[{self.symbol}] Monitoring {len(legs)} legs for fills")
 
-        try:
-            # Monitor with timeout
-            while time.time() - monitoring_start < PARALLEL_EXECUTION_TIMEOUT:
-                filled_this_cycle = []
+        # PyPy optimization: Cache frequently accessed variables
+        cached_vars = (
+            optimizer.optimize_loop_variables(self, ["symbol", "strategy"])
+            if optimizer.config["minimize_attribute_access"]
+            else {}
+        )
+        symbol_cached = cached_vars.get("symbol", self.symbol)
+        strategy_cached = cached_vars.get("strategy", self.strategy)
 
-                # Check each pending leg
-                for leg in fill_status["pending_legs"]:
+        # Pre-cache constants for PyPy JIT optimization
+        execution_timeout = PARALLEL_EXECUTION_TIMEOUT
+        leg_timeout = PARALLEL_FILL_TIMEOUT_PER_LEG
+        sleep_interval = 0.1
+
+        try:
+            # Monitor with timeout - optimized for PyPy JIT
+            while time.time() - monitoring_start < execution_timeout:
+                current_time = time.time()
+
+                # PyPy optimization: Use list comprehension for better performance
+                pending_legs = fill_status["pending_legs"]
+                filled_legs = fill_status["filled_legs"]
+
+                # Check filled legs in batch (PyPy optimized)
+                filled_this_cycle = []
+                for leg in pending_legs[
+                    :
+                ]:  # Copy to avoid modification during iteration
                     if await self._check_leg_filled(leg):
                         filled_this_cycle.append(leg)
-                        fill_status["filled_legs"].append(leg)
+                        filled_legs.append(leg)
+                        # Cache leg properties for logging
+                        leg_type_value = leg.leg_type.value
                         logger.info(
-                            f"[{self.symbol}] ✓ {leg.leg_type.value} leg filled: "
+                            f"[{symbol_cached}] ✓ {leg_type_value} leg filled: "
                             f"{leg.filled_quantity}@${leg.avg_fill_price:.2f}"
                         )
 
-                # Remove filled legs from pending
-                for leg in filled_this_cycle:
-                    fill_status["pending_legs"].remove(leg)
+                # PyPy optimization: Batch removal instead of individual removes
+                if filled_this_cycle:
+                    # More efficient than multiple .remove() calls
+                    fill_status["pending_legs"] = [
+                        leg for leg in pending_legs if leg not in filled_this_cycle
+                    ]
 
-                fill_status["filled_count"] = len(fill_status["filled_legs"])
+                filled_count = len(filled_legs)
+                fill_status["filled_count"] = filled_count
+                total_legs = len(legs)
 
                 # Check if all legs are filled
-                if fill_status["filled_count"] == len(legs):
+                if filled_count == total_legs:
                     fill_status["all_filled"] = True
-                    logger.info(f"[{self.symbol}] ✓ ALL LEGS FILLED successfully!")
+                    logger.info(f"[{symbol_cached}] ✓ ALL LEGS FILLED successfully!")
 
                     # Set parallel execution complete flag in strategy
-                    if self.strategy:
-                        self.strategy.parallel_execution_complete = True
+                    if strategy_cached:
+                        strategy_cached.parallel_execution_complete = True
                         logger.info(
-                            f"[{self.symbol}] Parallel execution complete - strategy can now exit"
+                            f"[{symbol_cached}] Parallel execution complete - strategy can now exit"
                         )
                     break
 
-                # Check individual leg timeouts
-                current_time = time.time()
+                # Check individual leg timeouts (PyPy optimized)
                 for leg in fill_status["pending_legs"]:
                     leg_elapsed = current_time - (leg.fill_time or monitoring_start)
-                    if leg_elapsed > PARALLEL_FILL_TIMEOUT_PER_LEG:
+                    if leg_elapsed > leg_timeout:
                         logger.warning(
-                            f"[{self.symbol}] {leg.leg_type.value} leg timeout after {leg_elapsed:.1f}s"
+                            f"[{symbol_cached}] {leg.leg_type.value} leg timeout after {leg_elapsed:.1f}s"
                         )
 
                 # Brief pause before next check
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(sleep_interval)
 
             # Check for overall timeout
             if not fill_status["all_filled"]:

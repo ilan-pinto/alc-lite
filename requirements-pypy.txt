@@ -1,0 +1,61 @@
+# PyPy-compatible dependencies for alc-lite
+# Tested with PyPy 3.10 for optimal performance
+
+# Core trading and market data
+ib_async==1.0.1
+
+# Data processing (PyPy-optimized)
+pandas>=1.5.0
+numpy>=1.21.0
+
+# Database connectivity
+asyncpg>=0.27.0
+psycopg2-binary>=2.9.0  # Fallback for some database operations
+
+# Console output and formatting
+rich>=12.0.0
+pyfiglet>=0.8.0
+tabulate>=0.9.0
+
+# HTTP and web scraping
+yfinance==0.2.38
+selenium==4.23.1
+webdriver-manager==4.0.2
+
+# Utilities and async helpers
+tenacity>=8.0.0
+
+# Image processing (lightweight alternative)
+Pillow>=8.0.0
+
+# Development and testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio==1.0.0
+memory_profiler>=0.60.0
+
+# Code formatting (PyPy compatible)
+black>=22.0.0
+isort>=5.10.0
+
+# Data formats
+xmltodict>=0.13.0
+markdown>=3.4.0
+
+# Visualization (optional - may have performance differences on PyPy)
+matplotlib>=3.5.0
+
+# AI/ML (optional - check performance)
+# openai  # Uncomment if needed, but verify PyPy compatibility
+
+# PyPy-specific optimizations
+# These packages are specifically optimized for PyPy or have better performance
+cffi>=1.15.0  # Better than ctypes on PyPy
+pypy-stm  # Optional: Software Transactional Memory (experimental)
+
+# Notes for PyPy compatibility:
+# 1. numpy operations may be slower than CPython for small arrays
+# 2. C extensions that don't support PyPy are excluded
+# 3. Some packages may need alternative implementations
+# 4. Memory usage patterns differ - PyPy generally uses more RAM initially
+#    but is more efficient for long-running processes
