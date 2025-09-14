@@ -51,6 +51,9 @@ pypy3 alchimest.py sfr --symbols SPY QQQ --debug
 - **Python 3.10** (for CPython comparison)
 - At least **2GB RAM** (PyPy uses more memory initially)
 
+#### Apple Silicon (ARM64) Note
+PyPy on Apple Silicon Macs requires manual installation since conda-forge doesn't provide ARM64 builds. The setup script handles this automatically by downloading the official PyPy ARM64 build.
+
 ### Automated Installation
 
 The easiest way to set up PyPy is using our automated script:
@@ -292,6 +295,20 @@ python alchimest.py sfr --symbols SPY --debug
 # Solution: Make sure you're in the PyPy environment
 conda activate alc-pypy
 pypy3 -m pip install -r requirements-pypy.txt
+```
+
+#### 1.1. Apple Silicon PyPy Installation Issues
+
+```bash
+# Error: PackagesNotFoundError: pypy3.10 not available
+# This is expected on ARM64 - the setup script will handle it automatically
+
+# If manual PyPy download fails:
+# Check internet connection and try again
+./scripts/setup_pypy_conda.sh
+
+# Alternative: Install PyPy via Homebrew (less integrated)
+# brew install pypy3
 ```
 
 #### 2. "PyPy not found" Error
