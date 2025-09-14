@@ -33,6 +33,7 @@ if conda env list | grep -q "alc-pypy"; then
 fi
 
 echo "📦 Creating conda environment with Python 3.10.14..."
+echo "ℹ️  Running: conda create -n alc-pypy python=3.10.14 -y"
 conda create -n alc-pypy python=3.10.14 -y
 
 echo "⚡ Installing PyPy in the environment..."
@@ -41,36 +42,48 @@ conda activate alc-pypy
 
 # Check architecture to determine PyPy installation method
 ARCH=$(uname -m)
-if [[ "$ARCH" == "arm64" ]]; then
-    echo "🍎 Detected Apple Silicon (ARM64) - installing PyPy via pip..."
-    # For Apple Silicon, install PyPy via pip since conda-forge doesn't have ARM64 builds
-    python -m pip install pypy3-wheel
+echo "🔍 Detected architecture: $ARCH"
 
-    # Alternative: Download and install PyPy manually for better performance
+if [[ "$ARCH" == "arm64" ]]; then
+    echo "🍎 Detected Apple Silicon (ARM64) - installing PyPy manually..."
+    echo "ℹ️  Conda-forge doesn't have PyPy ARM64 builds, so we'll download directly"
+
+    # Download and install PyPy manually for better performance
     echo "📥 Downloading PyPy for macOS ARM64..."
     PYPY_VERSION="7.3.13"
     PYPY_URL="https://downloads.python.org/pypy/pypy3.10-v${PYPY_VERSION}-macos_arm64.tar.bz2"
+
+    echo "ℹ️  Download URL: $PYPY_URL"
 
     # Create PyPy directory in conda env
     CONDA_PREFIX_PATH=$CONDA_PREFIX
     PYPY_DIR="$CONDA_PREFIX_PATH/pypy3.10"
 
+    echo "ℹ️  Installing to: $PYPY_DIR"
+
     # Download and extract PyPy
+    echo "⬇️  Downloading PyPy archive..."
     curl -L "$PYPY_URL" -o pypy3.10-macos-arm64.tar.bz2
+
+    echo "📦 Extracting PyPy archive..."
     tar -xjf pypy3.10-macos-arm64.tar.bz2
 
     # Move PyPy to conda environment
+    echo "🚚 Moving PyPy to conda environment..."
     mv pypy3.10-v${PYPY_VERSION}-macos_arm64 "$PYPY_DIR"
 
     # Create symlink in conda env bin directory
+    echo "🔗 Creating symlink for pypy3 command..."
     ln -sf "$PYPY_DIR/bin/pypy3" "$CONDA_PREFIX_PATH/bin/pypy3"
 
     # Clean up download
+    echo "🧹 Cleaning up download files..."
     rm pypy3.10-macos-arm64.tar.bz2
 
     echo "✅ PyPy installed manually for Apple Silicon"
 else
     echo "🐧 Detected x86_64 - installing PyPy via conda-forge..."
+    echo "ℹ️  Running: conda install -c conda-forge pypy3.10 -y"
     conda install -c conda-forge pypy3.10 -y
 fi
 

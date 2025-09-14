@@ -6,8 +6,7 @@ dependencies:
   # Base Python (will be supplemented with PyPy)
   - python=3.10.14
 
-  # PyPy runtime (x86_64 only - ARM64 requires manual installation)
-  # - pypy3.10  # Commented out for ARM64 compatibility
+  # PyPy runtime - installed separately by setup script based on architecture
 
   # System dependencies
   - pip
