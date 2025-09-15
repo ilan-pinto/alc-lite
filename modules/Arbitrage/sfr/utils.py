@@ -85,6 +85,88 @@ def calculate_combo_limit_price(
     return round(limit_price, 2)
 
 
+def round_price_to_tick_size(price: float, contract_type: str = "stock") -> float:
+    """
+    Round price to the appropriate tick size for the contract type.
+
+    Args:
+        price: The price to round
+        contract_type: Type of contract ("stock", "option", "index")
+
+    Returns:
+        Price rounded to appropriate decimal places, with minimum 0.01 for positive prices
+    """
+    rounded_price = round(price, 2)
+
+    # Ensure positive prices don't round to zero (minimum tick size)
+    if price > 0 and rounded_price <= 0:
+        return 0.01
+
+    return rounded_price
+
+
+def calculate_aggressive_execution_price(
+    ticker, action: str, base_price: float, aggressiveness: float = 0.01
+) -> float:
+    """
+    Calculate an aggressive execution price based on bid/ask spreads to improve fill rates.
+
+    Args:
+        ticker: IB ticker object with bid/ask data
+        action: "BUY" or "SELL"
+        base_price: Fallback price if bid/ask not available
+        aggressiveness: Factor to penetrate into the spread (0.01 = 1% more aggressive)
+
+    Returns:
+        Rounded aggressive price for better fill probability
+    """
+    try:
+        if action.upper() == "BUY":
+            # For buying: start with ask price and make it slightly more aggressive
+            if hasattr(ticker, "ask") and not np.isnan(ticker.ask) and ticker.ask > 0:
+                # Use ask price + small premium to ensure fill
+                aggressive_price = ticker.ask * (1.0 + aggressiveness)
+            elif hasattr(ticker, "bid") and not np.isnan(ticker.bid) and ticker.bid > 0:
+                # Fallback: bid + spread
+                spread = (
+                    abs(ticker.ask - ticker.bid)
+                    if hasattr(ticker, "ask") and not np.isnan(ticker.ask)
+                    else ticker.bid * 0.02
+                )
+                aggressive_price = ticker.bid + spread + (spread * aggressiveness)
+            else:
+                # Ultimate fallback: base price + small premium
+                aggressive_price = base_price * (1.0 + aggressiveness)
+
+        else:  # SELL
+            # For selling: start with bid price and make it slightly more aggressive
+            if hasattr(ticker, "bid") and not np.isnan(ticker.bid) and ticker.bid > 0:
+                # Use bid price - small discount to ensure fill
+                aggressive_price = ticker.bid * (1.0 - aggressiveness)
+            elif hasattr(ticker, "ask") and not np.isnan(ticker.ask) and ticker.ask > 0:
+                # Fallback: ask - spread
+                spread = (
+                    abs(ticker.ask - ticker.bid)
+                    if hasattr(ticker, "bid") and not np.isnan(ticker.bid)
+                    else ticker.ask * 0.02
+                )
+                aggressive_price = ticker.ask - spread - (spread * aggressiveness)
+            else:
+                # Ultimate fallback: base price - small discount
+                aggressive_price = base_price * (1.0 - aggressiveness)
+
+        # Ensure price is positive
+        aggressive_price = max(aggressive_price, 0.01)
+
+        # Determine contract type for rounding
+        contract_type = "option"  # Most common case
+        return round_price_to_tick_size(aggressive_price, contract_type)
+
+    except Exception as e:
+        logger.warning(f"Error calculating aggressive price: {e}, using base price")
+        return round_price_to_tick_size(base_price, "option")
+
+
 def flush_all_handlers():
     """Flush all logging handlers to ensure messages are written to files"""
     for handler in logging.getLogger().handlers:

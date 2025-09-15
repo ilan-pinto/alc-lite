@@ -15,6 +15,7 @@ Test Coverage:
 """
 
 import asyncio
+import sys
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List
@@ -23,6 +24,14 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 import numpy as np
 import pytest
 from ib_async import Contract, Option, OptionChain, Stock, Ticker
+
+# PyPy-aware performance multipliers
+if hasattr(sys, "pypy_version_info"):
+    TIMEOUT_MULTIPLIER = 2.0
+    MEMORY_MULTIPLIER = 5.0
+else:
+    TIMEOUT_MULTIPLIER = 1.0
+    MEMORY_MULTIPLIER = 1.0
 
 from modules.Arbitrage.box_spread.executor import BoxExecutor
 from modules.Arbitrage.box_spread.models import (
@@ -544,8 +553,11 @@ class TestBoxSpreadPerformanceIntegration:
         processing_time = time.time() - start_time
 
         # Should complete within reasonable time
-        # Performance expectations: < 5 seconds for mock data
-        assert processing_time < 5.0, f"Processing took too long: {processing_time}s"
+        # Performance expectations: < 5 seconds for mock data (adjusted for PyPy)
+        max_time = 5.0 * TIMEOUT_MULTIPLIER
+        assert (
+            processing_time < max_time
+        ), f"Processing took too long: {processing_time}s (max: {max_time}s)"
 
     async def test_cache_effectiveness_under_load(self):
         """Test cache effectiveness under load conditions"""

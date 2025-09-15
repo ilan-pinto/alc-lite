@@ -17,6 +17,7 @@ from ib_async import IB, Contract, Order, Trade
 
 from ..common import get_logger
 from .global_execution_lock import GlobalExecutionLock
+from .utils import calculate_aggressive_execution_price, round_price_to_tick_size
 
 logger = get_logger()
 
@@ -138,6 +139,81 @@ class ParallelExecutionFramework:
         execution_params: Optional[Dict] = None,
     ) -> ParallelExecutionPlan:
         """
+        Create a parallel execution plan for SFR arbitrage (legacy method).
+
+        For better fill rates, use create_execution_plan_with_tickers() instead.
+        """
+        return await self._create_execution_plan_internal(
+            symbol,
+            expiry,
+            stock_contract,
+            call_contract,
+            put_contract,
+            stock_price,
+            call_price,
+            put_price,
+            quantity,
+            execution_params,
+            stock_ticker=None,
+            call_ticker=None,
+            put_ticker=None,
+        )
+
+    async def create_execution_plan_with_tickers(
+        self,
+        symbol: str,
+        expiry: str,
+        stock_contract: Contract,
+        call_contract: Contract,
+        put_contract: Contract,
+        stock_price: float,
+        call_price: float,
+        put_price: float,
+        stock_ticker=None,
+        call_ticker=None,
+        put_ticker=None,
+        quantity: int = 1,
+        execution_params: Optional[Dict] = None,
+    ) -> ParallelExecutionPlan:
+        """
+        Create a parallel execution plan with ticker data for improved pricing.
+
+        This version uses bid/ask data to create more aggressive prices that are
+        more likely to fill quickly, reducing the chance of partial fills.
+        """
+        return await self._create_execution_plan_internal(
+            symbol,
+            expiry,
+            stock_contract,
+            call_contract,
+            put_contract,
+            stock_price,
+            call_price,
+            put_price,
+            quantity,
+            execution_params,
+            stock_ticker,
+            call_ticker,
+            put_ticker,
+        )
+
+    async def _create_execution_plan_internal(
+        self,
+        symbol: str,
+        expiry: str,
+        stock_contract: Contract,
+        call_contract: Contract,
+        put_contract: Contract,
+        stock_price: float,
+        call_price: float,
+        put_price: float,
+        quantity: int = 1,
+        execution_params: Optional[Dict] = None,
+        stock_ticker=None,
+        call_ticker=None,
+        put_ticker=None,
+    ) -> ParallelExecutionPlan:
+        """
         Create a parallel execution plan for SFR arbitrage.
 
         Args:
@@ -151,6 +227,9 @@ class ParallelExecutionFramework:
             put_price: Target put option price (what we want to pay)
             quantity: Number of contracts
             execution_params: Optional execution parameters
+            stock_ticker: Stock ticker for aggressive pricing (optional)
+            call_ticker: Call option ticker for aggressive pricing (optional)
+            put_ticker: Put option ticker for aggressive pricing (optional)
 
         Returns:
             ParallelExecutionPlan ready for execution
@@ -163,13 +242,49 @@ class ParallelExecutionFramework:
         max_fill_time_per_leg = params.get("max_fill_time_per_leg", 2.0)
         slippage_tolerance = params.get("slippage_tolerance", 0.02)
 
-        # Create leg orders
+        # Enhanced pricing parameters
+        pricing_aggressiveness = params.get(
+            "pricing_aggressiveness", 0.02
+        )  # 2% more aggressive
+
+        # Calculate aggressive execution prices using bid/ask data when available
+        if stock_ticker:
+            aggressive_stock_price = calculate_aggressive_execution_price(
+                stock_ticker, "BUY", stock_price, pricing_aggressiveness
+            )
+            logger.debug(
+                f"[{symbol}] Stock aggressive pricing: {stock_price:.2f} -> {aggressive_stock_price:.2f}"
+            )
+        else:
+            aggressive_stock_price = round_price_to_tick_size(stock_price, "stock")
+
+        if call_ticker:
+            aggressive_call_price = calculate_aggressive_execution_price(
+                call_ticker, "SELL", call_price, pricing_aggressiveness
+            )
+            logger.debug(
+                f"[{symbol}] Call aggressive pricing: {call_price:.2f} -> {aggressive_call_price:.2f}"
+            )
+        else:
+            aggressive_call_price = round_price_to_tick_size(call_price, "option")
+
+        if put_ticker:
+            aggressive_put_price = calculate_aggressive_execution_price(
+                put_ticker, "BUY", put_price, pricing_aggressiveness
+            )
+            logger.debug(
+                f"[{symbol}] Put aggressive pricing: {put_price:.2f} -> {aggressive_put_price:.2f}"
+            )
+        else:
+            aggressive_put_price = round_price_to_tick_size(put_price, "option")
+
+        # Create leg orders with aggressive pricing
         stock_order = Order(
             orderId=self.ib.client.getReqId(),
             orderType="LMT",
             action="BUY",
             totalQuantity=quantity * 100,  # 100 shares per option contract
-            lmtPrice=stock_price,
+            lmtPrice=aggressive_stock_price,
             tif="DAY",
         )
 
@@ -178,7 +293,7 @@ class ParallelExecutionFramework:
             orderType="LMT",
             action="SELL",
             totalQuantity=quantity,
-            lmtPrice=call_price,
+            lmtPrice=aggressive_call_price,
             tif="DAY",
         )
 
@@ -187,16 +302,16 @@ class ParallelExecutionFramework:
             orderType="LMT",
             action="BUY",
             totalQuantity=quantity,
-            lmtPrice=put_price,
+            lmtPrice=aggressive_put_price,
             tif="DAY",
         )
 
-        # Create leg order objects
+        # Create leg order objects with aggressive pricing
         stock_leg = LegOrder(
             leg_type=LegType.STOCK,
             contract=stock_contract,
             order=stock_order,
-            target_price=stock_price,
+            target_price=aggressive_stock_price,
             action="BUY",
             quantity=quantity * 100,
             order_id=stock_order.orderId,
@@ -206,7 +321,7 @@ class ParallelExecutionFramework:
             leg_type=LegType.CALL,
             contract=call_contract,
             order=call_order,
-            target_price=call_price,
+            target_price=aggressive_call_price,
             action="SELL",
             quantity=quantity,
             order_id=call_order.orderId,
@@ -216,7 +331,7 @@ class ParallelExecutionFramework:
             leg_type=LegType.PUT,
             contract=put_contract,
             order=put_order,
-            target_price=put_price,
+            target_price=aggressive_put_price,
             action="BUY",
             quantity=quantity,
             order_id=put_order.orderId,
@@ -235,10 +350,19 @@ class ParallelExecutionFramework:
             slippage_tolerance=slippage_tolerance,
         )
 
-        logger.info(
-            f"[{symbol}] Created parallel execution plan {execution_id}: "
-            f"stock@{stock_price:.2f}, call@{call_price:.2f}, put@{put_price:.2f}"
-        )
+        # Log both original and aggressive prices for comparison
+        if stock_ticker or call_ticker or put_ticker:
+            logger.info(
+                f"[{symbol}] Created parallel execution plan {execution_id} with aggressive pricing: "
+                f"stock@{stock_price:.2f}->{aggressive_stock_price:.2f}, "
+                f"call@{call_price:.2f}->{aggressive_call_price:.2f}, "
+                f"put@{put_price:.2f}->{aggressive_put_price:.2f}"
+            )
+        else:
+            logger.info(
+                f"[{symbol}] Created parallel execution plan {execution_id}: "
+                f"stock@{aggressive_stock_price:.2f}, call@{aggressive_call_price:.2f}, put@{aggressive_put_price:.2f}"
+            )
 
         return plan
 

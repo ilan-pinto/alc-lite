@@ -121,7 +121,6 @@ class ParallelLegExecutor:
         self.current_execution: Optional[ParallelExecutionPlan] = None
         self.execution_history: List[ExecutionResult] = []
         self._max_execution_history = 50  # Limit history to prevent memory leaks
-        self.active_trades: Set[Trade] = set()
 
         # Performance metrics
         self._total_attempts = 0
@@ -586,6 +585,32 @@ class ParallelLegExecutor:
                         logger.warning(
                             f"[{symbol_cached}] {leg.leg_type.value} leg timeout after {leg_elapsed:.1f}s"
                         )
+
+                # Progress logging to show timeout status
+                total_elapsed = current_time - monitoring_start
+                progress_percent = (total_elapsed / execution_timeout) * 100
+
+                # Log progress at 50% and 75% of timeout to warn users
+                if progress_percent >= 50.0 and not hasattr(fill_status, "_warned_50"):
+                    remaining_time = execution_timeout - total_elapsed
+                    logger.warning(
+                        f"[{symbol_cached}] Fill monitoring 50% complete: "
+                        f"{total_elapsed:.1f}s elapsed, {remaining_time:.1f}s remaining. "
+                        f"Filled: {fill_status['filled_count']}/{len(legs)} legs"
+                    )
+                    fill_status["_warned_50"] = True
+
+                elif progress_percent >= 75.0 and not hasattr(
+                    fill_status, "_warned_75"
+                ):
+                    remaining_time = execution_timeout - total_elapsed
+                    logger.warning(
+                        f"[{symbol_cached}] Fill monitoring 75% complete: "
+                        f"{total_elapsed:.1f}s elapsed, {remaining_time:.1f}s remaining. "
+                        f"Filled: {fill_status['filled_count']}/{len(legs)} legs. "
+                        f"Rollback will trigger soon if legs don't fill!"
+                    )
+                    fill_status["_warned_75"] = True
 
                 # Brief pause before next check
                 await asyncio.sleep(sleep_interval)

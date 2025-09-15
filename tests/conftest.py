@@ -175,3 +175,13 @@ def pytest_configure(config):
         "markers", "performance: marks tests as performance benchmarks"
     )
     config.addinivalue_line("markers", "stress: marks tests as stress tests")
+
+
+def pytest_addoption(parser):
+    """Add custom command line options."""
+    parser.addoption(
+        "--ib-integration",
+        action="store_true",
+        default=False,
+        help="run tests that require IB connectivity",
+    )

@@ -112,3 +112,4 @@ filled_orders.txt
 
 # Database files
 backtesting/infra/database/podman/data/
+benchmarks/results

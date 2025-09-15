@@ -19,12 +19,6 @@ from rich.theme import Theme
 USING_PYPY = hasattr(sys, "pypy_version_info")
 
 if USING_PYPY:
-    # Configure PyPy-specific optimizations
-    import gc
-
-    # Optimize garbage collection for PyPy's different memory model
-    gc.set_threshold(700, 10, 10)
-
     # Display PyPy detection info
     pypy_version = f"PyPy {sys.pypy_version_info.major}.{sys.pypy_version_info.minor}.{sys.pypy_version_info.micro}"
     print(f"🚀 {pypy_version} detected - enhanced performance mode enabled")
