@@ -9,11 +9,20 @@ This test file validates that the SFR module properly implements the logging imp
 """
 
 import os
+import sys
 import tempfile
 from unittest.mock import MagicMock, patch
 
 import logging
 import pytest
+
+# PyPy-aware performance multipliers
+if hasattr(sys, "pypy_version_info"):
+    TIMEOUT_MULTIPLIER = 2.0
+    MEMORY_MULTIPLIER = 5.0
+else:
+    TIMEOUT_MULTIPLIER = 1.0
+    MEMORY_MULTIPLIER = 1.0
 
 from modules.Arbitrage.common import configure_logging, get_logger
 
@@ -393,10 +402,11 @@ class TestSFRLoggingPerformance:
             end_time = time.time()
             elapsed = end_time - start_time
 
-            # Should complete logging operations quickly (under 1 second for 200 messages)
+            # Should complete logging operations quickly (under 1 second for 200 messages, adjusted for PyPy)
+            max_time = 1.0 * TIMEOUT_MULTIPLIER
             assert (
-                elapsed < 1.0
-            ), f"Logging took {elapsed:.2f}s, which may indicate performance issues"
+                elapsed < max_time
+            ), f"Logging took {elapsed:.2f}s (max: {max_time}s), which may indicate performance issues"
 
             # Verify all messages were logged
             if os.path.exists(log_file):

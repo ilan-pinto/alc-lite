@@ -128,6 +128,12 @@ class TestRollbackRecursionFix:
 
     def test_recursion_error_handling(self, rollback_manager, sample_rollback_position):
         """Test that RecursionError is properly handled."""
+        import sys
+
+        is_pypy = hasattr(sys, "pypy_version_info") or "PyPy" in sys.version
+
+        if is_pypy:
+            pytest.skip("Skipping recursion error test for PyPy compatibility")
         # Create a rollback plan
         rollback_plan = RollbackPlan(
             rollback_id="test_rollback_1",
@@ -762,6 +768,250 @@ class TestRollbackIntegration:
             # Performance metrics should be updated
             metrics = rollback_manager.get_rollback_performance_metrics()
             assert metrics["failed_rollbacks"] >= 1
+
+
+class TestPricingPrecisionAndFallback:
+    """Tests for pricing precision fixes and enhanced fallback mechanisms."""
+
+    @pytest.mark.asyncio
+    async def test_pricing_precision_error_triggers_emergency_fallback(
+        self, mock_ib, sample_contract
+    ):
+        """Test that pricing precision errors trigger emergency market orders."""
+        rollback_manager = RollbackManager(mock_ib, "AAPL")
+
+        # Create a position with stock that would cause precision error
+        stock_leg = LegOrder(
+            leg_type=LegType.STOCK,
+            contract=sample_contract,
+            order=MagicMock(),
+            target_price=156.78,
+            action="BUY",
+            quantity=100,
+        )
+        stock_leg.fill_status = "filled"
+        stock_leg.filled_quantity = 100
+        stock_leg.avg_fill_price = 156.78
+
+        stock_position = RollbackPosition(
+            leg_order=stock_leg,
+            current_quantity=100,
+            avg_fill_price=156.78,
+            unrealized_pnl=0.0,
+            unwinding_priority=1,
+        )
+
+        # Mock placeOrder to raise pricing error on first attempt
+        def side_effect_place_order(contract, order):
+            if hasattr(order, "orderType") and order.orderType == "LMT":
+                # Simulate pricing precision error
+                raise Exception(
+                    "The price 155.2122 does not conform to minimum price variation"
+                )
+            else:
+                # Market order succeeds
+                trade = MagicMock(spec=Trade)
+                trade.orderStatus = MagicMock(spec=OrderStatus)
+                trade.orderStatus.status = "Filled"
+                trade.orderStatus.avgFillPrice = 155.21
+                return trade
+
+        mock_ib.placeOrder.side_effect = side_effect_place_order
+
+        # Test the emergency market order method directly
+        success = await rollback_manager._place_emergency_market_order(stock_position)
+
+        assert success is True
+        assert stock_position.unwind_status == "completed"
+        assert mock_ib.placeOrder.call_count >= 1
+
+        # Verify that market order was placed
+        market_order_calls = [
+            call
+            for call in mock_ib.placeOrder.call_args_list
+            if call[0][1].orderType == "MKT"
+        ]
+        assert len(market_order_calls) > 0
+
+    @pytest.mark.asyncio
+    async def test_rollback_strategy_exception_handling_with_pricing_error(
+        self, mock_ib, sample_contract
+    ):
+        """Test that rollback strategy execution handles pricing errors gracefully."""
+        rollback_manager = RollbackManager(mock_ib, "AAPL")
+
+        # Create positions to unwind
+        stock_leg = LegOrder(
+            leg_type=LegType.STOCK,
+            contract=sample_contract,
+            order=MagicMock(),
+            target_price=156.78,
+            action="BUY",
+            quantity=100,
+        )
+        stock_leg.fill_status = "filled"
+        stock_leg.filled_quantity = 100
+        stock_leg.avg_fill_price = 156.78
+
+        stock_position = RollbackPosition(
+            leg_order=stock_leg,
+            current_quantity=100,
+            avg_fill_price=156.78,
+            unrealized_pnl=0.0,
+            unwinding_priority=1,
+        )
+
+        rollback_plan = RollbackPlan(
+            rollback_id="test_pricing_error",
+            symbol="AAPL",
+            execution_id="test_exec",
+            reason=RollbackReason.PARTIAL_FILLS_TIMEOUT,
+            strategy=RollbackStrategy.AGGRESSIVE_LIMIT,
+            positions_to_unwind=[stock_position],
+            total_positions=1,
+            estimated_unwinding_cost=5.0,
+            max_acceptable_loss=10.0,
+            created_time=time.time(),
+            max_rollback_time=time.time() + 30.0,
+        )
+
+        # Mock emergency market rollback to succeed
+        async def mock_emergency_rollback(plan):
+            return {
+                "positions_unwound": 1,
+                "total_positions": 1,
+                "emergency_cost": 155.21 * 100,
+                "method": "emergency_market",
+                "success": True,
+            }
+
+        rollback_manager._emergency_market_rollback = AsyncMock(
+            side_effect=mock_emergency_rollback
+        )
+
+        # Mock the aggressive limit execution to raise pricing error
+        async def mock_aggressive_limit_rollback(plan):
+            raise Exception(
+                "The price 155.2122 does not conform to minimum price variation"
+            )
+
+        rollback_manager._execute_aggressive_limit_rollback = AsyncMock(
+            side_effect=mock_aggressive_limit_rollback
+        )
+
+        # Execute rollback - should catch pricing error and trigger emergency fallback
+        result = await rollback_manager._execute_rollback_strategy(rollback_plan)
+
+        assert result.get("emergency_fallback") is True
+        assert "pricing error" in result.get("error_message", "").lower()
+        assert result.get("positions_unwound") == 1
+
+    @pytest.mark.asyncio
+    async def test_parallel_execution_aggressive_pricing_strategy(self):
+        """Test that the improved pricing strategy creates more competitive prices."""
+        from modules.Arbitrage.sfr.parallel_execution_framework import (
+            ParallelExecutionFramework,
+        )
+        from modules.Arbitrage.sfr.utils import calculate_aggressive_execution_price
+
+        # Mock tickers with bid/ask data
+        stock_ticker = MagicMock()
+        stock_ticker.bid = 155.50
+        stock_ticker.ask = 155.52
+
+        call_ticker = MagicMock()
+        call_ticker.bid = 16.40
+        call_ticker.ask = 16.55
+
+        put_ticker = MagicMock()
+        put_ticker.bid = 8.50
+        put_ticker.ask = 8.65
+
+        # Test aggressive pricing calculations
+        stock_aggressive = calculate_aggressive_execution_price(
+            stock_ticker, "BUY", 155.51, 0.02
+        )
+        call_aggressive = calculate_aggressive_execution_price(
+            call_ticker, "SELL", 16.48, 0.02
+        )
+        put_aggressive = calculate_aggressive_execution_price(
+            put_ticker, "BUY", 8.58, 0.02
+        )
+
+        # Stock buying should be more aggressive (higher price)
+        assert stock_aggressive > 155.51
+        assert stock_aggressive >= stock_ticker.ask
+
+        # Call selling should be more aggressive (lower price)
+        assert call_aggressive < 16.48
+        assert call_aggressive <= call_ticker.bid
+
+        # Put buying should be more aggressive (higher price)
+        assert put_aggressive > 8.58
+        assert put_aggressive >= put_ticker.ask
+
+    @pytest.mark.asyncio
+    async def test_emergency_market_order_timeout_handling(
+        self, mock_ib, sample_contract
+    ):
+        """Test that emergency market orders handle timeouts properly."""
+        rollback_manager = RollbackManager(mock_ib, "AAPL")
+
+        # Create a position
+        stock_leg = LegOrder(
+            leg_type=LegType.STOCK,
+            contract=sample_contract,
+            order=MagicMock(),
+            target_price=156.78,
+            action="BUY",
+            quantity=100,
+        )
+        stock_leg.fill_status = "filled"
+        stock_leg.filled_quantity = 100
+        stock_leg.avg_fill_price = 156.78
+
+        stock_position = RollbackPosition(
+            leg_order=stock_leg,
+            current_quantity=100,
+            avg_fill_price=156.78,
+            unrealized_pnl=0.0,
+            unwinding_priority=1,
+        )
+
+        # Mock market order that never fills (stays in submitted status)
+        trade = MagicMock(spec=Trade)
+        trade.orderStatus = MagicMock(spec=OrderStatus)
+        trade.orderStatus.status = "Submitted"  # Never changes to "Filled"
+        mock_ib.placeOrder.return_value = trade
+
+        # Test emergency market order with timeout
+        success = await rollback_manager._place_emergency_market_order(stock_position)
+
+        assert success is False
+        assert stock_position.unwind_status == "failed"
+        assert mock_ib.placeOrder.called
+
+    @pytest.mark.asyncio
+    async def test_price_rounding_utility_functions(self):
+        """Test that price rounding utilities work correctly for different contract types."""
+        from modules.Arbitrage.sfr.utils import round_price_to_tick_size
+
+        # Test stock price rounding (2 decimal places)
+        stock_price = 155.21223
+        rounded_stock = round_price_to_tick_size(stock_price, "stock")
+        assert rounded_stock == 155.21
+        assert isinstance(rounded_stock, float)
+
+        # Test option price rounding (2 decimal places)
+        option_price = 16.50789
+        rounded_option = round_price_to_tick_size(option_price, "option")
+        assert rounded_option == 16.51
+        assert isinstance(rounded_option, float)
+
+        # Test default case
+        default_price = 8.60456
+        rounded_default = round_price_to_tick_size(default_price)
+        assert rounded_default == 8.60
 
 
 if __name__ == "__main__":

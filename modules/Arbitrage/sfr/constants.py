@@ -5,6 +5,9 @@ This module contains all the configuration parameters, thresholds, and constants
 used throughout the SFR strategy implementation.
 """
 
+import os
+import sys
+
 # Data collection timeouts
 DEFAULT_DATA_TIMEOUT = 30.0  # 30 seconds timeout for data collection
 
@@ -85,9 +88,26 @@ PHASE_3_PROFIT_THRESHOLD = 0.10  # Lower threshold for final evaluation
 DEBUG_LOG_INTERVAL = 5  # Log debug messages every N seconds
 MAX_LOG_MISSING_CONTRACTS = 5  # Maximum number of missing contracts to log
 
-# Performance optimization
-NUMPY_VECTORIZATION_THRESHOLD = 10  # Minimum number of options for vectorization
-BATCH_PROCESSING_SIZE = 50  # Size for batch operations
+# Performance optimization (PyPy-aware)
+# PyPy detection
+USING_PYPY = hasattr(sys, "pypy_version_info")
+
+# Adjust thresholds based on runtime
+if USING_PYPY:
+    # PyPy-optimized values
+    NUMPY_VECTORIZATION_THRESHOLD = 20  # PyPy handles larger thresholds better
+    BATCH_PROCESSING_SIZE = 100  # PyPy can handle larger batches efficiently
+    DEFAULT_CACHE_SIZE = 500  # Larger cache since PyPy manages memory better
+    JIT_WARMUP_ITERATIONS = 50  # Allow JIT to warm up
+    # PyPy timeout multiplier - needs more time during JIT warmup
+    TIMEOUT_MULTIPLIER = 1.5
+else:
+    # CPython-optimized values
+    NUMPY_VECTORIZATION_THRESHOLD = 10  # CPython+numpy is efficient for smaller arrays
+    BATCH_PROCESSING_SIZE = 50  # Conservative batch size for CPython
+    TIMEOUT_MULTIPLIER = 1.0
+    DEFAULT_CACHE_SIZE = 200  # Smaller cache for CPython
+    JIT_WARMUP_ITERATIONS = 0  # No warmup needed
 
 # Error handling
 MAX_RETRY_ATTEMPTS = 3
@@ -98,16 +118,35 @@ CONTRACT_CACHE_TTL = 300  # 5 minutes TTL for contract cache
 
 # Parallel execution configuration
 PARALLEL_EXECUTION_ENABLED = True  # Enable/disable parallel execution
-PARALLEL_EXECUTION_TIMEOUT = 30.0  # Maximum time to wait for all legs to fill (seconds)
-PARALLEL_FILL_TIMEOUT_PER_LEG = (
-    10.0  # Maximum time to wait for individual leg (seconds)
+
+# Base timeout values (increased from 30s->60s, 10s->20s for more patience)
+_BASE_EXECUTION_TIMEOUT = 60.0
+_BASE_LEG_TIMEOUT = 20.0
+_BASE_PARTIAL_FILL_TIMEOUT = 10.0
+_BASE_ROLLBACK_TIMEOUT = 25.0
+
+# Runtime-adjusted timeout values (PyPy gets additional time for JIT warmup)
+# Allow environment variable overrides for different market conditions
+PARALLEL_EXECUTION_TIMEOUT = float(
+    os.getenv(
+        "PARALLEL_EXECUTION_TIMEOUT", _BASE_EXECUTION_TIMEOUT * TIMEOUT_MULTIPLIER
+    )
 )
+PARALLEL_FILL_TIMEOUT_PER_LEG = float(
+    os.getenv("PARALLEL_FILL_TIMEOUT_PER_LEG", _BASE_LEG_TIMEOUT * TIMEOUT_MULTIPLIER)
+)
+PARTIAL_FILL_AGGRESSIVE_TIMEOUT = float(
+    os.getenv(
+        "PARTIAL_FILL_AGGRESSIVE_TIMEOUT",
+        _BASE_PARTIAL_FILL_TIMEOUT * TIMEOUT_MULTIPLIER,
+    )
+)
+
 PARALLEL_MAX_SLIPPAGE_PERCENT = 2.0  # Maximum acceptable slippage percentage
 PARALLEL_MAX_GLOBAL_ATTEMPTS = 5  # Maximum global execution attempts per session
 PARALLEL_MAX_SYMBOL_ATTEMPTS = 3  # Maximum execution attempts per symbol
 
 # Partial fill handling
-PARTIAL_FILL_AGGRESSIVE_TIMEOUT = 5.0  # Timeout for aggressive completion attempts
 PARTIAL_FILL_MAX_SLIPPAGE = (
     0.05  # Maximum slippage for partial fill completion (5 cents)
 )
@@ -115,7 +154,11 @@ PARTIAL_FILL_COMPLETION_ATTEMPTS = 3  # Maximum attempts to complete partial fil
 
 # Rollback configuration
 ROLLBACK_MAX_ATTEMPTS = 3  # Maximum rollback attempts
-ROLLBACK_TIMEOUT_PER_ATTEMPT = 15.0  # Timeout per rollback attempt (seconds)
+ROLLBACK_TIMEOUT_PER_ATTEMPT = float(
+    os.getenv(
+        "ROLLBACK_TIMEOUT_PER_ATTEMPT", _BASE_ROLLBACK_TIMEOUT * TIMEOUT_MULTIPLIER
+    )
+)
 ROLLBACK_AGGRESSIVE_PRICING_FACTOR = 0.01  # 1% price adjustment for aggressive rollback
 ROLLBACK_MAX_SLIPPAGE_PERCENT = 3.0  # Maximum acceptable rollback slippage
 

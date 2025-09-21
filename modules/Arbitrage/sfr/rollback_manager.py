@@ -29,6 +29,7 @@ from .constants import (
     ROLLBACK_TIMEOUT_PER_ATTEMPT,
 )
 from .parallel_execution_framework import LegOrder, LegType, ParallelExecutionPlan
+from .utils import round_price_to_tick_size
 
 logger = get_logger()
 
@@ -520,8 +521,45 @@ class RollbackManager:
             }
         except Exception as e:
             plan.rollback_status = "failed"
-            logger.error(f"[{self.symbol}] Error in rollback strategy execution: {e}")
-            return {"success": False, "error_message": str(e), "positions_unwound": 0}
+            error_msg = str(e)
+            logger.error(
+                f"[{self.symbol}] Error in rollback strategy execution: {error_msg}"
+            )
+
+            # Check if this is a pricing-related error that should trigger emergency fallback
+            pricing_error_keywords = [
+                "minimum price variation",
+                "price does not conform",
+                "invalid price",
+                "price precision",
+                "tick size",
+            ]
+
+            if any(keyword in error_msg.lower() for keyword in pricing_error_keywords):
+                logger.warning(
+                    f"[{self.symbol}] Pricing error detected: {error_msg}. "
+                    f"Triggering emergency market order fallback."
+                )
+                try:
+                    emergency_result = await self._emergency_market_rollback(plan)
+                    return {
+                        "success": emergency_result.get("success", False),
+                        "error_message": f"Pricing error, emergency fallback: {error_msg}",
+                        "positions_unwound": emergency_result.get(
+                            "positions_unwound", 0
+                        ),
+                        "emergency_fallback": True,
+                    }
+                except Exception as emergency_error:
+                    logger.critical(
+                        f"[{self.symbol}] Emergency fallback also failed: {emergency_error}"
+                    )
+
+            return {
+                "success": False,
+                "error_message": error_msg,
+                "positions_unwound": 0,
+            }
 
     async def _execute_immediate_market_rollback(self, plan: RollbackPlan) -> Dict:
         """Execute immediate market order rollback (highest speed, highest slippage risk)."""
@@ -762,6 +800,17 @@ class RollbackManager:
                     # Buying: increase price to encourage fills
                     aggressive_price = position.avg_fill_price * (1.0 + pricing_factor)
 
+                # Determine contract type for proper price rounding
+                contract_type = (
+                    "stock"
+                    if position.leg_order.leg_type == LegType.STOCK
+                    else "option"
+                )
+
+                # Round price to appropriate tick size to avoid "minimum price variation" errors
+                aggressive_price = round_price_to_tick_size(
+                    aggressive_price, contract_type
+                )
                 position.rollback_target_price = aggressive_price
 
                 # Create aggressive limit order
@@ -796,11 +845,39 @@ class RollbackManager:
                     )
 
             except Exception as e:
+                error_msg = str(e)
                 logger.error(
                     f"[{self.symbol}] Error placing aggressive order for "
-                    f"{position.leg_order.leg_type.value}: {e}"
+                    f"{position.leg_order.leg_type.value}: {error_msg}"
                 )
-                position.unwind_status = "failed"
+
+                # Check if this is a pricing error that should trigger immediate market order
+                pricing_error_keywords = [
+                    "minimum price variation",
+                    "price does not conform",
+                    "invalid price",
+                    "price precision",
+                    "tick size",
+                ]
+
+                if any(
+                    keyword in error_msg.lower() for keyword in pricing_error_keywords
+                ):
+                    logger.warning(
+                        f"[{self.symbol}] Pricing error detected for {position.leg_order.leg_type.value}: {error_msg}. "
+                        f"Attempting immediate market order."
+                    )
+                    try:
+                        # Try immediate market order as fallback
+                        await self._place_emergency_market_order(position)
+                    except Exception as market_error:
+                        logger.error(
+                            f"[{self.symbol}] Emergency market order also failed for "
+                            f"{position.leg_order.leg_type.value}: {market_error}"
+                        )
+                        position.unwind_status = "failed"
+                else:
+                    position.unwind_status = "failed"
 
         # Monitor fills for this attempt
         monitor_start = time.time()
@@ -954,6 +1031,17 @@ class RollbackManager:
                         1.0 + pricing_factor
                     )
 
+                # Determine contract type for proper price rounding
+                contract_type = (
+                    "stock"
+                    if position.leg_order.leg_type == LegType.STOCK
+                    else "option"
+                )
+
+                # Round price to appropriate tick size to avoid "minimum price variation" errors
+                conservative_price = round_price_to_tick_size(
+                    conservative_price, contract_type
+                )
                 position.rollback_target_price = conservative_price
 
                 conservative_order = Order(
@@ -1389,6 +1477,85 @@ class RollbackManager:
             "method": "market_fallback",
             "remaining_positions": len(remaining_positions) - unwound_count,
         }
+
+    async def _place_emergency_market_order(self, position: RollbackPosition) -> bool:
+        """
+        Place an emergency market order for a single position when limit orders fail.
+
+        Args:
+            position: The position that needs unwinding
+
+        Returns:
+            True if market order was placed successfully, False otherwise
+        """
+        try:
+            # Cancel any existing orders first
+            if position.rollback_trade:
+                try:
+                    self.ib.cancelOrder(position.rollback_order)
+                    await asyncio.sleep(0.1)  # Brief pause
+                except Exception:
+                    pass  # Ignore cancellation errors
+
+            # Determine opposite action for unwinding
+            unwind_action = "SELL" if position.leg_order.action == "BUY" else "BUY"
+
+            # Create emergency market order
+            emergency_order = Order(
+                orderId=self.ib.client.getReqId(),
+                orderType="MKT",
+                action=unwind_action,
+                totalQuantity=position.current_quantity,
+                tif="DAY",
+            )
+
+            # Place emergency market order
+            emergency_trade = self.ib.placeOrder(
+                position.leg_order.contract, emergency_order
+            )
+            position.rollback_trade = emergency_trade
+            position.rollback_order = emergency_order
+
+            # Update tracking
+            position.unwind_status = "unwinding"
+            position.rollback_target_price = None  # Market order has no limit price
+
+            logger.warning(
+                f"[{self.symbol}] EMERGENCY MARKET ORDER placed for {position.leg_order.leg_type.value}: "
+                f"{unwind_action} {position.current_quantity} contracts"
+            )
+
+            # Wait briefly for market fill
+            fill_start = time.time()
+            fill_timeout = 5.0  # 5 seconds max for market order
+
+            while time.time() - fill_start < fill_timeout:
+                if emergency_trade.orderStatus.status == "Filled":
+                    fill_price = emergency_trade.orderStatus.avgFillPrice
+                    position.unwind_status = "completed"
+
+                    logger.warning(
+                        f"[{self.symbol}] ✓ EMERGENCY MARKET FILL: {position.leg_order.leg_type.value} "
+                        f"@ {fill_price:.2f} (HIGH SLIPPAGE RISK)"
+                    )
+                    return True
+
+                await asyncio.sleep(0.1)
+
+            # If we reach here, market order didn't fill quickly
+            logger.error(
+                f"[{self.symbol}] Emergency market order timeout for {position.leg_order.leg_type.value}"
+            )
+            position.unwind_status = "failed"
+            return False
+
+        except Exception as e:
+            logger.error(
+                f"[{self.symbol}] Error placing emergency market order for "
+                f"{position.leg_order.leg_type.value}: {e}"
+            )
+            position.unwind_status = "failed"
+            return False
 
     def get_rollback_order_status(self, rollback_id: str) -> Dict:
         """Get comprehensive status of all orders in a rollback."""

@@ -7,11 +7,28 @@ and system resource constraints.
 
 import asyncio
 import os
+import sys
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import psutil
 import pytest
+
+# Import PyPy compatibility utilities
+try:
+    from modules.Arbitrage.pypy_compat import create_compatible_async_mock, is_pypy
+except ImportError:
+    # Fallback for environments without PyPy compatibility
+    def is_pypy():
+        return hasattr(sys, "pypy_version_info") or "PyPy" in sys.version
+
+    def create_compatible_async_mock(return_value=None):
+        from unittest.mock import AsyncMock
+
+        mock = AsyncMock()
+        mock.return_value = return_value
+        return mock
+
 
 from modules.Arbitrage.sfr.execution_reporter import ExecutionReporter, ReportLevel
 from modules.Arbitrage.sfr.global_execution_lock import GlobalExecutionLock
@@ -565,7 +582,6 @@ class TestDataCorruptionAndValidation:
 
     def test_corrupted_rollback_data(self):
         """Test handling of corrupted rollback data"""
-
         mock_ib = MagicMock()
         manager = RollbackManager(ib=mock_ib, symbol="SPY")
 
@@ -589,7 +605,6 @@ class TestDataCorruptionAndValidation:
 
     def test_negative_or_invalid_numeric_values(self):
         """Test handling of invalid numeric values"""
-
         mock_ib = MagicMock()
         mock_ib.placeOrder = MagicMock()
 
@@ -609,7 +624,6 @@ class TestDataCorruptionAndValidation:
 
     def test_extremely_large_numeric_values(self):
         """Test handling of extremely large numeric values"""
-
         mock_ib = MagicMock()
         mock_ib.placeOrder = MagicMock()
 
@@ -772,7 +786,6 @@ class TestExtremeLoadConditions:
 
     def test_zero_liquidity_scenario(self):
         """Test handling of zero liquidity (no fills)"""
-
         mock_ib = MagicMock()
         mock_ib.placeOrder = MagicMock()
 

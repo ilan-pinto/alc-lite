@@ -312,6 +312,186 @@ Both systems now use **Python wrappers** instead of shell scripts to prevent asy
 - Python wrappers maintain proper environment context and prevent timeouts
 - Both wrappers include HTML stats page generation with auto-opening
 
+## Running with PyPy for Enhanced Performance 🏎️
+
+PyPy provides **2-10x performance improvements** for calculation-intensive operations like options chain processing and arbitrage detection.
+
+### Quick Setup
+```bash
+# Install PyPy environment
+./scripts/setup_pypy_conda.sh
+
+# Run with PyPy (Method 1: Direct)
+conda activate alc-pypy
+pypy3 alchimest.py sfr --symbols SPY QQQ --debug
+
+# Run with PyPy (Method 2: Convenience script)
+./scripts/run_with_pypy.sh sfr --symbols SPY QQQ --debug
+```
+
+### Performance Comparison
+```bash
+# Benchmark PyPy vs CPython performance
+./benchmarks/compare_runtimes.sh
+```
+
+### When to Use PyPy
+- ✅ **Use PyPy for**: Long-running scans (5+ symbols), data collection pipelines, production trading
+- ❌ **Use CPython for**: Quick development, single-symbol scans, interactive testing
+
+### Expected Performance Gains
+- **Options chain processing**: 3-5x faster
+- **Arbitrage detection**: 2-4x faster
+- **Data collection**: 2-5x faster
+- **Parallel execution monitoring**: 2-3x faster
+
+### PyPy Environment Management
+```bash
+# Create environment
+./scripts/setup_pypy_conda.sh
+
+# Activate/deactivate
+conda activate alc-pypy
+conda deactivate
+
+# Test installation
+pypy3 -c "import sys; print(f'PyPy {sys.pypy_version_info} ready!')"
+```
+
+For detailed PyPy documentation, see: `docs/PYPY_PERFORMANCE.md`
+
+## Parallel Test Execution (Python + PyPy3)
+
+Run tests with both CPython and PyPy3 interpreters simultaneously to ensure compatibility and compare performance:
+
+### Quick Start
+```bash
+# Run all tests in parallel (with PyPy JIT warmup)
+python scripts/parallel_test_runner.py tests
+
+# Show real-time test progress with colors 🎬
+python scripts/parallel_test_runner.py tests --live
+
+# Show periodic progress updates
+python scripts/parallel_test_runner.py tests --progress
+
+# Run specific test file with warmup
+python scripts/parallel_test_runner.py tests/test_cli_arguments.py
+
+# Run with keyword filter
+python scripts/parallel_test_runner.py tests -k "performance"
+
+# Skip PyPy warmup for faster startup
+python scripts/parallel_test_runner.py tests --skip-warmup
+
+# Only run PyPy warmup (no tests) - useful for JIT preparation
+python scripts/parallel_test_runner.py tests --warmup-only
+
+# Run with pytest options
+python scripts/parallel_test_runner.py tests --tb=short -v
+```
+
+### PyPy JIT Warmup
+The parallel test runner includes **automatic PyPy JIT warmup** to ensure optimal performance:
+
+- **🔥 Warmup Exercises**: Runs Fibonacci recursion, prime sieve, and matrix multiplication
+- **🚀 JIT Optimization**: Pre-compiles common computational patterns
+- **⏱️ Duration**: ~0.5-2 seconds warmup time for significant performance gains
+- **💡 Smart**: Only warms up PyPy, CPython starts immediately
+
+**Warmup Output Example:**
+```
+🔥 Warming up PyPy JIT compiler...
+   🏃‍♂️ PyPy JIT Warmup - Running computational exercises...
+      📈 Fibonacci(25): 75025 in 0.013s
+      🔢 Primes to 10k: 1229 found in 0.003s
+      🔢 Matrix multiply: 20x20 in 0.006s
+   ✅ PyPy JIT warmup completed!
+🚀 PyPy JIT is now warmed up and ready for optimal performance!
+```
+
+### Real-Time Progress Modes 🎬
+
+**Live Mode (`--live`)**: Watch each test pass/fail in real-time with colors:
+```
+🎬 Live test progress mode enabled!
+═══════════════════════════════════════════════════════════════
+[CPython] ✓ test_sfr_command_with_all_valid_arguments [1]
+[CPython] ✓ test_sfr_command_with_default_profit [2]
+[PyPy3] ✓ test_sfr_command_with_all_valid_arguments [1]
+[PyPy3] ✓ test_sfr_command_with_default_profit [2]
+```
+
+**Progress Mode (`--progress`)**: Periodic counter updates:
+```
+📊 Progress: CPython 5 tests | PyPy3 3 tests
+📊 Progress: CPython 10 tests | PyPy3 8 tests
+📊 Progress: CPython 15 tests | PyPy3 13 tests
+```
+
+**Benefits:**
+- **Real-time feedback**: See tests as they pass/fail
+- **Better debugging**: Identify slow or hanging tests immediately
+- **Visual comparison**: Watch both interpreters progress side-by-side
+- **Color-coded**: Blue for CPython, Green for PyPy3
+- **Test counters**: Track progress with [1], [2], [3]...
+
+### VS Code/Cursor IDE Integration
+
+The parallel test setup includes full IDE integration:
+
+**Keyboard Shortcuts:**
+- `Cmd+Shift+T` → Run all tests in parallel
+- `Cmd+Shift+F` → Run current file tests in parallel (when editing .py files)
+- `Cmd+Shift+K` → Run tests with keyword filter prompt
+
+**Launch Configurations:**
+- "Test: Python + PyPy3 (Parallel)" - Smart parallel runner with aggregated results
+- "Test: Python Only" - Standard pytest with CPython
+- "Test: PyPy3 Only" - Standard pytest with PyPy3
+- "Test: Both Interpreters" - Compound configuration (separate terminals)
+
+**Command Palette Tasks:**
+- "Test: Parallel (Python + PyPy3)" - Default parallel execution with warmup
+- "Test: Parallel (Live Progress)" - Real-time test progress with colors
+- "Test: Parallel (Progress Updates)" - Periodic progress updates
+- "Test: Parallel (No Warmup)" - Skip PyPy warmup for faster startup
+- "Test: PyPy Warmup Only" - Pre-warm PyPy JIT without running tests
+- "Test: Python" - CPython only
+- "Test: PyPy3" - PyPy3 only
+
+### Understanding Performance Results
+
+```
+📊 PARALLEL TEST RESULTS COMPARISON
+================================================================================
+
+✅ CPython Results:
+   Duration: 4.14s
+   Passed:   25
+   Failed:   0
+   Total:    25
+
+✅ PyPy3 Results:
+   Duration: 9.94s
+   Passed:   25
+   Failed:   0
+   Total:    25
+
+🐢 PyPy Performance: 2.40x slower than CPython (JIT warmup?)
+
+🎉 All tests pass on both interpreters!
+```
+
+**Performance Notes:**
+- ✅ **PyPy faster**: Long-running tests with heavy computation
+- 🐢 **PyPy slower**: Short tests with lots of setup/teardown (JIT warmup overhead)
+- ⚖️ **Similar**: Medium-duration tests where JIT balances out
+
+### Environment Requirements
+- **CPython**: Uses default Python environment with all dependencies
+- **PyPy3**: Uses `/Users/ilpinto/micromamba/envs/alc-pypy/bin/pypy3` environment
+
 ## Development Notes
 
 - The codebase uses `ib_async` for asynchronous IB operations
@@ -320,3 +500,4 @@ Both systems now use **Python wrappers** instead of shell scripts to prevent asy
 - Type hints required (mypy configuration in pyproject.toml)
 - Test coverage targets `commands` and `modules` packages
 - CI/CD handles automated versioning and releases
+- **PyPy support**: Automatic runtime detection with optimized code paths

@@ -1,0 +1,324 @@
+name: PyPy Performance Benchmarks
+
+on:
+  # Run weekly on Sundays at midnight UTC
+  schedule:
+    - cron: '0 0 * * 0'
+
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      quick_run:
+        description: 'Run quick benchmarks (fewer iterations)'
+        required: false
+        default: false
+        type: boolean
+
+  # Run on PyPy-related changes
+  push:
+    branches:
+      - 'feat-pypy'
+    paths:
+      - 'benchmarks/**'
+      - 'modules/Arbitrage/pypy_config.py'
+      - 'requirements-pypy.txt'
+      - 'scripts/setup_pypy_conda.sh'
+
+jobs:
+  pypy-benchmarks:
+    runs-on: macos-latest
+    name: PyPy Performance Benchmarks
+
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    # Set up Miniconda for PyPy environment management
+    - name: Set up Miniconda
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        auto-update-conda: true
+        python-version: '3.10'
+        channels: conda-forge,defaults
+        channel-priority: true
+
+    # Set up CPython for comparison
+    - name: Set up CPython
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Cache conda packages
+      uses: actions/cache@v3
+      with:
+        path: ~/conda_pkgs_dir
+        key: ${{ runner.os }}-conda-${{ hashFiles('requirements-pypy.txt') }}
+
+    # Install CPython dependencies
+    - name: Install CPython dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install psutil  # For memory benchmarking
+
+    # Set up PyPy environment using conda
+    - name: Set up PyPy environment
+      shell: bash -l {0}
+      run: |
+        echo "🏎️ Setting up PyPy environment for benchmarking..."
+
+        # Create PyPy environment
+        conda create -n alc-pypy -c conda-forge pypy3.10 -y
+
+        # Activate environment and install dependencies
+        conda activate alc-pypy
+
+        # Install PyPy dependencies
+        pypy3 -m ensurepip --default-pip
+        pypy3 -m pip install --upgrade pip
+
+        if [ -f "requirements-pypy.txt" ]; then
+          pypy3 -m pip install -r requirements-pypy.txt
+        else
+          pypy3 -m pip install -r requirements.txt
+        fi
+
+        # Install psutil for memory benchmarking
+        pypy3 -m pip install psutil
+
+        echo "✅ PyPy environment setup complete"
+
+    # Run CPython benchmarks
+    - name: Run CPython benchmarks
+      run: |
+        echo "🐍 Running CPython benchmarks..."
+        python benchmarks/pypy_performance.py --output cpython_results.json
+
+    # Run PyPy benchmarks
+    - name: Run PyPy benchmarks
+      shell: bash -l {0}
+      run: |
+        echo "⚡ Running PyPy benchmarks..."
+        conda activate alc-pypy
+        pypy3 benchmarks/pypy_performance.py --output pypy_results.json
+
+    # Generate comparison report
+    - name: Generate performance comparison
+      shell: bash -l {0}
+      run: |
+        echo "📊 Generating performance comparison..."
+
+        # Create a simple comparison script
+        python << 'EOF'
+        import json
+        import os
+        from datetime import datetime
+
+        def load_results(filename):
+            if os.path.exists(filename):
+                with open(filename, 'r') as f:
+                    return json.load(f)
+            return None
+
+        def calculate_improvement(cpython_time, pypy_time):
+            if cpython_time > 0 and pypy_time > 0:
+                return ((cpython_time - pypy_time) / cpython_time) * 100
+            return 0
+
+        cpython_data = load_results('cpython_results.json')
+        pypy_data = load_results('pypy_results.json')
+
+        if cpython_data and pypy_data:
+            print("🏎️ PyPy vs CPython Performance Comparison")
+            print("=" * 50)
+            print(f"Report Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            print()
+
+            # Compare options chain processing
+            if 'options_chain_processing' in cpython_data.get('benchmarks', {}) and \
+               'options_chain_processing' in pypy_data.get('benchmarks', {}):
+                print("📈 Options Chain Processing:")
+
+                cpython_chain = cpython_data['benchmarks']['options_chain_processing']
+                pypy_chain = pypy_data['benchmarks']['options_chain_processing']
+
+                for size_key in cpython_chain:
+                    if size_key in pypy_chain and 'timing' in cpython_chain[size_key] and 'timing' in pypy_chain[size_key]:
+                        size = size_key.split('_')[-1]
+                        cpython_time = cpython_chain[size_key]['timing']['mean']
+                        pypy_time = pypy_chain[size_key]['timing']['mean']
+                        improvement = calculate_improvement(cpython_time, pypy_time)
+
+                        print(f"  • {size:>4} options: {improvement:+6.1f}% improvement")
+
+            print()
+
+            # Compare arbitrage detection
+            if 'arbitrage_detection' in cpython_data.get('benchmarks', {}) and \
+               'arbitrage_detection' in pypy_data.get('benchmarks', {}):
+                print("🎯 Arbitrage Detection:")
+
+                cpython_arb = cpython_data['benchmarks']['arbitrage_detection']
+                pypy_arb = pypy_data['benchmarks']['arbitrage_detection']
+
+                for size_key in cpython_arb:
+                    if size_key in pypy_arb and 'timing' in cpython_arb[size_key] and 'timing' in pypy_arb[size_key]:
+                        size = size_key.split('_')[-1]
+                        cpython_time = cpython_arb[size_key]['timing']['mean']
+                        pypy_time = pypy_arb[size_key]['timing']['mean']
+                        improvement = calculate_improvement(cpython_time, pypy_time)
+
+                        print(f"  • {size:>4} strikes: {improvement:+6.1f}% improvement")
+
+            print()
+            print("💡 Positive percentages indicate PyPy is faster than CPython")
+            print("⚠️  Negative percentages indicate PyPy is slower than CPython")
+            print()
+
+            # Save summary for artifact
+            summary = {
+                'timestamp': datetime.now().isoformat(),
+                'cpython_version': cpython_data.get('runtime_info', {}).get('python_version', 'Unknown'),
+                'pypy_version': pypy_data.get('runtime_info', {}).get('pypy_version', 'Unknown'),
+                'performance_summary': 'See detailed results in benchmark artifacts'
+            }
+
+            with open('benchmark_summary.json', 'w') as f:
+                json.dump(summary, f, indent=2)
+
+        else:
+            print("❌ Could not load benchmark results")
+        EOF
+
+    # Create benchmark artifacts
+    - name: Create benchmark artifacts
+      shell: bash -l {0}
+      run: |
+        echo "📦 Creating benchmark artifacts..."
+
+        # Create results directory
+        mkdir -p benchmark_results
+
+        # Move result files
+        if [ -f "cpython_results.json" ]; then
+            mv cpython_results.json benchmark_results/
+        fi
+
+        if [ -f "pypy_results.json" ]; then
+            mv pypy_results.json benchmark_results/
+        fi
+
+        if [ -f "benchmark_summary.json" ]; then
+            mv benchmark_summary.json benchmark_results/
+        fi
+
+        # Create a timestamp file
+        echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" > benchmark_results/timestamp.txt
+
+        # List all files
+        echo "📋 Benchmark artifacts:"
+        ls -la benchmark_results/
+
+    # Upload benchmark results as artifacts
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: pypy-benchmarks-${{ github.run_number }}
+        path: benchmark_results/
+        retention-days: 30
+
+    # Performance regression check
+    - name: Check for performance regressions
+      if: github.event_name == 'push'
+      shell: bash -l {0}
+      run: |
+        echo "🔍 Checking for performance regressions..."
+
+        # Simple regression check - ensure PyPy is at least as fast as CPython for key operations
+        python << 'EOF'
+        import json
+        import sys
+
+        def check_regression():
+            try:
+                with open('benchmark_results/cpython_results.json', 'r') as f:
+                    cpython_data = json.load(f)
+                with open('benchmark_results/pypy_results.json', 'r') as f:
+                    pypy_data = json.load(f)
+            except FileNotFoundError:
+                print("❌ Benchmark result files not found")
+                return False
+
+            regression_found = False
+
+            # Check options chain processing - PyPy should be at least 50% faster for large chains
+            cpython_chain = cpython_data.get('benchmarks', {}).get('options_chain_processing', {})
+            pypy_chain = pypy_data.get('benchmarks', {}).get('options_chain_processing', {})
+
+            if 'chain_size_1000' in cpython_chain and 'chain_size_1000' in pypy_chain:
+                cpython_time = cpython_chain['chain_size_1000']['timing']['mean']
+                pypy_time = pypy_chain['chain_size_1000']['timing']['mean']
+                improvement = ((cpython_time - pypy_time) / cpython_time) * 100
+
+                print(f"📊 Large chain processing improvement: {improvement:.1f}%")
+
+                if improvement < 50:  # Expect at least 50% improvement
+                    print(f"⚠️  Performance regression detected! PyPy should be >50% faster, got {improvement:.1f}%")
+                    regression_found = True
+                else:
+                    print(f"✅ Performance acceptable: {improvement:.1f}% improvement")
+
+            return not regression_found
+
+        if not check_regression():
+            print("❌ Performance regression detected!")
+            sys.exit(1)
+        else:
+            print("✅ No performance regressions detected")
+        EOF
+
+    # Comment on PR with results (if this is a PR)
+    - name: Comment PR with benchmark results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+
+          try {
+            const summary = JSON.parse(fs.readFileSync('benchmark_results/benchmark_summary.json', 'utf8'));
+
+            const comment = `## 🏎️ PyPy Performance Benchmark Results
+
+            **Runtime Versions:**
+            - CPython: ${summary.cpython_version}
+            - PyPy: ${summary.pypy_version}
+
+            **Benchmark Date:** ${summary.timestamp}
+
+            📊 Detailed results are available in the workflow artifacts.
+
+            💡 **Expected Performance:**
+            - Options processing: 2-5x faster with PyPy
+            - Arbitrage detection: 2-4x faster with PyPy
+            - Memory efficiency: Better for long-running processes
+
+            🔗 [View full benchmark results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          } catch (error) {
+            console.log('Could not create PR comment:', error);
+          }

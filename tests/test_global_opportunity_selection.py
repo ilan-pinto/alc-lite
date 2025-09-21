@@ -14,6 +14,7 @@ This module validates:
 """
 
 import asyncio
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
@@ -21,6 +22,14 @@ from typing import Dict, List
 from unittest.mock import MagicMock, Mock
 
 import pytest
+
+# PyPy-aware performance multipliers
+if hasattr(sys, "pypy_version_info"):
+    TIMEOUT_MULTIPLIER = 3.0  # More forgiving for PyPy performance variability
+    PERFORMANCE_MULTIPLIER = 2.0  # Allow 2x longer execution times under PyPy
+else:
+    TIMEOUT_MULTIPLIER = 1.0
+    PERFORMANCE_MULTIPLIER = 1.0
 
 from modules.Arbitrage.Synthetic import (
     GlobalOpportunity,
@@ -765,7 +774,10 @@ class TestGlobalOpportunityPerformance:
             f"  📊 Statistics: {stats['total_opportunities']} opportunities, {stats['unique_symbols']} symbols"
         )
 
-        assert stats_time < 0.05, "Statistics should generate within 50ms"
+        max_stats_time = 0.05 * PERFORMANCE_MULTIPLIER
+        assert (
+            stats_time < max_stats_time
+        ), f"Statistics should generate within {max_stats_time*1000:.0f}ms, got {stats_time*1000:.1f}ms"
 
         print("✅ Large-scale performance test passed")
 
@@ -810,13 +822,15 @@ class TestGlobalOpportunityPerformance:
 
             print(f"    Average: {avg_time:.2f}ms, Max: {max_time:.2f}ms")
 
-            # Performance requirements
+            # Performance requirements (adjusted for PyPy)
+            max_avg_time = 50 * PERFORMANCE_MULTIPLIER
+            max_max_time = 150 * PERFORMANCE_MULTIPLIER
             assert (
-                avg_time < 50
-            ), f"Average selection time should be under 50ms, got {avg_time:.2f}ms"
+                avg_time < max_avg_time
+            ), f"Average selection time should be under {max_avg_time:.0f}ms, got {avg_time:.2f}ms"
             assert (
-                max_time < 150
-            ), f"Max selection time should be under 150ms, got {max_time:.2f}ms"
+                max_time < max_max_time
+            ), f"Max selection time should be under {max_max_time:.0f}ms, got {max_time:.2f}ms"
 
         print("✅ Performance benchmarks met for all test sizes")
 
