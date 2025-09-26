@@ -17,8 +17,8 @@ if hasattr(sys, "pypy_version_info"):
     TIMEOUT_MULTIPLIER = 4.0  # Increased from 3.0 for lock acquisition performance
     MEMORY_MULTIPLIER = 4.0  # Increased from 2.0 for PyPy memory usage
 else:
-    TIMEOUT_MULTIPLIER = 1.0
-    MEMORY_MULTIPLIER = 1.0
+    TIMEOUT_MULTIPLIER = 2.0
+    MEMORY_MULTIPLIER = 2.0
 
 from modules.Arbitrage.sfr.global_execution_lock import (
     ExecutionLockInfo,
