@@ -191,3 +191,36 @@ ENABLE_PERFORMANCE_LOGGING = True  # Enable detailed performance logging
 PARALLEL_EXECUTION_DRY_RUN = False  # Enable dry-run mode for testing
 PARALLEL_EXECUTION_DEBUG_MODE = False  # Enable debug mode with extra logging
 SIMULATE_PARTIAL_FILLS = False  # Simulate partial fills for testing (development only)
+
+# Scoring system constants
+# Default scoring weights for SFR opportunities (must sum to 1.0)
+DEFAULT_PROFIT_WEIGHT = (
+    0.50  # Guaranteed profit is most important for risk-free arbitrage
+)
+DEFAULT_LIQUIDITY_WEIGHT = 0.25  # Execution certainty through volume/spreads
+DEFAULT_SPREAD_QUALITY_WEIGHT = 0.15  # Bid-ask spread quality
+DEFAULT_TIME_DECAY_WEIGHT = 0.10  # Time to expiry optimization
+
+# Liquidity scoring thresholds
+MIN_LIQUIDITY_VOLUME_FOR_SCORING = 5  # Minimum volume for full liquidity scoring
+LIQUIDITY_VOLUME_NORMALIZATION_THRESHOLD = 1000.0  # Volume normalization point
+LIQUIDITY_OPEN_INTEREST_BONUS_MAX = 0.20  # Maximum bonus from open interest
+
+# Spread quality scoring
+SPREAD_QUALITY_EXPONENTIAL_DECAY = 10.0  # Spread quality decay rate
+SPREAD_QUALITY_WIDE_PENALTY = 0.5  # Penalty multiplier for wide spreads
+
+# Time decay scoring
+OPTIMAL_DAYS_TO_EXPIRY_DEFAULT = 30  # Optimal days to expiry for scoring
+TIME_DECAY_GAUSSIAN_SIGMA = 10.0  # Standard deviation for time decay gaussian
+
+# Scoring logging configuration
+ENABLE_DETAILED_SCORING_LOGS = True  # Enable comprehensive scoring logs
+LOG_SCORE_COMPONENTS_DETAIL = True  # Log individual component scores
+SCORING_LOG_THRESHOLD = 0.0  # Only log opportunities above this score
+MAX_RANKING_DISPLAY = 5  # Maximum opportunities to display in ranking logs
+
+# Scoring performance optimizations
+SCORING_BATCH_SIZE = 50  # Process opportunities in batches
+ENABLE_SCORING_CACHE = True  # Cache scoring calculations
+SCORING_CACHE_TTL = 300  # 5 minutes TTL for scoring cache

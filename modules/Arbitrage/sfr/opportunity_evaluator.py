@@ -14,6 +14,11 @@ from ..common import get_logger
 from ..data_collection_metrics import ContractPriority
 from ..metrics import RejectionReason, metrics_collector
 from .constants import (
+    DEFAULT_LIQUIDITY_WEIGHT,
+    DEFAULT_PROFIT_WEIGHT,
+    DEFAULT_SPREAD_QUALITY_WEIGHT,
+    DEFAULT_TIME_DECAY_WEIGHT,
+    ENABLE_DETAILED_SCORING_LOGS,
     MAX_ACCEPTABLE_SPREAD_PCT,
     MAX_BID_ASK_SPREAD,
     MAX_TOTAL_SPREAD_COST,
@@ -21,6 +26,7 @@ from .constants import (
     MIN_THEORETICAL_PROFIT,
     OUTLIER_PENALTY,
     OUTLIER_Z_SCORE_THRESHOLD,
+    SCORING_LOG_THRESHOLD,
 )
 from .models import (
     ExpiryOption,
@@ -29,6 +35,7 @@ from .models import (
     SpreadAnalysis,
     VectorizedOpportunityData,
 )
+from .scoring import SFRScoringConfig, SFRScoringEngine
 from .utils import calculate_combo_limit_price, calculate_z_scores, get_stock_midpoint
 from .validation import (
     ConditionsValidator,
@@ -431,6 +438,7 @@ class OpportunityEvaluator:
         expiry_options: List[ExpiryOption],
         ticker_getter_func,
         check_conditions_func=None,
+        scoring_config: Optional[SFRScoringConfig] = None,
     ):
         self.symbol = symbol
         self.expiry_options = expiry_options
@@ -445,6 +453,12 @@ class OpportunityEvaluator:
             self.conditions_validator = ConditionsValidator()
         else:
             self.conditions_validator = None  # Will use the provided function
+
+        # Initialize scoring engine
+        self.scoring_engine = SFRScoringEngine(scoring_config)
+        logger.info(
+            f"[{self.symbol}] Initialized OpportunityEvaluator with scoring engine"
+        )
 
     def calc_price_and_build_order_for_expiry(
         self,
@@ -919,31 +933,118 @@ class OpportunityEvaluator:
             & (vectorized_data.guaranteed_profits >= MIN_GUARANTEED_PROFIT)
         )
 
-        # Step 4: Rank opportunities by profit potential
-        # Create composite score considering both profit and spread quality
-        profit_scores = vectorized_data.guaranteed_profits.copy()
-        profit_scores[~profitable_mask] = -np.inf
+        # Step 4: Rank opportunities using comprehensive scoring system
+        logger.info(
+            f"[{self.symbol}] Starting comprehensive scoring evaluation for {np.sum(profitable_mask)} profitable opportunities"
+        )
 
-        # Adjust scores by spread quality
-        if "spread_quality_scores" in spread_stats:
-            profit_scores = profit_scores * spread_stats["spread_quality_scores"]
+        # Collect data for scoring all profitable opportunities
+        profitable_indices = np.where(profitable_mask)[0]
+        scoring_results = []
 
-        # Step 5: Find best opportunity
-        if np.all(profit_scores == -np.inf):
+        if len(profitable_indices) == 0:
             logger.info(
                 f"[{self.symbol}] No profitable opportunities found after vectorized evaluation"
             )
             return None
 
-        best_idx = np.argmax(profit_scores)
+        # Find maximum profit for normalization
+        max_profit = np.max(vectorized_data.guaranteed_profits[profitable_mask])
+
+        # Score each profitable opportunity
+        for idx in profitable_indices:
+            expiry_option = self.expiry_options[idx]
+            guaranteed_profit = vectorized_data.guaranteed_profits[idx]
+
+            # Get market data for this opportunity
+            market_data = vectorized_data.market_data
+            call_ticker = self.get_ticker(expiry_option.call_contract.conId)
+            put_ticker = self.get_ticker(expiry_option.put_contract.conId)
+
+            if not call_ticker or not put_ticker:
+                continue
+
+            # Calculate days to expiry
+            try:
+                from datetime import datetime
+
+                expiry_date = datetime.strptime(expiry_option.expiry, "%Y%m%d")
+                days_to_expiry = (expiry_date - datetime.now()).days
+            except:
+                days_to_expiry = 30  # Default fallback
+
+            # Get volume data (with fallbacks for missing data)
+            call_volume = (
+                getattr(call_ticker, "volume", 0) or 1
+            )  # Fallback to 1 to avoid division by zero
+            put_volume = getattr(put_ticker, "volume", 0) or 1
+            stock_volume = market_data.get("stock_volume", 1000)  # Default stock volume
+
+            # Get open interest if available
+            call_oi = getattr(call_ticker, "openInterest", 0) or 0
+            put_oi = getattr(put_ticker, "openInterest", 0) or 0
+
+            # Calculate comprehensive score
+            score_result = self.scoring_engine.calculate_composite_score(
+                symbol=self.symbol,
+                expiry=expiry_option.expiry,
+                guaranteed_profit=guaranteed_profit,
+                max_observed_profit=max_profit,
+                call_volume=call_volume,
+                put_volume=put_volume,
+                stock_volume=stock_volume,
+                call_bid=market_data["call_bids"][idx],
+                call_ask=market_data["call_asks"][idx],
+                put_bid=market_data["put_bids"][idx],
+                put_ask=market_data["put_asks"][idx],
+                stock_bid=market_data["stock_bids"][idx],
+                stock_ask=market_data["stock_asks"][idx],
+                days_to_expiry=days_to_expiry,
+                call_strike=expiry_option.call_strike,
+                put_strike=expiry_option.put_strike,
+                call_open_interest=call_oi,
+                put_open_interest=put_oi,
+            )
+
+            score_result["opportunity_index"] = idx
+            scoring_results.append(score_result)
+
+        if not scoring_results:
+            logger.warning(f"[{self.symbol}] No opportunities could be scored")
+            return None
+
+        # Rank opportunities by composite score
+        ranked_opportunities = self.scoring_engine.rank_opportunities(scoring_results)
+
+        # Select the best opportunity
+        best_opportunity = ranked_opportunities[0]
+        best_idx = best_opportunity["opportunity_index"]
         best_profit = vectorized_data.guaranteed_profits[best_idx]
+        best_score = best_opportunity["composite_score"]
 
         logger.info(
-            f"[{self.symbol}] Best opportunity found: "
+            f"[{self.symbol}] Best opportunity selected using scoring system: "
             f"Expiry {self.expiry_options[best_idx].expiry}, "
+            f"Score: {best_score:.3f}, "
             f"Guaranteed profit: ${best_profit:.2f}, "
             f"Theoretical profit: ${vectorized_data.theoretical_profits[best_idx]:.2f}"
         )
+
+        # Log comparison with simple profit-only selection
+        profit_only_best_idx = np.argmax(
+            vectorized_data.guaranteed_profits[profitable_mask]
+        )
+        profit_only_actual_idx = profitable_indices[profit_only_best_idx]
+        if profit_only_actual_idx != best_idx:
+            profit_only_profit = vectorized_data.guaranteed_profits[
+                profit_only_actual_idx
+            ]
+            logger.info(
+                f"[{self.symbol}] SCORING DIFFERENCE: "
+                f"Profit-only would select expiry {self.expiry_options[profit_only_actual_idx].expiry} "
+                f"with ${profit_only_profit:.2f} profit, but scored selection has "
+                f"${best_profit:.2f} profit with better execution quality"
+            )
 
         # Log rejection statistics
         total_evaluated = len(self.expiry_options)
@@ -956,13 +1057,15 @@ class OpportunityEvaluator:
         )
         after_spread_filter = np.sum(viable_mask)
 
+        # Enhanced funnel statistics with scoring information
         logger.info(
-            f"[{self.symbol}] Funnel: {total_evaluated} evaluated → "
+            f"[{self.symbol}] SCORING FUNNEL: {total_evaluated} evaluated → "
             f"{with_data} with data → "
             f"{theoretically_profitable} theoretical → "
             f"{after_spread_filter} good spreads → "
             f"{guaranteed_profitable} guaranteed → "
-            f"1 selected"
+            f"{len(scoring_results)} scored → "
+            f"1 selected (score: {best_score:.3f})"
         )
 
         # Get the actual ExpiryOption for the best opportunity
@@ -1007,11 +1110,16 @@ class OpportunityEvaluator:
             "best_idx": best_idx,
             "best_expiry_option": best_expiry_option,  # Return actual ExpiryOption object
             "best_profit": best_profit,
+            "best_score": best_score,
             "vectorized_data": vectorized_data,
+            "scoring_results": ranked_opportunities,  # All scored opportunities, ranked
             "statistics": {
                 "total_evaluated": total_evaluated,
                 "rejected_by_spreads": spread_stats["rejected_by_spread"],
                 "mean_call_spread": spread_stats["mean_call_spread"],
                 "mean_put_spread": spread_stats["mean_put_spread"],
+                "opportunities_scored": len(scoring_results),
+                "best_composite_score": best_score,
+                "scoring_method_used": True,
             },
         }
