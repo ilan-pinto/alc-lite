@@ -204,11 +204,16 @@ class VectorizedOpportunityEvaluator:
     """Handles vectorized evaluation of multiple opportunities simultaneously"""
 
     def __init__(
-        self, symbol: str, expiry_options: List[ExpiryOption], ticker_getter_func
+        self,
+        symbol: str,
+        expiry_options: List[ExpiryOption],
+        ticker_getter_func,
+        stock_contract=None,
     ):
         self.symbol = symbol
         self.expiry_options = expiry_options
         self.get_ticker = ticker_getter_func
+        self.stock_contract = stock_contract
 
     def calculate_all_opportunities_vectorized(self) -> VectorizedOpportunityData:
         """
@@ -231,17 +236,9 @@ class VectorizedOpportunityEvaluator:
         # Populate arrays (this is the only loop needed)
         valid_mask = np.zeros(num_options, dtype=bool)
 
-        # Get stock ticker once (should be same for all options)
-        stock_contract = next(
-            (
-                c
-                for c in [opt.call_contract for opt in self.expiry_options]
-                if hasattr(c, "symbol")
-            ),
-            None,
-        )
-        if stock_contract:
-            stock_ticker = self.get_ticker(stock_contract.conId)
+        # Get stock ticker using the proper stock contract
+        if self.stock_contract:
+            stock_ticker = self.get_ticker(self.stock_contract.conId)
         else:
             stock_ticker = None
 
@@ -437,17 +434,19 @@ class OpportunityEvaluator:
         symbol: str,
         expiry_options: List[ExpiryOption],
         ticker_getter_func,
+        stock_contract=None,
         check_conditions_func=None,
         scoring_config: Optional[SFRScoringConfig] = None,
     ):
         self.symbol = symbol
         self.expiry_options = expiry_options
         self.get_ticker = ticker_getter_func
+        self.stock_contract = stock_contract
         self.check_conditions_func = check_conditions_func
 
         self.calculator = OpportunityCalculator(symbol)
         self.vectorized_evaluator = VectorizedOpportunityEvaluator(
-            symbol, expiry_options, ticker_getter_func
+            symbol, expiry_options, ticker_getter_func, stock_contract
         )
         if check_conditions_func is None:
             self.conditions_validator = ConditionsValidator()
@@ -469,6 +468,7 @@ class OpportunityEvaluator:
         quantity: int,
         build_order_func,
         priority_filter: Optional[ContractPriority] = None,
+        pricing_data: Optional[dict] = None,
     ) -> Optional[OpportunityTuple]:
         """
         Calculate price and build order for a specific expiry option.
@@ -485,7 +485,7 @@ class OpportunityEvaluator:
                 self.symbol, expiry_option.expiry, "evaluated"
             )
 
-            # Fast pre-filtering to eliminate non-viable opportunities early
+            # Always get stock ticker first (needed for data quality calculation)
             stock_ticker = self.get_ticker(stock_contract.conId)
             if not stock_ticker:
                 metrics_collector.add_rejection_reason(
@@ -499,6 +499,22 @@ class OpportunityEvaluator:
                 )
                 return None
 
+            # Use cached pricing data if provided, otherwise fetch fresh data
+            if pricing_data:
+                logger.info(
+                    f"[{self.symbol}] Using cached pricing data for order building (expiry: {expiry_option.expiry})"
+                )
+                stock_fair = pricing_data.get("stock_price")
+                theoretical_profit = pricing_data.get("theoretical_profit")
+                guaranteed_profit = pricing_data.get("guaranteed_profit")
+                total_spread_cost = pricing_data.get("total_spread_cost")
+
+                if stock_fair is None:
+                    logger.warning(
+                        f"[{self.symbol}] Invalid cached pricing data - missing stock_price"
+                    )
+                    pricing_data = None
+
             # Track stock ticker availability
             logger.info(
                 f"[Funnel] [{self.symbol}] Stage: stock_ticker_available (expiry: {expiry_option.expiry})"
@@ -507,18 +523,35 @@ class OpportunityEvaluator:
                 self.symbol, expiry_option.expiry, "stock_ticker_available"
             )
 
-            # Get stock price for viability check
-            stock_fair = stock_ticker.midpoint()
-            if (
-                stock_fair is None
-                or (hasattr(stock_fair, "__len__") and len(stock_fair) == 0)
-                or np.isnan(stock_fair)
-            ):
-                stock_fair = (
-                    stock_ticker.last
-                    if not np.isnan(stock_ticker.last)
-                    else stock_ticker.close
-                )
+            if not pricing_data:
+                # Get stock price for viability check
+                stock_fair = stock_ticker.midpoint()
+                if (
+                    stock_fair is None
+                    or (hasattr(stock_fair, "__len__") and len(stock_fair) == 0)
+                    or np.isnan(stock_fair)
+                ):
+                    stock_fair = (
+                        stock_ticker.last
+                        if not np.isnan(stock_ticker.last)
+                        else stock_ticker.close
+                    )
+
+            # Ensure stock_fair is defined for viability check
+            if "stock_fair" not in locals() or stock_fair is None:
+                # If using cached data, stock_fair should be defined above
+                # If not, get it from the stock ticker
+                if not pricing_data:
+                    # This shouldn't happen, but fallback just in case
+                    stock_ticker = self.get_ticker(stock_contract.conId)
+                    if stock_ticker:
+                        stock_fair = (
+                            stock_ticker.midpoint()
+                            or stock_ticker.last
+                            or stock_ticker.close
+                        )
+                    else:
+                        return None
 
             viable, reason = (
                 self.calculator.opportunity_validator.quick_viability_check(
@@ -627,42 +660,81 @@ class OpportunityEvaluator:
             ):
                 return None
 
-            # Calculate comprehensive pricing data
-            pricing_data = self.calculator.calculate_pricing_data(
-                stock_ticker, call_ticker, put_ticker, expiry_option
-            )
-
+            # Use cached pricing data if available, otherwise calculate fresh
             if not pricing_data:
-                metrics_collector.add_rejection_reason(
-                    RejectionReason.INVALID_CONTRACT_DATA,
-                    {
-                        "symbol": self.symbol,
-                        "contract_type": "pricing",
-                        "expiry": expiry_option.expiry,
-                        "call_strike": expiry_option.call_strike,
-                        "put_strike": expiry_option.put_strike,
-                    },
+                # Calculate comprehensive pricing data
+                pricing_data = self.calculator.calculate_pricing_data(
+                    stock_ticker, call_ticker, put_ticker, expiry_option
                 )
-                return None
+
+                if not pricing_data:
+                    metrics_collector.add_rejection_reason(
+                        RejectionReason.INVALID_CONTRACT_DATA,
+                        {
+                            "symbol": self.symbol,
+                            "contract_type": "pricing",
+                            "expiry": expiry_option.expiry,
+                            "call_strike": expiry_option.call_strike,
+                            "put_strike": expiry_option.put_strike,
+                        },
+                    )
+                    return None
+            else:
+                logger.info(
+                    f"[{self.symbol}] Skipping pricing calculation - using cached data for {expiry_option.expiry}"
+                )
+
+            # Extract all values from pricing_data (either dict or object)
+            if isinstance(pricing_data, dict):
+                # For cached dict data
+                theoretical_profit = pricing_data.get("theoretical_profit")
+                guaranteed_profit = pricing_data.get("guaranteed_profit")
+                total_spread_cost = pricing_data.get("total_spread_cost")
+                theoretical_net_credit = pricing_data.get("theoretical_net_credit")
+                theoretical_spread = pricing_data.get("theoretical_spread")
+                stock_fair = pricing_data.get("stock_fair")
+                stock_exec = pricing_data.get("stock_exec")
+                call_fair = pricing_data.get("call_fair")
+                call_exec = pricing_data.get("call_exec")
+                put_fair = pricing_data.get("put_fair")
+                put_exec = pricing_data.get("put_exec")
+                guaranteed_net_credit = pricing_data.get("guaranteed_net_credit")
+                guaranteed_spread = pricing_data.get("guaranteed_spread")
+            else:
+                # For PricingData object
+                theoretical_profit = pricing_data.theoretical_profit
+                guaranteed_profit = pricing_data.guaranteed_profit
+                total_spread_cost = getattr(pricing_data, "total_spread_cost", None)
+                theoretical_net_credit = pricing_data.theoretical_net_credit
+                theoretical_spread = pricing_data.theoretical_spread
+                stock_fair = pricing_data.stock_fair
+                stock_exec = pricing_data.stock_exec
+                call_fair = pricing_data.call_fair
+                call_exec = pricing_data.call_exec
+                put_fair = pricing_data.put_fair
+                put_exec = pricing_data.put_exec
+                guaranteed_net_credit = pricing_data.guaranteed_net_credit
+                guaranteed_spread = pricing_data.guaranteed_spread
 
             # Track ALL theoretical profit calculations (positive and negative)
             metrics_collector.record_profit_calculation(
-                self.symbol, expiry_option.expiry, pricing_data.theoretical_profit
+                self.symbol, expiry_option.expiry, theoretical_profit
             )
 
             # Quick reject if no theoretical opportunity
-            if pricing_data.theoretical_profit < MIN_THEORETICAL_PROFIT:
+            if theoretical_profit < MIN_THEORETICAL_PROFIT:
                 logger.warning(
                     f"[{self.symbol}] No theoretical arbitrage for {expiry_option.expiry}: "
-                    f"profit=${pricing_data.theoretical_profit:.2f}"
+                    f"profit=${theoretical_profit:.2f}"
                 )
+
                 metrics_collector.add_rejection_reason(
                     RejectionReason.ARBITRAGE_CONDITION_NOT_MET,
                     {
                         "symbol": self.symbol,
-                        "theoretical_profit": pricing_data.theoretical_profit,
-                        "theoretical_net_credit": pricing_data.theoretical_net_credit,
-                        "theoretical_spread": pricing_data.theoretical_spread,
+                        "theoretical_profit": theoretical_profit,
+                        "theoretical_net_credit": theoretical_net_credit,
+                        "theoretical_spread": theoretical_spread,
                         "stage": "theoretical_evaluation",
                     },
                 )
@@ -670,26 +742,26 @@ class OpportunityEvaluator:
 
             # Track positive theoretical profit
             logger.info(
-                f"[Funnel] [{self.symbol}] Stage: theoretical_profit_positive (expiry: {expiry_option.expiry}, profit: ${pricing_data.theoretical_profit:.2f})"
+                f"[Funnel] [{self.symbol}] Stage: theoretical_profit_positive (expiry: {expiry_option.expiry}, profit: ${theoretical_profit:.2f})"
             )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "theoretical_profit_positive"
             )
 
             # Must have guaranteed profit after execution
-            if pricing_data.guaranteed_profit < MIN_GUARANTEED_PROFIT:
+            if guaranteed_profit < MIN_GUARANTEED_PROFIT:
                 logger.info(
-                    f"[{self.symbol}] Theoretical profit ${pricing_data.theoretical_profit:.2f} "
-                    f"but guaranteed only ${pricing_data.guaranteed_profit:.2f} - rejecting"
+                    f"[{self.symbol}] Theoretical profit ${theoretical_profit:.2f} "
+                    f"but guaranteed only ${guaranteed_profit:.2f} - rejecting"
                 )
                 metrics_collector.add_rejection_reason(
                     RejectionReason.ARBITRAGE_CONDITION_NOT_MET,
                     {
                         "symbol": self.symbol,
-                        "theoretical_profit": pricing_data.theoretical_profit,
-                        "guaranteed_profit": pricing_data.guaranteed_profit,
-                        "stock_fair": pricing_data.stock_fair,
-                        "stock_exec": pricing_data.stock_exec,
+                        "theoretical_profit": theoretical_profit,
+                        "guaranteed_profit": guaranteed_profit,
+                        "stock_fair": stock_fair,
+                        "stock_exec": stock_exec,
                         "stage": "execution_validation",
                     },
                 )
@@ -697,7 +769,7 @@ class OpportunityEvaluator:
 
             # Track positive guaranteed profit
             logger.info(
-                f"[Funnel] [{self.symbol}] Stage: guaranteed_profit_positive (expiry: {expiry_option.expiry}, profit: ${pricing_data.guaranteed_profit:.2f})"
+                f"[Funnel] [{self.symbol}] Stage: guaranteed_profit_positive (expiry: {expiry_option.expiry}, profit: ${guaranteed_profit:.2f})"
             )
             metrics_collector.record_funnel_stage(
                 self.symbol, expiry_option.expiry, "guaranteed_profit_positive"
@@ -721,27 +793,21 @@ class OpportunityEvaluator:
                 return None
 
             # Calculate final trade parameters
-            min_profit = (
-                pricing_data.guaranteed_profit
-            )  # Already calculated and validated
+            min_profit = guaranteed_profit  # Already calculated and validated
             max_profit = (
                 expiry_option.call_strike - expiry_option.put_strike
-            ) + pricing_data.guaranteed_net_credit
+            ) + guaranteed_net_credit
             min_roi = (
-                (
-                    min_profit
-                    / (pricing_data.stock_exec + pricing_data.guaranteed_net_credit)
-                )
-                * 100
-                if (pricing_data.stock_exec + pricing_data.guaranteed_net_credit) > 0
+                (min_profit / (stock_exec + guaranteed_net_credit)) * 100
+                if (stock_exec + guaranteed_net_credit) > 0
                 else 0
             )
 
             # Calculate precise combo limit price based on target leg prices
             combo_limit_price = calculate_combo_limit_price(
-                stock_price=pricing_data.stock_exec,
-                call_price=pricing_data.call_exec,
-                put_price=pricing_data.put_exec,
+                stock_price=stock_exec,
+                call_price=call_exec,
+                put_price=put_exec,
                 buffer_percent=0.01,  # 1% buffer for realistic execution
             )
 
@@ -755,16 +821,16 @@ class OpportunityEvaluator:
                 f"  Contract IDs - Call: {expiry_option.call_contract.conId}, Put: {expiry_option.put_contract.conId}"
             )
             logger.info(
-                f"  Execution Prices - Stock: ${pricing_data.stock_exec:.2f}, Call: ${pricing_data.call_exec:.2f}, Put: ${pricing_data.put_exec:.2f}"
+                f"  Execution Prices - Stock: ${stock_exec:.2f}, Call: ${call_exec:.2f}, Put: ${put_exec:.2f}"
             )
             logger.info(
-                f"  Fair Values - Stock: ${pricing_data.stock_fair:.2f}, Call: ${pricing_data.call_fair:.2f}, Put: ${pricing_data.put_fair:.2f}"
+                f"  Fair Values - Stock: ${stock_fair:.2f}, Call: ${call_fair:.2f}, Put: ${put_fair:.2f}"
             )
             logger.info(
-                f"  Theoretical - Net Credit: ${pricing_data.theoretical_net_credit:.2f}, Spread: ${pricing_data.theoretical_spread:.2f}, Profit: ${pricing_data.theoretical_profit:.2f}"
+                f"  Theoretical - Net Credit: ${theoretical_net_credit:.2f}, Spread: ${theoretical_spread:.2f}, Profit: ${theoretical_profit:.2f}"
             )
             logger.info(
-                f"  Guaranteed - Net Credit: ${pricing_data.guaranteed_net_credit:.2f}, Spread: ${pricing_data.guaranteed_spread:.2f}, Profit: ${pricing_data.guaranteed_profit:.2f}"
+                f"  Guaranteed - Net Credit: ${guaranteed_net_credit:.2f}, Spread: ${guaranteed_spread:.2f}, Profit: ${guaranteed_profit:.2f}"
             )
             logger.info(
                 f"  Final Metrics - Min Profit: ${min_profit:.2f}, Max Profit: ${max_profit:.2f}, Min ROI: {min_roi:.2f}%"
@@ -779,9 +845,9 @@ class OpportunityEvaluator:
                     cost_limit,
                     expiry_option.put_strike,
                     combo_limit_price,  # Use calculated precise limit price
-                    pricing_data.guaranteed_net_credit,
+                    guaranteed_net_credit,
                     min_roi,
-                    pricing_data.stock_exec,
+                    stock_exec,
                     min_profit,
                 )
             else:
@@ -792,9 +858,9 @@ class OpportunityEvaluator:
                         cost_limit,
                         expiry_option.put_strike,
                         combo_limit_price,  # Use calculated precise limit price
-                        pricing_data.guaranteed_net_credit,
+                        guaranteed_net_credit,
                         min_roi,
-                        pricing_data.stock_exec,
+                        stock_exec,
                         min_profit,
                     )
                 )
@@ -846,18 +912,18 @@ class OpportunityEvaluator:
                     expiry_option.put_contract,
                     combo_limit_price,  # Use calculated precise limit price
                     quantity,
-                    call_price=pricing_data.call_exec,  # Target call leg price
-                    put_price=pricing_data.put_exec,  # Target put leg price
+                    call_price=call_exec,  # Target call leg price
+                    put_price=put_exec,  # Target put leg price
                 )
 
                 # Prepare trade details for logging (don't log yet)
                 trade_details = {
                     "call_strike": expiry_option.call_strike,
-                    "call_price": pricing_data.call_exec,
+                    "call_price": call_exec,
                     "put_strike": expiry_option.put_strike,
-                    "put_price": pricing_data.put_exec,
-                    "stock_price": pricing_data.stock_exec,
-                    "net_credit": pricing_data.guaranteed_net_credit,
+                    "put_price": put_exec,
+                    "stock_price": stock_exec,
+                    "net_credit": guaranteed_net_credit,
                     "min_profit": min_profit,
                     "max_profit": max_profit,
                     "min_roi": min_roi,
@@ -880,15 +946,15 @@ class OpportunityEvaluator:
                             "expiry": expiry_option.expiry,
                             "call_strike": expiry_option.call_strike,
                             "put_strike": expiry_option.put_strike,
-                            "stock_price": pricing_data.stock_exec,
-                            "net_credit": pricing_data.guaranteed_net_credit,
+                            "stock_price": stock_exec,
+                            "net_credit": guaranteed_net_credit,
                             "min_profit": min_profit,
                             "max_profit": max_profit,
                             "min_roi": min_roi,
                             "combo_limit_price": combo_limit_price,
                             "cost_limit": cost_limit,
                             "profit_target": profit_target,
-                            "spread": pricing_data.guaranteed_spread,
+                            "spread": guaranteed_spread,
                             "profit_ratio": profit_ratio,
                         },
                     )
@@ -1071,6 +1137,47 @@ class OpportunityEvaluator:
         # Get the actual ExpiryOption for the best opportunity
         best_expiry_option = self.expiry_options[best_idx]
 
+        # Extract pricing data for the best opportunity
+        market_data = vectorized_data.market_data
+        # Calculate stock price from bid/ask midpoint
+        stock_price = (
+            market_data["stock_bids"][best_idx] + market_data["stock_asks"][best_idx]
+        ) / 2
+
+        # Calculate net credits from market data
+        call_mid = (
+            market_data["call_bids"][best_idx] + market_data["call_asks"][best_idx]
+        ) / 2
+        put_mid = (
+            market_data["put_bids"][best_idx] + market_data["put_asks"][best_idx]
+        ) / 2
+        theoretical_net_credit = call_mid - put_mid
+        guaranteed_net_credit = (
+            market_data["call_bids"][best_idx] - market_data["put_asks"][best_idx]
+        )
+
+        best_pricing_data = {
+            "stock_price": stock_price,
+            "stock_fair": stock_price,
+            "stock_exec": stock_price,
+            "call_fair": call_mid,
+            "call_exec": market_data["call_bids"][best_idx],  # For selling call
+            "put_fair": put_mid,
+            "put_exec": market_data["put_asks"][best_idx],  # For buying put
+            "theoretical_profit": vectorized_data.theoretical_profits[best_idx],
+            "guaranteed_profit": vectorized_data.guaranteed_profits[best_idx],
+            "theoretical_net_credit": theoretical_net_credit,
+            "guaranteed_net_credit": guaranteed_net_credit,
+            "theoretical_spread": best_expiry_option.call_strike
+            - best_expiry_option.put_strike,
+            "guaranteed_spread": best_expiry_option.call_strike
+            - best_expiry_option.put_strike,
+            "total_spread_cost": (
+                market_data["call_asks"][best_idx] - market_data["call_bids"][best_idx]
+            )
+            + (market_data["put_asks"][best_idx] - market_data["put_bids"][best_idx]),
+        }
+
         # CRITICAL: Log and verify the actual contracts being returned
         logger.info(f"[{self.symbol}] VECTORIZED RESULT - Selected Opportunity:")
         logger.info(f"  Index: {best_idx}, Expiry: {best_expiry_option.expiry}")
@@ -1111,6 +1218,7 @@ class OpportunityEvaluator:
             "best_expiry_option": best_expiry_option,  # Return actual ExpiryOption object
             "best_profit": best_profit,
             "best_score": best_score,
+            "pricing_data": best_pricing_data,  # Add cached pricing data
             "vectorized_data": vectorized_data,
             "scoring_results": ranked_opportunities,  # All scored opportunities, ranked
             "statistics": {

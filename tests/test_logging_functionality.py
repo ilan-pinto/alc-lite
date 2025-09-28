@@ -156,6 +156,9 @@ class TestConfigureLogging:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -163,6 +166,9 @@ class TestConfigureLogging:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_configure_logging_default_info_only(self):
@@ -238,6 +244,9 @@ class TestFileHandlerConfiguration:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -245,6 +254,9 @@ class TestFileHandlerConfiguration:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_configure_logging_with_file_handler(self):
@@ -369,6 +381,9 @@ class TestActualLoggingBehavior:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -376,6 +391,9 @@ class TestActualLoggingBehavior:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_info_filter_allows_only_info_messages(self):
@@ -478,6 +496,9 @@ class TestSFRFunnelLoggingIntegration:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -485,6 +506,9 @@ class TestSFRFunnelLoggingIntegration:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_funnel_messages_logged_at_info_level(self):
@@ -506,7 +530,7 @@ class TestSFRFunnelLoggingIntegration:
 
             # Also log a rejection message at WARNING level
             logger.warning(
-                "[SPY] REJECTED - Arbitrage Condition Not Met: profit $0.05 < threshold $0.10"
+                "[SPY] REJECTED - Arbitrage Condition Not Met: profit $0.005 < threshold $0.01"
             )
 
             # Force flush handlers
@@ -579,7 +603,9 @@ class TestSFRFunnelLoggingIntegration:
             logger.info(
                 "[Funnel] [AAPL] Stage: theoretical_profit_positive (expiry: 20250830, profit: $0.15)"
             )
-            logger.warning("[AAPL] No theoretical arbitrage for 20250830: profit=$0.05")
+            logger.warning(
+                "[AAPL] No theoretical arbitrage for 20250830: profit=$0.005"
+            )
             logger.warning("[AAPL] REJECTED - Arbitrage Condition Not Met")
 
             # Force flush handlers
@@ -623,6 +649,9 @@ class TestEdgeCases:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -630,6 +659,9 @@ class TestEdgeCases:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_configure_logging_with_invalid_file_path(self):

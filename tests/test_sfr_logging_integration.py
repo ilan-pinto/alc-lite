@@ -35,6 +35,9 @@ class TestSFRLoggingCompliance:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -42,6 +45,9 @@ class TestSFRLoggingCompliance:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_funnel_stages_info_level_with_prefix(self):
@@ -123,7 +129,7 @@ class TestSFRLoggingCompliance:
 
             # These are typical rejection message patterns from SFR
             logger.warning(
-                f"[{symbol}] No theoretical arbitrage for {expiry}: profit=$0.05"
+                f"[{symbol}] No theoretical arbitrage for {expiry}: profit=$0.005"
             )
             logger.warning(
                 f"[{symbol}] Theoretical profit $0.15 but guaranteed only $0.08 - rejecting"
@@ -182,7 +188,7 @@ class TestSFRLoggingCompliance:
                 f"[Funnel] [{symbol}] Stage: theoretical_profit_positive (expiry: {expiry}, profit: $0.18)"
             )
             logger.warning(
-                f"[{symbol}] Theoretical profit $0.18 but guaranteed only $0.05 - rejecting"
+                f"[{symbol}] Theoretical profit $0.18 but guaranteed only $0.005 - rejecting"
             )
             logger.info(
                 f"[Funnel Summary] {symbol}: 1 evaluated → 1 theoretical → 0 viable → 0 executed"
@@ -200,7 +206,7 @@ class TestSFRLoggingCompliance:
                 # Should contain both funnel stages (INFO) and rejection (WARNING)
                 assert "[Funnel] [MSFT] Stage: evaluated" in content
                 assert "[Funnel] [MSFT] Stage: theoretical_profit_positive" in content
-                assert "guaranteed only $0.05 - rejecting" in content
+                assert "guaranteed only $0.005 - rejecting" in content
                 assert "[Funnel Summary]" in content
 
                 # Count log levels
@@ -367,6 +373,9 @@ class TestSFRLoggingPerformance:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def teardown_method(self):
@@ -374,6 +383,9 @@ class TestSFRLoggingPerformance:
         # Clear existing handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
+            # Close file handlers to prevent ResourceWarning
+            if hasattr(handler, "close") and hasattr(handler, "baseFilename"):
+                handler.close()
             root_logger.removeHandler(handler)
 
     def test_logging_does_not_impact_performance(self):

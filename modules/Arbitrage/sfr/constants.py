@@ -18,10 +18,10 @@ MIN_DATA_QUALITY_THRESHOLD_FULL = 0.6  # Minimum quality for full data mode
 # Price validation thresholds
 MAX_BID_ASK_SPREAD = 20.0  # Maximum allowed bid-ask spread for options
 
-# Profit thresholds
-MIN_THEORETICAL_PROFIT = 0.10  # Minimum theoretical profit (10 cents)
-MIN_GUARANTEED_PROFIT = 0.05  # Minimum guaranteed profit (5 cents)
-MIN_PROFIT_THRESHOLD = 0.03  # Minimum profit threshold for conditions check
+# Profit thresholds (lowered to capture more opportunities)
+MIN_THEORETICAL_PROFIT = 0.01  # Minimum theoretical profit (1 cent)
+MIN_GUARANTEED_PROFIT = 0.01  # Minimum guaranteed profit (1 cent)
+MIN_PROFIT_THRESHOLD = 0.01  # Minimum profit threshold for conditions check (1 cent)
 
 # Strike and moneyness validation
 MIN_STRIKE_SPREAD = 1.0

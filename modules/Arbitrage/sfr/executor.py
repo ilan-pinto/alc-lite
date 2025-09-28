@@ -98,6 +98,7 @@ class SFRExecutor(BaseExecutor):
             symbol=symbol,
             expiry_options=expiry_options,
             ticker_getter_func=self.data_coordinator.ticker_manager.get_ticker,
+            stock_contract=stock_contract,
         )
 
         # Initialize last stock price for priority calculation
@@ -275,7 +276,7 @@ class SFRExecutor(BaseExecutor):
             if (
                 opportunity
                 and opportunity["guaranteed_profit"]
-                >= 0.10  # Use minimum profit threshold
+                >= self.data_coordinator.timeout_config.phase_3_profit_threshold
             ):
                 logger.info(
                     f"[{self.symbol}] Early completion execution: profit={opportunity['guaranteed_profit']:.2f}"
@@ -424,6 +425,17 @@ class SFRExecutor(BaseExecutor):
         )
 
         # Use calc_price_and_build_order_for_expiry for proper limit price calculation
+        # Pass cached pricing data to avoid re-fetching and re-evaluating
+        pricing_data = result.get("pricing_data")
+        if pricing_data:
+            logger.info(
+                f"[{self.symbol}] Passing cached pricing data to order building - profit: ${pricing_data.get('guaranteed_profit', 0):.2f}"
+            )
+        else:
+            logger.warning(
+                f"[{self.symbol}] No cached pricing data available - will re-fetch market data"
+            )
+
         opportunity_result = (
             self.opportunity_evaluator.calc_price_and_build_order_for_expiry(
                 expiry_option=best_expiry,
@@ -433,6 +445,7 @@ class SFRExecutor(BaseExecutor):
                 quantity=self.quantity,
                 build_order_func=self.build_order,
                 priority_filter=max_priority,
+                pricing_data=pricing_data,
             )
         )
 
@@ -758,6 +771,7 @@ class SFRExecutor(BaseExecutor):
                 symbol=self.symbol,
                 expiry_options=self.expiry_options,
                 ticker_getter_func=get_ticker_func,
+                stock_contract=self.stock_contract,
                 check_conditions_func=self.check_conditions,
             )
 

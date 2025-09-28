@@ -19,6 +19,7 @@ from .constants import (
     MAX_DAYS_TO_EXPIRY,
     MAX_STRIKE_SPREAD,
     MIN_DAYS_TO_EXPIRY,
+    MIN_GUARANTEED_PROFIT,
     MIN_STRIKE_SPREAD,
     PUT_MONEYNESS_MAX,
     PUT_MONEYNESS_MIN,
@@ -293,9 +294,11 @@ class ConditionsValidator:
             )
             # Continue processing despite mismatch - just log warning
 
-        if min_profit < 0.03:  # Lowered minimum profit threshold to 3 cents
+        if (
+            min_profit < MIN_GUARANTEED_PROFIT
+        ):  # Use configurable minimum profit threshold
             logger.info(
-                f"[{symbol}] min_profit[{min_profit:.2f}] < 0.03 - below minimum threshold"
+                f"[{symbol}] min_profit[{min_profit:.2f}] < {MIN_GUARANTEED_PROFIT:.2f} - below minimum threshold"
             )
             return False, RejectionReason.ARBITRAGE_CONDITION_NOT_MET
 

@@ -108,10 +108,12 @@ class ProgressiveTimeoutConfig:
     critical_threshold: float = 0.80  # Need 80% of critical
     important_threshold: float = 0.60  # Need 60% of important
 
-    # Profit thresholds for early execution
-    phase_1_profit_threshold: float = 0.50  # 50¢ for immediate execution
-    phase_2_profit_threshold: float = 0.20  # 20¢ for phase 2 execution
-    phase_3_profit_threshold: float = 0.10  # 10¢ for final phase
+    # Profit thresholds for early execution (updated to match new MIN_GUARANTEED_PROFIT of 0.01)
+    phase_1_profit_threshold: float = 0.05  # 5¢ for immediate execution
+    phase_2_profit_threshold: float = 0.02  # 2¢ for phase 2 execution
+    phase_3_profit_threshold: float = (
+        0.01  # 1¢ for final phase (matches MIN_GUARANTEED_PROFIT)
+    )
 
     def __post_init__(self):
         """Adjust timeouts based on market conditions"""

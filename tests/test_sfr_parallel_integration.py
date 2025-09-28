@@ -88,7 +88,7 @@ def create_profitable_opportunity(symbol="SPY", profit=0.75, expiry="20241220"):
     return opportunity
 
 
-def create_low_profit_opportunity(symbol="SPY", profit=0.10):
+def create_low_profit_opportunity(symbol="SPY", profit=0.01):
     """Create a low-profit opportunity that should use combo orders"""
     return create_profitable_opportunity(symbol, profit)
 
@@ -351,7 +351,7 @@ class TestParallelExecutionIntegration:
         assert "parallel_execution_enabled" in reason
 
         # Low profit opportunity - should STILL use parallel when PARALLEL_EXECUTION_ENABLED=True
-        low_profit_opp = create_low_profit_opportunity("SPY", profit=0.10)
+        low_profit_opp = create_low_profit_opportunity("SPY", profit=0.01)
         use_parallel, reason = await integrator.should_use_parallel_execution(
             low_profit_opp
         )

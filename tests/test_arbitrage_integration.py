@@ -1489,11 +1489,12 @@ class TestArbitrageIntegration:
 
                 # Wait for the executor to finish processing
                 # The executor will call finish_scan() when done
+                # Need to wait at least 5 seconds to allow Phase 3 evaluation (3.0s market hours, 4.5s non-market)
                 wait_count = 0
                 while (
                     symbol in sfr.active_executors
                     and sfr.active_executors[symbol].is_active
-                    and wait_count < 20
+                    and wait_count < 50
                 ):
                     await asyncio.sleep(0.1)
                     wait_count += 1

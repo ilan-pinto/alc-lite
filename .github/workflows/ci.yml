@@ -15,7 +15,7 @@ on:
 
 jobs:
   ci:
-    runs-on: macos-latest
+    runs-on: ${{ github.ref == 'refs/heads/master' && 'macos-latest' || 'self-hosted' }}
 
     strategy:
       matrix:
@@ -97,23 +97,6 @@ jobs:
     #   run: |
     #     mypy . --ignore-missing-imports
 
-    - name: Run tests
-      run: |
-        echo "🚀 Running test suite with ${{ matrix.python-runtime }}..."
-
-        # Use appropriate Python executable based on runtime
-        if [ "${{ matrix.python-runtime }}" = "pypy" ]; then
-          PYTHON_CMD="pypy3"
-        else
-          PYTHON_CMD="python"
-        fi
-
-        # Run all tests with coverage (this will include all test types)
-        echo "📊 Running full test suite with coverage using $PYTHON_CMD..."
-        $PYTHON_CMD -m pytest tests/ -v --cov=commands --cov=modules --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=20
-
-        echo "✅ All tests completed successfully!"
-
     - name: Run tests with pytest
       run: |
         # Use appropriate Python executable based on runtime
@@ -123,7 +106,7 @@ jobs:
           PYTHON_CMD="python"
         fi
 
-        $PYTHON_CMD -m pytest tests/ -v --cov=commands --cov=modules --cov-report=xml --cov-report=html
+        $PYTHON_CMD -m pytest tests/ -v --cov=commands --cov=modules --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=20
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3
