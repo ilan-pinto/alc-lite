@@ -15,7 +15,7 @@ on:
 
 jobs:
   ci:
-    runs-on: ${{ github.ref == 'refs/heads/master' && 'macos-latest' || 'self-hosted' }}
+    runs-on: macos-latest
 
     strategy:
       matrix:
@@ -29,6 +29,7 @@ jobs:
             cache-key: 'pypy'
 
     name: CI (${{ matrix.python-runtime }})
+
 
     permissions:
       contents: write
@@ -308,30 +309,11 @@ jobs:
         # Clean up temp file
         rm -f $CHANGELOG_FILE
 
-    - name: Create zip artifact
-      run: |
-        # Create a temporary directory for the zip
-        mkdir -p temp_zip
-
-        # Copy all files except venv and .git
-        rsync -av --exclude='venv/' --exclude='.git/' --exclude='temp_zip/' --exclude='.github/' ./ temp_zip/
-
-        # Create zip file with version info
-        cd temp_zip
-        zip -r "../alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip" .
-        cd ..
-
-    - name: Upload zip artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}
-        path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
-        retention-days: 30
 
     - name: Upload test coverage artifact
       uses: actions/upload-artifact@v4
       with:
-        name: test-coverage-html
+        name: test-coverage-html-${{ matrix.python-runtime }}
         path: htmlcov/
         retention-days: 30
 
@@ -380,10 +362,457 @@ jobs:
           This software is provided for educational and research purposes only. Trading financial instruments involves significant risk of loss. Always do your own research and consider consulting with a qualified financial advisor before making investment decisions.
         draft: false
         prerelease: false
-        files: |
-          ./alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
+
+  upload-artifacts:
+    needs: ci
+    runs-on: macos-latest
+    if: success()
+
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get version information
+      id: version
+      run: |
+        # Extract version from Python files or use git tag
+        if [ -f "alchimest.py" ]; then
+          VERSION=$(grep -o '__version__ = "[^"]*"' alchimest.py | cut -d'"' -f2 || echo "0.1.0")
+        else
+          VERSION="0.1.0"
+        fi
+
+        # Get git information
+        GIT_HASH=$(git rev-parse --short HEAD)
+        GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "dev")
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "git_hash=$GIT_HASH" >> $GITHUB_OUTPUT
+        echo "git_tag=$GIT_TAG" >> $GITHUB_OUTPUT
+
+        echo "Version: $VERSION"
+        echo "Git Hash: $GIT_HASH"
+        echo "Git Tag: $GIT_TAG"
+
+    - name: Create zip artifact
+      run: |
+        # Create a temporary directory for the zip
+        mkdir -p temp_zip
+
+        # Copy all files except venv and .git
+        rsync -av --exclude='venv/' --exclude='.git/' --exclude='temp_zip/' --exclude='.github/' ./ temp_zip/
+
+        # Create zip file with version info
+        cd temp_zip
+        zip -r "../alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip" .
+        cd ..
+
+    - name: Upload zip artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}
+        path: alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
+        retention-days: 30
 
     - name: Cleanup
       run: |
         rm -rf temp_zip
         rm -f alc-lite-v${{ steps.version.outputs.version }}-${{ steps.version.outputs.git_hash }}.zip
+
+  pypy-benchmark:
+    needs: upload-artifacts
+    runs-on: macos-latest
+    if: success()
+
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up PyPy for benchmarking
+      uses: actions/setup-python@v5
+      with:
+        python-version: 'pypy3.10'
+
+    - name: Install PyPy dependencies
+      run: |
+        python -m pip install --upgrade pip
+
+        # Install PyPy-compatible dependencies
+        if [ -f "requirements-pypy.txt" ]; then
+          pip install -r requirements-pypy.txt
+        else
+          pip install -r requirements.txt
+        fi
+
+        # Skip development dependencies that may not work with PyPy
+        echo "✅ PyPy dependencies installed"
+
+    - name: Run PyPy SFR benchmark
+      run: |
+        set -e  # Exit on any error
+        echo "🚀 Running SFR benchmark with PyPy..."
+        echo "Python version: $(python --version)"
+        echo "Working directory: $(pwd)"
+
+        cd benchmarks
+        echo "Benchmarks directory contents:"
+        ls -la
+
+        # Run benchmark and capture any errors
+        if ! python sfr_end_to_end_benchmark.py --seed 42 --output pypy_benchmark_results.json; then
+          echo "❌ PyPy benchmark failed with exit code $?"
+          exit 1
+        fi
+
+        # Verify file was created
+        if [ ! -f "results/pypy_benchmark_results.json" ]; then
+          echo "❌ PyPy benchmark results file not created"
+          echo "Results directory contents:"
+          ls -la results/ || echo "results directory doesn't exist"
+          exit 1
+        fi
+
+        echo "✅ PyPy benchmark completed successfully"
+        echo "Results directory:"
+        ls -la results/
+
+    - name: Set up CPython for comparison
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install CPython dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        echo "✅ CPython dependencies installed"
+
+    - name: Run CPython SFR benchmark
+      run: |
+        set -e  # Exit on any error
+        echo "🐍 Running SFR benchmark with CPython..."
+        echo "Python version: $(python --version)"
+
+        cd benchmarks
+        echo "Directory contents before CPython benchmark:"
+        ls -la results/ || echo "results directory doesn't exist yet"
+
+        # Run benchmark and capture any errors
+        if ! python sfr_end_to_end_benchmark.py --seed 42 --output cpython_benchmark_results.json; then
+          echo "❌ CPython benchmark failed with exit code $?"
+          exit 1
+        fi
+
+        # Verify file was created
+        if [ ! -f "results/cpython_benchmark_results.json" ]; then
+          echo "❌ CPython benchmark results file not created"
+          echo "Results directory contents:"
+          ls -la results/ || echo "results directory doesn't exist"
+          exit 1
+        fi
+
+        echo "✅ CPython benchmark completed successfully"
+        echo "Final results directory:"
+        ls -la results/
+
+    - name: Generate benchmark comparison
+      run: |
+        set -e  # Exit on any error
+        echo "📊 Generating benchmark comparison..."
+        cd benchmarks
+
+        # Verify both files exist before comparison
+        echo "Checking for benchmark result files:"
+        if [ ! -f "results/pypy_benchmark_results.json" ]; then
+          echo "❌ PyPy results file missing"
+          exit 1
+        fi
+        if [ ! -f "results/cpython_benchmark_results.json" ]; then
+          echo "❌ CPython results file missing"
+          exit 1
+        fi
+        echo "✅ Both benchmark result files found"
+        ls -la results/
+        python << 'EOF'
+        import json
+        import os
+        from datetime import datetime
+
+        def load_benchmark_results(filename):
+            try:
+                with open(f"results/{filename}", 'r') as f:
+                    return json.load(f)
+            except FileNotFoundError:
+                print(f"Warning: {filename} not found")
+                return None
+
+        def calculate_speedup(pypy_time, cpython_time):
+            if cpython_time > 0:
+                return cpython_time / pypy_time
+            return 0
+
+        def generate_comparison_report(pypy_results, cpython_results):
+            report = ["# 🏎️ PyPy vs CPython Performance Comparison", ""]
+            report.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            report.append(f"**Commit:** {os.environ.get('GITHUB_SHA', 'unknown')[:8]}")
+            report.append("")
+
+            if not pypy_results or not cpython_results:
+                report.append("❌ **Error:** Missing benchmark results")
+                return "\n".join(report)
+
+            # Add quick summary table
+            report.append("## 📊 Quick Summary")
+            report.append("")
+
+            pypy_benchmarks = pypy_results.get('benchmarks', {})
+            cpython_benchmarks = cpython_results.get('benchmarks', {})
+
+            # Build summary table
+            report.append("| Test | PyPy | CPython | Speedup | Status |")
+            report.append("|------|------|---------|---------|--------|")
+
+            # Arbitrage detection summary (using 10k options as representative)
+            if 'arbitrage_detection' in pypy_benchmarks and 'arbitrage_detection' in cpython_benchmarks:
+                pypy_arb = pypy_benchmarks['arbitrage_detection'].get('size_10000', {})
+                cpython_arb = cpython_benchmarks['arbitrage_detection'].get('size_10000', {})
+                if 'timing' in pypy_arb and 'timing' in cpython_arb:
+                    pypy_time = pypy_arb['timing']['mean']
+                    cpython_time = cpython_arb['timing']['mean']
+                    speedup = calculate_speedup(pypy_time, cpython_time)
+                    pypy_throughput = pypy_arb.get('throughput_options_per_sec', 0)
+                    cpython_throughput = cpython_arb.get('throughput_options_per_sec', 0)
+
+                    if speedup > 1.1:
+                        status = f"✅ {speedup:.1f}x faster"
+                    elif speedup > 0.9:
+                        status = "⚖️ Similar"
+                    else:
+                        status = f"🐢 {1/speedup:.1f}x slower"
+
+                    report.append(f"| Arbitrage Detection (10K opts) | {pypy_throughput:.0f} opts/s | {cpython_throughput:.0f} opts/s | {speedup:.2f}x | {status} |")
+
+            # Full scan summary (using 20 symbols as representative)
+            if 'full_sfr_scan_simulation' in pypy_benchmarks and 'full_sfr_scan_simulation' in cpython_benchmarks:
+                pypy_scan = pypy_benchmarks['full_sfr_scan_simulation'].get('symbols_20', {})
+                cpython_scan = cpython_benchmarks['full_sfr_scan_simulation'].get('symbols_20', {})
+                if 'timing' in pypy_scan and 'timing' in cpython_scan:
+                    pypy_time = pypy_scan['timing']['mean']
+                    cpython_time = cpython_scan['timing']['mean']
+                    speedup = calculate_speedup(pypy_time, cpython_time)
+
+                    if speedup > 1.1:
+                        status = f"✅ {speedup:.1f}x faster"
+                    elif speedup > 0.9:
+                        status = "⚖️ Similar"
+                    else:
+                        status = f"🐢 {1/speedup:.1f}x slower"
+
+                    report.append(f"| Full Scan (20 symbols) | {pypy_time:.3f}s | {cpython_time:.3f}s | {speedup:.2f}x | {status} |")
+
+            report.append("")
+
+            # Runtime info
+            pypy_runtime = pypy_results.get('runtime_info', {})
+            cpython_runtime = cpython_results.get('runtime_info', {})
+
+            report.append("## 🔧 Runtime Information")
+            report.append(f"- **PyPy:** {pypy_runtime.get('runtime', 'Unknown')} {pypy_runtime.get('pypy_version', 'Unknown')}")
+            report.append(f"- **CPython:** {cpython_runtime.get('runtime', 'Unknown')} {cpython_runtime.get('python_version', 'Unknown').split()[0]}")
+            report.append("")
+
+            # Performance summary
+            report.append("## 📈 Performance Summary")
+
+            pypy_benchmarks = pypy_results.get('benchmarks', {})
+            cpython_benchmarks = cpython_results.get('benchmarks', {})
+
+            # Arbitrage detection comparison (collapsible)
+            if 'arbitrage_detection' in pypy_benchmarks and 'arbitrage_detection' in cpython_benchmarks:
+                report.append("<details>")
+                report.append("<summary>🎯 Detailed Arbitrage Detection Results</summary>")
+                report.append("")
+                report.append("| Options Count | PyPy Time | CPython Time | PyPy Throughput | CPython Throughput | Speedup |")
+                report.append("|---------------|-----------|--------------|-----------------|-------------------|---------|")
+
+                pypy_arb = pypy_benchmarks['arbitrage_detection']
+                cpython_arb = cpython_benchmarks['arbitrage_detection']
+
+                for size_key in sorted(pypy_arb.keys()):
+                    if size_key in cpython_arb and 'timing' in pypy_arb[size_key] and 'timing' in cpython_arb[size_key]:
+                        pypy_time = pypy_arb[size_key]['timing']['mean']
+                        cpython_time = cpython_arb[size_key]['timing']['mean']
+                        speedup = calculate_speedup(pypy_time, cpython_time)
+
+                        pypy_throughput = pypy_arb[size_key].get('throughput_options_per_sec', 0)
+                        cpython_throughput = cpython_arb[size_key].get('throughput_options_per_sec', 0)
+
+                        size = size_key.split('_')[-1]
+                        speedup_text = f"{speedup:.2f}x" if speedup >= 1 else f"{1/speedup:.2f}x slower"
+
+                        # Format numbers with commas separately to avoid f-string conflict
+                        size_formatted = f"{int(size):,}"
+                        pypy_throughput_formatted = f"{pypy_throughput:,.0f}"
+                        cpython_throughput_formatted = f"{cpython_throughput:,.0f}"
+
+                        report.append(f"| {size_formatted} | {pypy_time:.4f}s | {cpython_time:.4f}s | {pypy_throughput_formatted} opts/s | {cpython_throughput_formatted} opts/s | {speedup_text} |")
+
+                report.append("")
+                report.append("</details>")
+                report.append("")
+
+            # Full scan comparison (collapsible)
+            if 'full_sfr_scan_simulation' in pypy_benchmarks and 'full_sfr_scan_simulation' in cpython_benchmarks:
+                report.append("<details>")
+                report.append("<summary>🔍 Detailed Full Scan Performance</summary>")
+                report.append("")
+                report.append("| Symbol Count | PyPy Time | CPython Time | PyPy Throughput | CPython Throughput | Speedup |")
+                report.append("|--------------|-----------|--------------|-----------------|-------------------|---------|")
+
+                pypy_scan = pypy_benchmarks['full_sfr_scan_simulation']
+                cpython_scan = cpython_benchmarks['full_sfr_scan_simulation']
+
+                for symbols_key in sorted(pypy_scan.keys()):
+                    if symbols_key in cpython_scan and 'timing' in pypy_scan[symbols_key] and 'timing' in cpython_scan[symbols_key]:
+                        pypy_time = pypy_scan[symbols_key]['timing']['mean']
+                        cpython_time = cpython_scan[symbols_key]['timing']['mean']
+                        speedup = calculate_speedup(pypy_time, cpython_time)
+
+                        pypy_throughput = pypy_scan[symbols_key].get('throughput', {}).get('symbols_per_sec', 0)
+                        cpython_throughput = cpython_scan[symbols_key].get('throughput', {}).get('symbols_per_sec', 0)
+
+                        count = symbols_key.split('_')[-1]
+                        speedup_text = f"{speedup:.2f}x" if speedup >= 1 else f"{1/speedup:.2f}x slower"
+
+                        report.append(f"| {count} | {pypy_time:.4f}s | {cpython_time:.4f}s | {pypy_throughput:.1f} sym/s | {cpython_throughput:.1f} sym/s | {speedup_text} |")
+
+                report.append("")
+                report.append("</details>")
+                report.append("")
+
+            report.append("")
+            report.append("## 🎯 Key Takeaways")
+
+            # Calculate overall performance trend
+            speedup_values = []
+            if 'arbitrage_detection' in pypy_benchmarks and 'arbitrage_detection' in cpython_benchmarks:
+                pypy_arb = pypy_benchmarks['arbitrage_detection']
+                cpython_arb = cpython_benchmarks['arbitrage_detection']
+                for size_key in pypy_arb:
+                    if size_key in cpython_arb and 'timing' in pypy_arb[size_key] and 'timing' in cpython_arb[size_key]:
+                        pypy_time = pypy_arb[size_key]['timing']['mean']
+                        cpython_time = cpython_arb[size_key]['timing']['mean']
+                        speedup = calculate_speedup(pypy_time, cpython_time)
+                        if speedup > 0:
+                            speedup_values.append(speedup)
+
+            if speedup_values:
+                avg_speedup = sum(speedup_values) / len(speedup_values)
+                if avg_speedup > 1.1:
+                    report.append(f"- ✅ **PyPy shows {avg_speedup:.2f}x average performance improvement**")
+                    report.append("- 🚀 PyPy JIT compilation provides significant benefits for computation-heavy tasks")
+                elif avg_speedup > 0.9:
+                    report.append("- ⚖️ **Performance is comparable between PyPy and CPython**")
+                else:
+                    report.append(f"- ⚠️ **CPython is {1/avg_speedup:.2f}x faster on average**")
+                    report.append("- 💡 PyPy JIT may need more warm-up time or these workloads favor CPython")
+            else:
+                report.append("- ❓ **Unable to calculate performance comparison**")
+
+            report.append("- 🔄 Results based on identical seed (42) for reproducible comparison")
+            report.append("- 📊 Benchmark includes realistic options chain processing and arbitrage detection")
+
+            return "\n".join(report)
+
+        # Load results
+        pypy_results = load_benchmark_results("pypy_benchmark_results.json")
+        cpython_results = load_benchmark_results("cpython_benchmark_results.json")
+
+        # Generate comparison
+        comparison = generate_comparison_report(pypy_results, cpython_results)
+
+        # Save comparison report
+        with open("benchmark_comparison.md", "w") as f:
+            f.write(comparison)
+
+        print("📄 Benchmark comparison generated")
+        print("\n" + comparison)
+        EOF
+
+    - name: Upload PyPy benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: pypy-benchmark-results
+        path: |
+          benchmarks/results/pypy_benchmark_results.json
+          benchmarks/results/cpython_benchmark_results.json
+          benchmarks/benchmark_comparison.md
+        retention-days: 30
+
+    - name: Display benchmark summary
+      run: |
+        echo "📊 Benchmark Summary:"
+        echo "===================="
+        if [ -f "benchmarks/benchmark_comparison.md" ]; then
+          cat benchmarks/benchmark_comparison.md
+        else
+          echo "❌ Benchmark comparison not generated"
+        fi
+
+    - name: Add benchmark results to job summary
+      if: always()  # Run even if previous steps fail
+      run: |
+        echo "# 🏎️ PyPy vs CPython Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Add timestamp and commit info
+        echo "**Run Date:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Check if comparison file exists and add it
+        if [ -f "benchmarks/benchmark_comparison.md" ]; then
+          cat benchmarks/benchmark_comparison.md >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Error:** Benchmark comparison was not generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Add debug info if benchmarks failed
+          echo "## Debug Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check individual benchmark files
+          if [ -f "benchmarks/results/pypy_benchmark_results.json" ] && [ ! -f "benchmarks/results/cpython_benchmark_results.json" ]; then
+            echo "⚠️ **Warning:** Only PyPy benchmark completed" >> $GITHUB_STEP_SUMMARY
+          elif [ ! -f "benchmarks/results/pypy_benchmark_results.json" ] && [ -f "benchmarks/results/cpython_benchmark_results.json" ]; then
+            echo "⚠️ **Warning:** Only CPython benchmark completed" >> $GITHUB_STEP_SUMMARY
+          elif [ ! -f "benchmarks/results/pypy_benchmark_results.json" ] && [ ! -f "benchmarks/results/cpython_benchmark_results.json" ]; then
+            echo "❌ **Error:** No benchmark results found" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -d "benchmarks/results" ]; then
+            echo "### Files in benchmarks/results:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ls -la benchmarks/results/ >> $GITHUB_STEP_SUMMARY 2>&1
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Results directory not found" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*View full logs for detailed benchmark output*" >> $GITHUB_STEP_SUMMARY

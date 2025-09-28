@@ -466,4 +466,31 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## ⚠️ Disclaimer
 
-This software is provided for educational and research purposes only. Trading financial instruments involves significant risk. The authors and contributors are not responsible for any financial losses. Use at your own risk.
+**IMPORTANT: READ THIS DISCLAIMER CAREFULLY BEFORE USING THIS SOFTWARE**
+
+This software is provided for educational and research purposes only.
+
+**NO LIABILITY**: The authors, contributors, and maintainers of this software accept NO responsibility whatsoever for any damages, financial losses, or negative consequences that may result from using this code. By using this software, you acknowledge and agree that:
+
+1. **USE AT YOUR OWN RISK**: All usage of this code for trading or any other purpose is entirely at your own risk and responsibility.
+
+2. **NO WARRANTIES**: This software is provided "AS IS" without warranty of any kind, either express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, or non-infringement.
+
+3. **NOT FINANCIAL ADVICE**: Nothing in this software constitutes financial, investment, legal, tax or other professional advice. You should consult with qualified professionals before making any trading or investment decisions.
+
+4. **TRADING RISKS**: Trading financial instruments, including options, involves substantial risk of loss and is not suitable for all investors. You may lose some or all of your invested capital. Past performance is not indicative of future results.
+
+5. **YOUR RESPONSIBILITY**: You are solely responsible for:
+   - Testing and validating the software before any live trading
+   - Understanding the strategies and their risks
+   - Ensuring compliance with all applicable laws and regulations
+   - Any trading decisions made using this software
+   - Any modifications or customizations you make to the code
+
+6. **NO GUARANTEE OF PROFITS**: This software does not guarantee any profits or successful trades. Market conditions can change rapidly and unpredictably.
+
+7. **INDEMNIFICATION**: You agree to indemnify and hold harmless the authors and contributors from any claims, damages, losses, or expenses arising from your use of this software.
+
+**By using this software, you acknowledge that you have read, understood, and agree to be bound by this disclaimer.**
+
+If you do not agree with these terms, do not use this software.

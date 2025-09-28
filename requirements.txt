@@ -1,6 +1,6 @@
 xmltodict
 openai
-yfinance==0.2.38
+yfinance==0.2.65
 selenium==4.23.1
 webdriver-manager==4.0.2
 markdown
@@ -16,6 +16,10 @@ memory_profiler
 pytest>=7.0.0
 pytest-cov>=4.0.0
 pytest-asyncio==1.0.0
+pytest-json-report
+pytest-metadata
+coverage
+hypothesis
 pyfiglet
 pre-commit
 isort
@@ -23,3 +27,11 @@ isort
 asyncpg>=0.27.0
 psycopg2-binary>=2.9.0
 numpy
+# Data processing dependencies
+lxml
+beautifulsoup4
+sqlalchemy
+pyarrow
+# Scientific computing dependencies
+scipy
+plotly

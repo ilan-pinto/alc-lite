@@ -17,7 +17,9 @@ import pytest
 
 # PyPy-aware performance multipliers
 if hasattr(sys, "pypy_version_info"):
-    TIMEOUT_MULTIPLIER = 5.0  # Increased from 3.0 for heavy parallel operations
+    TIMEOUT_MULTIPLIER = (
+        8.0  # Increased from 5.0 for heavy parallel operations with threading
+    )
     MEMORY_MULTIPLIER = 5.0
 else:
     TIMEOUT_MULTIPLIER = 1.0

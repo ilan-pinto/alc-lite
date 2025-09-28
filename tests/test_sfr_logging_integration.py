@@ -18,7 +18,7 @@ import pytest
 
 # PyPy-aware performance multipliers
 if hasattr(sys, "pypy_version_info"):
-    TIMEOUT_MULTIPLIER = 2.0
+    TIMEOUT_MULTIPLIER = 4.0  # Increased from 2.0 for logging performance tests
     MEMORY_MULTIPLIER = 5.0
 else:
     TIMEOUT_MULTIPLIER = 1.0

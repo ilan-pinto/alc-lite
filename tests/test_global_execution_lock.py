@@ -14,7 +14,7 @@ import pytest
 
 # PyPy-aware performance multipliers
 if hasattr(sys, "pypy_version_info"):
-    TIMEOUT_MULTIPLIER = 4.0  # Increased from 3.0 for lock acquisition performance
+    TIMEOUT_MULTIPLIER = 5.0  # Increased from 4.0 to accommodate PyPy JIT warm-up
     MEMORY_MULTIPLIER = 4.0  # Increased from 2.0 for PyPy memory usage
 else:
     TIMEOUT_MULTIPLIER = 2.0

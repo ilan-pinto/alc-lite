@@ -959,9 +959,9 @@ class SFREndToEndBenchmark:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"sfr_benchmark_results_{runtime}_{timestamp}.json"
 
-        # Create benchmarks/results directory if it doesn't exist
-        os.makedirs("benchmarks/results", exist_ok=True)
-        filepath = os.path.join("benchmarks/results", filename)
+        # Create results directory if it doesn't exist
+        os.makedirs("results", exist_ok=True)
+        filepath = os.path.join("results", filename)
 
         with open(filepath, "w") as f:
             json.dump(results, f, indent=2, default=str)

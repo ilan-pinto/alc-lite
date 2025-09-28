@@ -11,9 +11,10 @@ pandas>=1.5.0
 numpy>=1.21.0
 
 # Database connectivity (PyPy compatible)
-asyncpg>=0.27.0
+# asyncpg>=0.27.0  # Not compatible with PyPy - build fails with C extension issues
 # psycopg2-binary>=2.9.0  # Not compatible with PyPy - commented out
-# Use asyncpg only for PostgreSQL connections in PyPy
+# Note: asyncpg cannot be built with PyPy due to C extension incompatibility
+# Use psycopg3 with async support if PostgreSQL connectivity is needed
 
 # Console output and formatting
 rich==14.1.0

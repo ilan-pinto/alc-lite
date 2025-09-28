@@ -174,8 +174,6 @@ class ValidationEngine:
         Returns:
             List of strikes that actually exist for this expiry
         """
-        global strike_cache
-
         # Check cache first (5 minute TTL for strike validation)
         cache_key = f"{symbol}_{expiry}"
         current_time = time.time()
@@ -247,13 +245,11 @@ class ValidationEngine:
 
     def clear_strike_cache(self):
         """Clear the global strike cache"""
-        global strike_cache
         strike_cache.clear()
         self.logger.debug("Strike cache cleared")
 
     def get_cache_stats(self) -> dict:
         """Get statistics about the strike cache"""
-        global strike_cache
         current_time = time.time()
 
         active_entries = 0

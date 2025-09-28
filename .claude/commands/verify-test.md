@@ -39,7 +39,6 @@ Analyzes pytest test failures to identify root causes and provide fix recommenda
 - Suggests which specialized agents to consult based on failure type:
   - `pytest-test-engineer`: For test-related issues
   - `algotrading-python-expert`: For trading/IB related issues
-  - `options-backtesting-expert`: For backtesting issues
   - `code-reviewer`: For general code issues
 
 ### Confidence Scoring
