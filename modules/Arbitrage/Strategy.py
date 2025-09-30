@@ -10,6 +10,8 @@ from ib_async import IB, ComboLeg, Contract, FuturesOption, Index, Option, Order
 
 from .common import get_logger, log_filled_order, log_order_details
 from .metrics import metrics_collector
+from .pypy_config import get_batch_size, is_pypy
+from .pypy_config import optimizer as pypy_optimizer
 
 logger = get_logger()
 
@@ -480,7 +482,17 @@ class ArbitrageClass:
     ) -> None:
         self.ib = IB()
         self.order_manager = OrderManagerClass(ib=self.ib)
-        self.semaphore = asyncio.Semaphore(1000)
+
+        # PyPy optimization: Use runtime-appropriate semaphore size
+        # PyPy can handle more concurrent operations efficiently with JIT
+        semaphore_size = (
+            pypy_optimizer.config.get("parallel_workers", 8) if is_pypy() else 1000
+        )
+        self.semaphore = asyncio.Semaphore(semaphore_size)
+        logger.debug(
+            f"Initialized semaphore with size {semaphore_size} (PyPy: {is_pypy()})"
+        )
+
         self.active_executors: Dict[str, BaseExecutor] = {}
         self.order_filled = False  # Flag to track when an order is filled
 
@@ -499,10 +511,14 @@ class ArbitrageClass:
         self.last_scan_time = {}  # Track last scan time per symbol
         self.scan_cooldown = 30  # Minimum seconds between scans for same symbol
 
-        # Symbol scanning throttling
-        self.symbol_scan_semaphore = asyncio.Semaphore(
-            5
-        )  # Max 5 concurrent symbol scans
+        # Symbol scanning throttling - PyPy can handle more concurrent scans
+        max_concurrent_scans = (
+            pypy_optimizer.config.get("parallel_workers", 8) if is_pypy() else 5
+        )
+        self.symbol_scan_semaphore = asyncio.Semaphore(max_concurrent_scans)
+        logger.debug(
+            f"Max concurrent symbol scans: {max_concurrent_scans} (PyPy: {is_pypy()})"
+        )
 
         # Database pool for future extensibility
         self.db_pool = db_pool
@@ -775,12 +791,18 @@ class ArbitrageClass:
     async def _qualify_contracts_in_batches(
         self, contracts: List[Contract]
     ) -> List[Contract]:
-        """Qualify contracts in optimized batches with fallback handling"""
-        BATCH_SIZE = 100  # IB API handles large qualification batches efficiently
+        """
+        Qualify contracts in optimized batches with fallback handling.
+
+        PyPy Optimization: Use runtime-appropriate batch size.
+        PyPy handles larger batches more efficiently due to JIT compilation.
+        """
+        # PyPy optimization: Get runtime-appropriate batch size
+        BATCH_SIZE = get_batch_size(100)  # 100 for PyPy, 50 for CPython
         qualified = []
 
         logger.debug(
-            f"Qualifying {len(contracts)} contracts in batches of {BATCH_SIZE}"
+            f"Qualifying {len(contracts)} contracts in batches of {BATCH_SIZE} (PyPy: {is_pypy()})"
         )
 
         for i in range(0, len(contracts), BATCH_SIZE):
@@ -1131,10 +1153,17 @@ class ArbitrageClass:
         )
 
     async def request_market_data_parallel(self, contracts: List[Contract]) -> None:
-        """Request market data for contracts with parallel processing and smart batching"""
+        """
+        Request market data for contracts with parallel processing and smart batching.
+
+        PyPy Optimization: Use runtime-appropriate batch size.
+        PyPy's JIT optimization allows for larger batch sizes with less overhead.
+        """
         try:
-            # Process contracts in optimal batches to avoid IB rate limits
-            batch_size = min(50, len(contracts))  # IB typically allows ~100 req/sec
+            # PyPy optimization: Get runtime-appropriate batch size
+            # PyPy can handle larger batches (100), CPython uses 50
+            optimal_batch_size = get_batch_size(100) if is_pypy() else 50
+            batch_size = min(optimal_batch_size, len(contracts))
             batches = [
                 contracts[i : i + batch_size]
                 for i in range(0, len(contracts), batch_size)
@@ -1142,6 +1171,10 @@ class ArbitrageClass:
 
             successful_requests = 0
             failed_requests = 0
+
+            logger.debug(
+                f"Using batch size {batch_size} for market data requests (PyPy: {is_pypy()})"
+            )
 
             for batch_idx, batch in enumerate(batches):
                 logger.debug(

@@ -441,11 +441,16 @@ class SFR(ArbitrageClass):
             # Request options chain
             chain = await self._get_chain(stock, exchange="SMART")
 
-            # Get potential strikes from chain (all strikes across all expiries)
-            potential_strikes = [s for s in chain.strikes if abs(s - stock_price) <= 25]
+            # PyPy optimization: Cache stock_price as local variable and use optimized
+            # list comprehension (PyPy's JIT heavily optimizes list comprehensions)
+            stock_price_local = stock_price
+            chain_strikes = chain.strikes
+            potential_strikes = [
+                s for s in chain_strikes if abs(s - stock_price_local) <= 25
+            ]
 
             logger.info(
-                f"[{symbol}] Chain has {len(chain.strikes)} total strikes across all expiries"
+                f"[{symbol}] Chain has {len(chain_strikes)} total strikes across all expiries"
             )
             logger.info(
                 f"[{symbol}] {len(potential_strikes)} strikes within $25 of stock price (${stock_price:.2f})"

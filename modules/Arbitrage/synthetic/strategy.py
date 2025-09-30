@@ -256,9 +256,16 @@ class Syn(ArbitrageClass):
             # Request options chain
             chain = await self._get_chain(stock)
 
+            # PyPy optimization: Cache values as local variables and use optimized
+            # list comprehensions (PyPy's JIT heavily optimizes list comprehensions)
+            stock_price_local = stock_price
+            chain_strikes = chain.strikes
+
             # Define parameters for the options (expiry and strike price)
             valid_strikes = [
-                s for s in chain.strikes if s <= stock_price and s > stock_price - 10
+                s
+                for s in chain_strikes
+                if s <= stock_price_local and s > stock_price_local - 10
             ]  # Example strike price
 
             if len(valid_strikes) < 2:
@@ -288,7 +295,9 @@ class Syn(ArbitrageClass):
                 return
 
             # Get potential strikes for validation (within reasonable range)
-            potential_strikes = [s for s in chain.strikes if abs(s - stock_price) <= 25]
+            potential_strikes = [
+                s for s in chain_strikes if abs(s - stock_price_local) <= 25
+            ]
 
             logger.info(
                 f"[{symbol}] Validating strikes for {len(valid_expiries)} expiries"
