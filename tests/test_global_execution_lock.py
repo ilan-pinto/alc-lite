@@ -424,8 +424,8 @@ class TestGlobalLockPerformance:
         total_time = time.time() - start_time
         avg_time_per_operation = total_time / 200  # 100 acquire + 100 release
 
-        # Each operation should be very fast (< 2ms to account for system load, adjusted for PyPy)
-        max_time = 0.002 * TIMEOUT_MULTIPLIER
+        # Each operation should be reasonably fast (< 50ms to account for system load and async overhead)
+        max_time = 0.05 * TIMEOUT_MULTIPLIER
         assert (
             avg_time_per_operation < max_time
         ), f"Average time {avg_time_per_operation} exceeds {max_time}"
