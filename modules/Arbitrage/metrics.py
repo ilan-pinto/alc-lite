@@ -31,6 +31,7 @@ class RejectionReason(Enum):
     BID_ASK_SPREAD_TOO_WIDE = "bid_ask_spread_too_wide"
     PRICE_LIMIT_EXCEEDED = "price_limit_exceeded"
     NET_CREDIT_NEGATIVE = "net_credit_negative"
+    STOCK_PRICE_ABOVE_LIMIT = "stock_price_above_limit"
 
     # Profitability conditions
     PROFIT_TARGET_NOT_MET = "profit_target_not_met"

@@ -253,6 +253,22 @@ class Syn(ArbitrageClass):
 
             logger.info(f"price for [{symbol}: {stock_price} ]")
 
+            # Early filter: Skip stocks above cost limit to avoid unnecessary API calls
+            if stock_price > self.cost_limit:
+                logger.info(
+                    f"[{symbol}] Stock price ${stock_price:.2f} exceeds cost limit ${self.cost_limit:.2f} - skipping scan"
+                )
+                metrics_collector.add_rejection_reason(
+                    RejectionReason.STOCK_PRICE_ABOVE_LIMIT,
+                    {
+                        "symbol": symbol,
+                        "stock_price": stock_price,
+                        "cost_limit": self.cost_limit,
+                    },
+                )
+                # Don't call finish_scan here - we haven't actually started scanning yet
+                return
+
             # Request options chain
             chain = await self._get_chain(stock)
 
