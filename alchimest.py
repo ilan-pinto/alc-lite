@@ -27,7 +27,7 @@ if USING_PYPY:
     )
 
 # Version information
-__version__ = "1.20.2"
+__version__ = "1.21.0"
 
 # Custom theme for log levels
 custom_theme = Theme(
